@@ -1,9 +1,10 @@
 import { useEffect, useMemo, useState, useRef } from 'react';
 import { supabase } from './lib/supabase';
-import { LayoutDashboard, Users, Kanban, CalendarCheck, BarChart3, Settings, Bell, Search, Plus, ArrowUpRight, MoreHorizontal, Menu, X, UserRound, Pencil, Receipt, LogOut, UserCog, MessageCircle } from 'lucide-react';
+import { LayoutDashboard, Users, Kanban, CalendarCheck, BarChart3, Settings, Bell, Search, Plus, ArrowUpRight, MoreHorizontal, Menu, X, UserRound, Pencil, Receipt, LogOut, UserCog, MessageCircle, UserPlus, Mail, CalendarDays, FileText, Workflow, TrendingUp, Tags, DollarSign, CreditCard, Upload, Download, Play, Target, CheckCircle2 } from 'lucide-react';
 
 function AuthScreen({ onGoogleSignIn, onEmailSignIn, onEmailSignUp, authMode, setAuthMode, email, setEmail, password, setPassword,
   error,
+  notice,
   loading
 }) {
 
@@ -25,6 +26,11 @@ function AuthScreen({ onGoogleSignIn, onEmailSignIn, onEmailSignUp, authMode, se
         {error && (
           <div className="auth-error" role="alert">
             {error}
+          </div>
+        )}
+        {notice && (
+          <div className="auth-notice" role="status">
+            {notice}
           </div>
         )}
 
@@ -59,14 +65,15 @@ function AuthScreen({ onGoogleSignIn, onEmailSignIn, onEmailSignUp, authMode, se
           </button>
           <div className="createSignUp">
             <p className='authSignUp'>Don't have an account?
-              <a
+              {' '}
+              <button
                 type="button"
                 className="auth-toggle-btn"
                 onClick={() => setShowSignupModal(true)}
                 disabled={loading}
               >
                 Create
-              </a>
+              </button>
             </p>
           </div>
         </form>
@@ -146,6 +153,11 @@ function AuthScreen({ onGoogleSignIn, onEmailSignIn, onEmailSignUp, authMode, se
                 {error}
               </div>
             )}
+            {notice && (
+              <div className="auth-notice" role="status">
+                {notice}
+              </div>
+            )}
 
             <label>
               Email address
@@ -179,11 +191,15 @@ function AuthScreen({ onGoogleSignIn, onEmailSignIn, onEmailSignUp, authMode, se
             </button>
             <p className='authSignUp'>
               Already have an account?
-              <a type="button"
+              {' '}
+              <button
+                type="button"
                 className="auth-toggle-btn"
                 onClick={() => setShowSignupModal(false)}
-                disabled={loading} >Sign in
-              </a>
+                disabled={loading}
+              >
+                Sign in
+              </button>
             </p>
 
           </form>
@@ -193,22 +209,29 @@ function AuthScreen({ onGoogleSignIn, onEmailSignIn, onEmailSignUp, authMode, se
   );
 }
 
-const navItems = [
-  ['Dashboard', LayoutDashboard], ['Customers', Users], ['Pipeline', Kanban], ['Activities', CalendarCheck], ['Tickets', Receipt], ['Reports', BarChart3],
-  ['Chat', MessageCircle], ['Settings', Settings]
+const navSections = [
+  { title: 'Overview', items: [['Dashboard', LayoutDashboard], ['Reports', BarChart3]] },
+  { title: 'Customers & Sales', items: [['Customers', Users], ['Leads', UserPlus], ['Pipeline', Kanban], ['Quotes', FileText], ['Invoices', CreditCard], ['Forecast', TrendingUp]] },
+  { title: 'Work & Support', items: [['Activities', CalendarCheck], ['Calendar', CalendarDays], ['Tickets', Receipt], ['Documents', FileText]] },
+  { title: 'Communication', items: [['Email', Mail], ['Chat', MessageCircle]] },
+  { title: 'Automation & Insights', items: [['Automation', Workflow], ['Segments', Tags]] },
+  { title: 'System', items: [['Settings', Settings]] }
 ];
 
 const EXCHANGE_RATES = {
-  NGN: { symbol: '₦', rate: 1600 },
+  NGN: { symbol: '₦', rate: 1400 },
   USD: { symbol: '$', rate: 1 },
   EUR: { symbol: '€', rate: 0.92 }
 };
+
+
 
 function App() {
 
   const [session, setSession] = useState(null);
   const [authLoading, setAuthLoading] = useState(true);
   const [authError, setAuthError] = useState('');
+  const [authNotice, setAuthNotice] = useState('');
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [emailLoading, setEmailLoading] = useState(false);
@@ -225,6 +248,9 @@ function App() {
   const [customers, setCustomers] = useState([]);
   const [loading, setLoading] = useState(true);
   const [deals, setDeals] = useState([]);
+  const [notifications, setNotifications] = useState([]);
+  const [unreadNotificationCount, setUnreadNotificationCount] = useState(0);
+  const [showNotifications, setShowNotifications] = useState(false);
   const [showDealForm, setShowDealForm] = useState(false);
   const [newDeal, setNewDeal] = useState({ title: '', company: '', amount: '', stage: 'New Lead', customer_id: '' });
   const [dealSaving, setDealSaving] = useState(false);
@@ -233,8 +259,12 @@ function App() {
   const [editDealSaving, setEditDealSaving] = useState(false);
   const [editDealError, setEditDealError] = useState('');
   const [search, setSearch] = useState('');
+  const [globalSearch, setGlobalSearch] = useState('');
   const [showCustomerForm, setShowCustomerForm] = useState(false);
-  const [newCustomer, setNewCustomer] = useState({ name: '', company: '', email: '' });
+  const [newCustomer, setNewCustomer] = useState({ name: '', company: '', email: '', status: 'Active' });
+  const [selectedCustomer, setSelectedCustomer] = useState(null);
+  const [openCustomerMenu, setOpenCustomerMenu] = useState(null);
+  const [editingCustomer, setEditingCustomer] = useState(null);
   const [activities, setActivities] = useState([]);
   const [showActivityForm, setShowActivityForm] = useState(false);
   const [newActivity, setNewActivity] = useState({
@@ -243,18 +273,65 @@ function App() {
   });
   const [activityError, setActivityError] = useState('');
   const [activitySaving, setActivitySaving] = useState(false);
+  const [editingActivity, setEditingActivity] = useState(null);
+  const [editActivitySaving, setEditActivitySaving] = useState(false);
+  const [editActivityError, setEditActivityError] = useState('');
+  const [selectedActivity, setSelectedActivity] = useState(null);
   const [tickets, setTickets] = useState([]);
+  const [leads, setLeads] = useState([]);
+  const [emailLogs, setEmailLogs] = useState([]);
+  const [calendarEvents, setCalendarEvents] = useState([]);
+  const [quotes, setQuotes] = useState([]);
+  const [invoices, setInvoices] = useState([]);
+  const [payments, setPayments] = useState([]);
+  const [documents, setDocuments] = useState([]);
+  const [workflows, setWorkflows] = useState([]);
+  const [segments, setSegments] = useState([]);
+  const [selectedLead, setSelectedLead] = useState(null);
+  const [selectedQuote, setSelectedQuote] = useState(null);
+  const [selectedInvoice, setSelectedInvoice] = useState(null);
+  const [phase2Error, setPhase2Error] = useState('');
+  const [emailIntegrations, setEmailIntegrations] = useState([]);
+  const [emailIntegrationLoading, setEmailIntegrationLoading] = useState(false);
+  const [emailIntegrationError, setEmailIntegrationError] = useState('');
   const [showTicketForm, setShowTicketForm] = useState(false);
   const [ticketSaving, setTicketSaving] = useState(false);
   const [ticketError, setTicketError] = useState('');
+  const [editingTicket, setEditingTicket] = useState(null);
+  const [editTicketSaving, setEditTicketSaving] = useState(false);
+  const [editTicketError, setEditTicketError] = useState('');
+  const [selectedTicket, setSelectedTicket] = useState(null);
   const [newTicket, setNewTicket] = useState({
     title: '', description: '', customer_id: '', status: 'Open', priority: 'Medium',
     category: 'General'
   });
   const [saving, setSaving] = useState(false);
   const [customerError, setCustomerError] = useState('');
+  const [statusFilter, setStatusFilter] = useState('All');
+  const toastTimer = useRef(null);
+  const justSignedUp = useRef(false);
+  const searchInputRef = useRef(null);
+  const [toast, setToast] = useState('');
 
-  const [currency, setCurrency] = useState('NGN');
+  const [currency, setCurrency] = useState(() => {
+    try { return localStorage.getItem('orbit_currency') || 'NGN'; } catch { return 'NGN'; }
+  });
+  useEffect(() => {
+    try { localStorage.setItem('orbit_currency', currency); } catch { /* storage unavailable */ }
+  }, [currency]);
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    const connected = params.get('email_connected');
+    const emailError = params.get('email_error');
+    if (connected) { showToast(`${connected === 'gmail' ? 'Gmail' : 'Outlook'} connected successfully.`); fetchEmailIntegrations(); window.history.replaceState({}, document.title, window.location.pathname); }
+    if (emailError) { setEmailIntegrationError(emailError); setPage('Email'); window.history.replaceState({}, document.title, window.location.pathname); }
+  }, [session]);
+
+  const showToast = (message) => {
+    setToast(message);
+    window.clearTimeout(toastTimer.current);
+    toastTimer.current = window.setTimeout(() => setToast(''), 5000);
+  };
 
   const formatAmount = (amountInUSD) => {
     const numericAmount = Number(amountInUSD) || 0;
@@ -267,7 +344,74 @@ function App() {
     })}`;
   };
 
-  const filteredCustomers = useMemo(() => customers.filter(c => `${c.name} ${c.company} ${c.email}`.toLowerCase().includes(search.toLowerCase())), [customers, search]);
+  const filteredCustomers = useMemo(() => customers.filter(c => (statusFilter === 'All' || (c.status || 'Active') === statusFilter) && `${c.name} ${c.company || ''} ${c.email || ''}`.toLowerCase().includes(search.toLowerCase())), [customers, search, statusFilter]);
+  const globalSearchResults = useMemo(() => {
+    const query = globalSearch.trim().toLowerCase();
+
+    if (!query) return [];
+
+    const results = [];
+    customers.forEach(customer => {
+      const text = `${customer.name} ${customer.company || ''} ${customer.email}`.toLowerCase();
+
+      if (text.includes(query)) {
+        results.push({
+          type: 'Customer',
+          title: customer.name,
+          subtitle: customer.company || customer.email,
+          page: 'Customers',
+          customer
+        });
+      }
+    });
+
+    deals.forEach(deal => {
+      const text = `${deal.title} ${deal.company || ''}`.toLowerCase();
+
+      if (text.includes(query)) {
+        results.push({
+          type: 'Deal',
+          title: deal.title,
+          subtitle: deal.company || 'No company specified',
+          page: 'Pipeline',
+          deal
+        });
+      }
+    });
+
+    activities.forEach(activity => {
+      const text = `${activity.title} ${activity.type || ''} ${activity.notes || ''}`.toLowerCase();
+
+      if (text.includes(query)) {
+        results.push({
+          type: 'Activity',
+          title: activity.title,
+          subtitle: activity.type || 'Activity',
+          page: 'Activities',
+          activity
+        });
+      }
+    });
+
+    tickets.forEach(ticket => {
+      const text = `${ticket.title} ${ticket.description || ''} ${ticket.category || ''}`.toLowerCase();
+
+      if (text.includes(query)) {
+        results.push({
+          type: 'Ticket',
+          title: ticket.title,
+          subtitle: ticket.category || 'Support ticket',
+          page: 'Tickets',
+          ticket
+        });
+      }
+    });
+
+    leads.forEach(lead => { const text = `${lead.name || ''} ${lead.email || ''} ${lead.company || ''} ${lead.source || ''}`.toLowerCase(); if (text.includes(query)) results.push({ type: 'Lead', title: lead.name || lead.email, subtitle: lead.company || lead.source || 'Lead', page: 'Leads', lead }); });
+    quotes.forEach(q => { const text = `${q.quote_number || ''} ${q.title || ''} ${q.customers?.name || ''}`.toLowerCase(); if (text.includes(query)) results.push({ type: 'Quote', title: q.quote_number || q.title, subtitle: q.customers?.name || 'Quote', page: 'Quotes', quote: q }); });
+    invoices.forEach(i => { const text = `${i.invoice_number || ''} ${i.title || ''} ${i.customers?.name || ''}`.toLowerCase(); if (text.includes(query)) results.push({ type: 'Invoice', title: i.invoice_number || i.title, subtitle: i.customers?.name || 'Invoice', page: 'Invoices', invoice: i }); });
+    return results.slice(0, 12);
+  }, [globalSearch, customers, deals, activities, tickets, leads, quotes, invoices]);
   const revenue = deals
     .filter(d => d.stage === 'Won')
     .reduce((sum, d) => sum + (Number(d.amount) || 0), 0);
@@ -293,7 +437,9 @@ function App() {
   }
   async function signInWithEmail(event) {
     event.preventDefault();
+    justSignedUp.current = false;
     setAuthError('');
+    setAuthNotice('');
     if (!email.trim() || !password) {
       setAuthError('Please enter your email and password.');
       return;
@@ -313,6 +459,7 @@ function App() {
   async function signUpWithEmail(event) {
     event.preventDefault();
     setAuthError('');
+    setAuthNotice('');
 
     if (!email.trim() || !password) {
       setAuthError('Please enter your email and password.');
@@ -330,14 +477,29 @@ function App() {
       console.error('Email signup error:', error);
       setAuthError(error.message);
     } else {
-      setAuthError(
-        'Account created successfully. Please check your email if confirmation is required. An administrator must approve your account before you can access the CRM.'
+      justSignedUp.current = true;
+      setAuthNotice(
+        'Account created. Check your email if confirmation is required. An administrator must approve your account before you can sign in.'
       );
+      await supabase.auth.signOut();
     }
 
     setEmailLoading(false);
   }
+  const resetWorkspace = () => {
+    setPage('Dashboard');
+    setCustomers([]);
+    setDeals([]);
+    setActivities([]);
+    setTickets([]); setLeads([]); setEmailLogs([]); setCalendarEvents([]); setQuotes([]); setInvoices([]); setPayments([]); setDocuments([]); setWorkflows([]); setSegments([]);
+    setNotifications([]);
+    setUnreadNotificationCount(0);
+    setAuthorizedUsers([]);
+    setSelectedCustomer(null);
+    setShowNotifications(false);
+  };
   const handleSignOut = async () => {
+    resetWorkspace();
     const { error } = await supabase.auth.signOut();
 
     if (error) {
@@ -345,7 +507,7 @@ function App() {
       setAuthError('Unable to sign out. Please try again.');
     }
   };
-  const checkAuthorization = async (currentSession) => {
+  const checkAuthorization = async (currentSession, { silent = false } = {}) => {
     if (!currentSession?.user) {
       setAuthorized(false);
       setAuthorizationProfile(null);
@@ -353,7 +515,7 @@ function App() {
       return;
     }
 
-    setAuthorizationLoading(true);
+    if (!silent) setAuthorizationLoading(true);
 
     const { data, error } = await supabase
       .from("authorized_users")
@@ -377,9 +539,11 @@ function App() {
 
     if (!hasAccess) {
       await supabase.auth.signOut();
-      setAuthError(
-        "Your Google account has not been approved. Please contact your administrator."
-      );
+      if (!justSignedUp.current) {
+        setAuthError(
+          "Your account has not been approved yet. Please contact your administrator."
+        );
+      }
     }
   };
   const fetchCustomers = async () => {
@@ -442,6 +606,63 @@ function App() {
 
     setTickets(data || []);
   }
+  async function fetchEmailIntegrations() {
+    if (!session?.user?.id) return;
+    setEmailIntegrationLoading(true); setEmailIntegrationError('');
+    const { data, error } = await supabase.from('email_integrations').select('id, provider, email_address, status, created_at, updated_at').eq('user_id', session.user.id).order('created_at', { ascending: false });
+    if (error) { console.error('Error fetching email integrations:', error); setEmailIntegrationError(error.message); setEmailIntegrations([]); }
+    else setEmailIntegrations(data || []);
+    setEmailIntegrationLoading(false);
+  }
+
+  async function connectEmailProvider(provider) {
+    setEmailIntegrationError('');
+    try {
+      const functionName = provider === 'gmail' ? 'gmail-oauth-start' : 'outlook-oauth-start';
+      const { data, error } = await supabase.functions.invoke(functionName, { body: { return_to: window.location.origin } });
+      if (error) throw error;
+      if (!data?.url) throw new Error(`The ${provider} OAuth function did not return an authorization URL.`);
+      window.location.href = data.url;
+    } catch (error) { console.error(`Error connecting ${provider}:`, error); setEmailIntegrationError(error.message || `Could not start ${provider} connection.`); }
+  }
+
+  async function disconnectEmailProvider(id) {
+    if (!window.confirm('Disconnect this email account?')) return;
+    const { error } = await supabase.from('email_integrations').update({ status: 'disconnected' }).eq('id', id).eq('user_id', session.user.id);
+    if (error) { setEmailIntegrationError(error.message); return; }
+    fetchEmailIntegrations();
+  }
+
+  async function fetchLeads() { const { data, error } = await supabase.from('leads').select('*, customers(name,company)').order('created_at', { ascending: false }); if (error) { console.error('Error fetching leads:', error); return; } setLeads(data || []); }
+  async function fetchEmailLogs() { const { data, error } = await supabase.from('email_logs').select('*, customers(name,company)').order('sent_at', { ascending: false }); if (error) { console.error('Error fetching email logs:', error); return; } setEmailLogs(data || []); }
+  async function fetchCalendarEvents() { const { data, error } = await supabase.from('calendar_events').select('*, customers(name,company)').order('start_at', { ascending: true }); if (error) { console.error('Error fetching calendar events:', error); return; } setCalendarEvents(data || []); }
+  async function fetchQuotes() { const { data, error } = await supabase.from('quotes').select('*, customers(name,company)').order('created_at', { ascending: false }); if (error) { console.error('Error fetching quotes:', error); return; } setQuotes(data || []); }
+  async function fetchInvoices() { const { data, error } = await supabase.from('invoices').select('*, customers(name,company)').order('created_at', { ascending: false }); if (error) { console.error('Error fetching invoices:', error); return; } setInvoices(data || []); }
+  async function fetchPayments() { const { data, error } = await supabase.from('payments').select('*').order('paid_at', { ascending: false }); if (error) { console.error('Error fetching payments:', error); return; } setPayments(data || []); }
+  async function fetchDocuments() { const { data, error } = await supabase.from('documents').select('*, customers(name,company)').order('created_at', { ascending: false }); if (error) { console.error('Error fetching documents:', error); return; } setDocuments(data || []); }
+  async function fetchWorkflows() { const { data, error } = await supabase.from('workflows').select('*').order('created_at', { ascending: false }); if (error) { console.error('Error fetching workflows:', error); return; } setWorkflows(data || []); }
+  async function fetchSegments() { const { data, error } = await supabase.from('customer_segments').select('*').order('created_at', { ascending: false }); if (error) { console.error('Error fetching segments:', error); return; } setSegments(data || []); }
+
+  async function addLead(payload) { const { data, error } = await supabase.from('leads').insert([{ ...payload, created_by: session.user.id }]).select('*, customers(name,company)').single(); if (error) throw error; setLeads(prev => [data, ...prev]); return data; }
+  async function updateLead(id, payload) { const { data, error } = await supabase.from('leads').update(payload).eq('id', id).select('*, customers(name,company)').single(); if (error) throw error; setLeads(prev => prev.map(x => x.id === id ? data : x)); return data; }
+  async function deleteLead(id) { if (!window.confirm('Delete this lead?')) return; const { error } = await supabase.from('leads').delete().eq('id', id); if (error) { alert(error.message); return; } setLeads(prev => prev.filter(x => x.id !== id)); }
+  async function addEmailLog(payload) { const { data, error } = await supabase.from('email_logs').insert([{ ...payload, created_by: session.user.id }]).select('*, customers(name,company)').single(); if (error) throw error; setEmailLogs(prev => [data, ...prev]); return data; }
+  async function addCalendarEvent(payload) { const { data, error } = await supabase.from('calendar_events').insert([{ ...payload, created_by: session.user.id }]).select('*, customers(name,company)').single(); if (error) throw error; setCalendarEvents(prev => [...prev, data].sort((a, b) => new Date(a.start_at) - new Date(b.start_at))); return data; }
+  async function updateCalendarEvent(id, payload) { const { data, error } = await supabase.from('calendar_events').update(payload).eq('id', id).select('*, customers(name,company)').single(); if (error) throw error; setCalendarEvents(prev => prev.map(x => x.id === id ? data : x)); return data; }
+  async function deleteCalendarEvent(id) { const { error } = await supabase.from('calendar_events').delete().eq('id', id); if (error) throw error; setCalendarEvents(prev => prev.filter(x => x.id !== id)); }
+  async function addQuote(payload) { const { data, error } = await supabase.from('quotes').insert([{ ...payload, created_by: session.user.id }]).select('*, customers(name,company)').single(); if (error) throw error; setQuotes(prev => [data, ...prev]); return data; }
+  async function updateQuote(id, payload) { const { data, error } = await supabase.from('quotes').update(payload).eq('id', id).select('*, customers(name,company)').single(); if (error) throw error; setQuotes(prev => prev.map(x => x.id === id ? data : x)); return data; }
+  async function addInvoice(payload) { const { data, error } = await supabase.from('invoices').insert([{ ...payload, created_by: session.user.id }]).select('*, customers(name,company)').single(); if (error) throw error; setInvoices(prev => [data, ...prev]); return data; }
+  async function updateInvoice(id, payload) { const { data, error } = await supabase.from('invoices').update(payload).eq('id', id).select('*, customers(name,company)').single(); if (error) throw error; setInvoices(prev => prev.map(x => x.id === id ? data : x)); return data; }
+  async function addPayment(payload) { const { data, error } = await supabase.from('payments').insert([{ ...payload, created_by: session.user.id }]).select('*').single(); if (error) throw error; setPayments(prev => [data, ...prev]); await fetchInvoices(); return data; }
+  async function addWorkflow(payload) { const { data, error } = await supabase.from('workflows').insert([{ ...payload, created_by: session.user.id }]).select('*').single(); if (error) throw error; setWorkflows(prev => [data, ...prev]); return data; }
+  async function updateWorkflow(id, payload) { const { data, error } = await supabase.from('workflows').update(payload).eq('id', id).select('*').single(); if (error) throw error; setWorkflows(prev => prev.map(x => x.id === id ? data : x)); return data; }
+  async function addSegment(payload) { const { data, error } = await supabase.from('customer_segments').insert([{ ...payload, created_by: session.user.id }]).select('*').single(); if (error) throw error; setSegments(prev => [data, ...prev]); return data; }
+  async function updateSegment(id, payload) { const { data, error } = await supabase.from('customer_segments').update(payload).eq('id', id).select('*').single(); if (error) throw error; setSegments(prev => prev.map(x => x.id === id ? data : x)); return data; }
+  async function uploadDocument(file, customerId = '') { if (!file) return; const safeName = file.name.replace(/[^a-zA-Z0-9._-]/g, '_'); const path = `${session.user.id}/${Date.now()}_${safeName}`; const { error: uploadError } = await supabase.storage.from('crm-documents').upload(path, file, { upsert: false }); if (uploadError) throw uploadError; const { data, error } = await supabase.from('documents').insert([{ name: file.name, storage_path: path, mime_type: file.type || 'application/octet-stream', size_bytes: file.size, customer_id: customerId || null, created_by: session.user.id }]).select('*, customers(name,company)').single(); if (error) throw error; setDocuments(prev => [data, ...prev]); return data; }
+  async function deleteDocument(doc) { if (!window.confirm('Delete this document?')) return; const { error: storageError } = await supabase.storage.from('crm-documents').remove([doc.storage_path]); if (storageError) { console.error(storageError); } const { error } = await supabase.from('documents').delete().eq('id', doc.id); if (error) { alert(error.message); return; } setDocuments(prev => prev.filter(x => x.id !== doc.id)); }
+  async function downloadDocument(doc) { const { data, error } = await supabase.storage.from('crm-documents').download(doc.storage_path); if (error) { alert(error.message); return; } const url = URL.createObjectURL(data); const a = document.createElement('a'); a.href = url; a.download = doc.name; a.click(); URL.revokeObjectURL(url); }
+
   async function fetchAuthorizedUsers() {
     setUsersLoading(true);
     setUsersError('');
@@ -474,6 +695,59 @@ function App() {
     await fetchAuthorizedUsers();
     return true;
   }
+  async function fetchNotifications() {
+    const { data, error } = await supabase
+      .from('notifications')
+      .select('*')
+      .order('created_at', { ascending: false })
+      .limit(50);
+
+    if (error) {
+      console.error('Failed to load notifications:', error);
+      return;
+    }
+
+    setNotifications(data || []);
+    setUnreadNotificationCount(
+      (data || []).filter(notification => !notification.read).length
+    );
+  }
+  // Real Time notification Updtates
+  useEffect(() => {
+    if (!session?.user?.id) return;
+
+    const channel = supabase
+      .channel(`notifications-${session.user.id}`)
+      .on(
+        'postgres_changes',
+        {
+          event: 'INSERT',
+          schema: 'public',
+          table: 'notifications',
+          filter: `user_id=eq.${session.user.id}`
+        },
+        payload => {
+          const newNotification = payload.new;
+
+          setNotifications(prev => {
+            if (prev.some(notification => notification.id === newNotification.id)) {
+              return prev;
+            }
+
+            return [newNotification, ...prev];
+          });
+
+          if (!newNotification.read) {
+            setUnreadNotificationCount(prev => prev + 1);
+          }
+        }
+      )
+      .subscribe();
+
+    return () => {
+      supabase.removeChannel(channel);
+    };
+  }, [session?.user?.id]);
 
   useEffect(() => {
     let mounted = true;
@@ -516,14 +790,20 @@ function App() {
     };
   }, []);
 
+  const lastCheckedUserId = useRef(null);
   useEffect(() => {
     if (!session) {
+      lastCheckedUserId.current = null;
       setAuthorized(false);
       setAuthorizationLoading(false);
       return;
     }
-    checkAuthorization(session);
-  }, [session]);
+    // Token refreshes and tab refocus create a new session object for the same user.
+    // Only run the full check (and loader) when the user actually changes.
+    const isSameUser = lastCheckedUserId.current === session.user.id;
+    lastCheckedUserId.current = session.user.id;
+    checkAuthorization(session, { silent: isSameUser });
+  }, [session?.user?.id]);
 
   useEffect(() => {
     if (!authorized || authorizationProfile?.role !== 'admin') {
@@ -532,7 +812,12 @@ function App() {
 
     fetchAuthorizedUsers();
   }, [authorized, authorizationProfile?.role]);
+  // Fetch notifications 
+  useEffect(() => {
+    if (!session?.user?.id) return;
 
+    fetchNotifications();
+  }, [session?.user?.id]);
   // Fetch when page loads
   useEffect(() => {
     if (!session || !authorized) return;
@@ -541,8 +826,74 @@ function App() {
     fetchDeals();
     fetchActivities();
     fetchTickets();
+    fetchEmailIntegrations(); fetchLeads(); fetchEmailLogs(); fetchCalendarEvents(); fetchQuotes(); fetchInvoices(); fetchPayments(); fetchDocuments(); fetchWorkflows(); fetchSegments();
   }, [session, authorized]);
 
+
+  useEffect(() => {
+    const onKey = e => {
+      if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'k') {
+        e.preventDefault();
+        searchInputRef.current?.focus();
+      }
+      if (e.key === 'Escape') {
+        setGlobalSearch('');
+        setShowNotifications(false);
+      }
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, []);
+
+  async function importCustomers(rows) {
+    const existing = new Set(customers.map(c => (c.email || '').toLowerCase()));
+    const seen = new Set();
+    const valid = [];
+    let invalid = 0;
+    let duplicates = 0;
+
+    rows.forEach(r => {
+      if (!r.name || !/^\S+@\S+\.\S+$/.test(r.email)) { invalid++; return; }
+      const key = r.email.toLowerCase();
+      if (existing.has(key) || seen.has(key)) { duplicates++; return; }
+      seen.add(key);
+      valid.push({
+        name: r.name,
+        company: r.company || null,
+        email: r.email,
+        status: CUSTOMER_STATUSES.includes(r.status) ? r.status : 'Active'
+      });
+    });
+
+    if (valid.length === 0) {
+      showToast(`Nothing imported (${invalid} invalid, ${duplicates} duplicates). Your CSV needs the columns: name, company, email, status.`);
+      return;
+    }
+
+    const { data, error } = await supabase.from('customers').insert(valid).select();
+    if (error) {
+      console.error('Import failed:', error);
+      showToast(`Import failed: ${error.message}`);
+      return;
+    }
+    setCustomers(prev => [...(data || []), ...prev]);
+    showToast(`Imported ${(data || []).length} customers. Skipped ${invalid} invalid and ${duplicates} duplicates.`);
+  }
+
+  async function markAllNotificationsRead() {
+    if (unreadNotificationCount === 0) return;
+    const { error } = await supabase
+      .from('notifications')
+      .update({ read: true })
+      .eq('user_id', session.user.id)
+      .eq('read', false);
+    if (error) {
+      console.error('Failed to mark notifications as read:', error);
+      return;
+    }
+    setNotifications(prev => prev.map(n => ({ ...n, read: true })));
+    setUnreadNotificationCount(0);
+  }
 
   async function addCustomer(e) {
     e.preventDefault();
@@ -561,7 +912,7 @@ function App() {
             name: newCustomer.name.trim(),
             company: newCustomer.company.trim() || null,
             email: newCustomer.email.trim(),
-            status: 'Active'
+            status: newCustomer.status || 'Active'
           }
         ])
         .select()
@@ -578,7 +929,8 @@ function App() {
       setNewCustomer({
         name: '',
         company: '',
-        email: ''
+        email: '',
+        status: 'Active'
       });
 
       setShowCustomerForm(false);
@@ -590,6 +942,70 @@ function App() {
     } finally {
       setSaving(false);
     }
+  }
+  async function deleteCustomer(id) {
+    const confirmed = window.confirm(
+      'Are you sure you want to delete this customer?'
+    );
+
+    if (!confirmed) return;
+
+    const { error } = await supabase
+      .from('customers')
+      .delete()
+      .eq('id', id);
+
+    if (error) {
+      console.error('Error deleting customer:', error);
+      alert(`Could not delete customer: ${error.message}`);
+      return;
+    }
+
+    setCustomers(prev =>
+      prev.filter(customer => customer.id !== id)
+    );
+
+    if (selectedCustomer?.id === id) {
+      setSelectedCustomer(null);
+    }
+  }
+  async function updateCustomer(e) {
+    e.preventDefault();
+
+    if (!editingCustomer?.name.trim() || !editingCustomer?.email.trim()) {
+      alert('Name and email are required.');
+      return;
+    }
+
+    const { data, error } = await supabase
+      .from('customers')
+      .update({
+        name: editingCustomer.name.trim(),
+        company: editingCustomer.company?.trim() || null,
+        email: editingCustomer.email.trim(),
+        status: editingCustomer.status || 'Active'
+      })
+      .eq('id', editingCustomer.id)
+      .select()
+      .single();
+
+    if (error) {
+      console.error('Error updating customer:', error);
+      alert(`Could not update customer: ${error.message}`);
+      return;
+    }
+
+    setCustomers(prev =>
+      prev.map(customer =>
+        customer.id === data.id ? data : customer
+      )
+    );
+
+    if (selectedCustomer?.id === data.id) {
+      setSelectedCustomer(data);
+    }
+
+    setEditingCustomer(null);
   }
   async function addDeal(e) {
     e.preventDefault();
@@ -621,7 +1037,8 @@ function App() {
             company: newDeal.company.trim() || null,
             amount: Number(newDeal.amount),
             stage: newDeal.stage,
-            customer_id: newDeal.customer_id || null
+            customer_id: newDeal.customer_id || null,
+            created_by: session.user.id
           }
         ])
         .select()
@@ -656,7 +1073,8 @@ function App() {
     }
   }
   async function moveDeal(id, stage) {
-    const previousDeals = deals;
+    const previousStage = deals.find(d => d.id === id)?.stage;
+    if (previousStage === stage) return;
 
     // Update the interface immediately
     setDeals(prev =>
@@ -675,7 +1093,7 @@ function App() {
       console.error('Error updating deal stage:', error);
 
       // Restore the previous stage if the database update fails
-      setDeals(previousDeals);
+      setDeals(prev => prev.map(d => (d.id === id ? { ...d, stage: previousStage } : d)));
 
       alert(`Could not update deal stage: ${error.message}`);
     }
@@ -773,7 +1191,8 @@ function App() {
             : new Date().toISOString(),
           customer_id: newActivity.customer_id || null,
           notes: newActivity.notes.trim() || null,
-          status: newActivity.status
+          status: newActivity.status,
+          created_by: session.user.id
         }
       ]);
 
@@ -794,25 +1213,31 @@ function App() {
     setShowActivityForm(false);
     fetchActivities();
   }
+  async function updateActivity(e) {
+    e.preventDefault();
+    setEditActivityError('');
+    if (!editingActivity?.title?.trim()) { setEditActivityError('Activity title is required.'); return; }
+    setEditActivitySaving(true);
+    try {
+      const { data, error } = await supabase.from('activities').update({
+        title: editingActivity.title.trim(), type: editingActivity.type,
+        activity_date: editingActivity.activity_date || null,
+        customer_id: editingActivity.customer_id || null,
+        notes: editingActivity.notes?.trim() || null,
+        status: editingActivity.status
+      }).eq('id', editingActivity.id).select('*').single();
+      if (error) { console.error('Error updating activity:', error); setEditActivityError(error.message); return; }
+      setActivities(prev => prev.map(activity => activity.id === data.id ? data : activity));
+      setEditingActivity(null);
+      if (selectedActivity?.id === data.id) setSelectedActivity(data);
+    } finally { setEditActivitySaving(false); }
+  }
+
   async function updateActivityStatus(id, status) {
-    const { data, error } = await supabase
-      .from('activities')
-      .update({ status })
-      .eq('id', id)
-      .select()
-      .single();
-
-    if (error) {
-      console.error('Error updating activity:', error);
-      alert(error.message);
-      return;
-    }
-
-    setActivities((prev) =>
-      prev.map((activity) =>
-        activity.id === data.id ? data : activity
-      )
-    );
+    const { data, error } = await supabase.from('activities').update({ status }).eq('id', id).select('*').single();
+    if (error) { console.error('Error updating activity:', error); alert(error.message); return; }
+    setActivities(prev => prev.map(activity => activity.id === data.id ? data : activity));
+    if (selectedActivity?.id === data.id) setSelectedActivity(data);
   }
   async function deleteActivity(id) {
     const confirmed = window.confirm(
@@ -839,100 +1264,56 @@ function App() {
   async function addTicket(e) {
     e.preventDefault();
     setTicketError('');
-    if (!newTicket.title.trim()) {
-      setTicketError('Ticket title is required.');
-      return;
-    }
+    if (!newTicket.title.trim()) { setTicketError('Ticket title is required.'); return; }
     setTicketSaving(true);
     try {
-      const { data, error } = await supabase
-        .from('tickets')
-        .insert([
-          {
-            title: newTicket.title.trim(),
-            description: newTicket.description.trim() || null,
-            customer_id: newTicket.customer_id || null,
-            status: newTicket.status,
-            priority: newTicket.priority,
-            category: newTicket.category
-          }
-        ])
-        .select(`
-        *,
-        customers (
-          name,
-          company
-        )
-      `)
-        .single();
-      if (error) {
-        console.error('Error adding ticket:', error);
-        setTicketError(error.message);
-        return;
-      }
+      const { data, error } = await supabase.from('tickets').insert([{
+        title: newTicket.title.trim(), description: newTicket.description.trim() || null,
+        customer_id: newTicket.customer_id || null, status: newTicket.status,
+        priority: newTicket.priority, category: newTicket.category, created_by: session.user.id
+      }]).select(`*, customers (name, company)`).single();
+      if (error) { console.error('Error adding ticket:', error); setTicketError(error.message); return; }
       setTickets(prev => [data, ...prev]);
-      setNewTicket({
-        title: '',
-        description: '',
-        customer_id: '',
-        status: 'Open',
-        priority: 'Medium',
-        category: 'General'
-      });
+      setNewTicket({ title: '', description: '', customer_id: '', status: 'Open', priority: 'Medium', category: 'General' });
       setShowTicketForm(false);
-    } catch (error) {
-      console.error('Unexpected error:', error);
-      setTicketError('Something went wrong. Please try again.');
-    } finally {
-      setTicketSaving(false);
-    }
+    } catch (error) { console.error('Unexpected error:', error); setTicketError('Something went wrong. Please try again.'); }
+    finally { setTicketSaving(false); }
   }
+
+  async function updateTicket(e) {
+    e.preventDefault();
+    setEditTicketError('');
+    if (!editingTicket?.title?.trim()) { setEditTicketError('Ticket title is required.'); return; }
+    setEditTicketSaving(true);
+    try {
+      const { data, error } = await supabase.from('tickets').update({
+        title: editingTicket.title.trim(), description: editingTicket.description?.trim() || null,
+        customer_id: editingTicket.customer_id || null, status: editingTicket.status,
+        priority: editingTicket.priority, category: editingTicket.category, updated_at: new Date().toISOString()
+      }).eq('id', editingTicket.id).select(`*, customers (name, company)`).single();
+      if (error) { console.error('Error updating ticket:', error); setEditTicketError(error.message); return; }
+      setTickets(prev => prev.map(ticket => ticket.id === data.id ? data : ticket));
+      setEditingTicket(null);
+      if (selectedTicket?.id === data.id) setSelectedTicket(data);
+    } finally { setEditTicketSaving(false); }
+  }
+
   async function updateTicketStatus(id, status) {
     setTicketError('');
-    const { data, error } = await supabase
-      .from('tickets')
-      .update({
-        status,
-        updated_at: new Date().toISOString()
-      })
-      .eq('id', id)
-      .select(`
-      *,
-      customers (
-        name,
-        company
-      )
-    `)
-      .single();
-    if (error) {
-      console.error('Error updating ticket status:', error);
-      setTicketError(error.message);
-      return;
-    }
-    setTickets(prev =>
-      prev.map(ticket =>
-        ticket.id === id ? data : ticket
-      )
-    );
+    const { data, error } = await supabase.from('tickets').update({ status, updated_at: new Date().toISOString() }).eq('id', id).select(`*, customers (name, company)`).single();
+    if (error) { console.error('Error updating ticket status:', error); setTicketError(error.message); return; }
+    setTickets(prev => prev.map(ticket => ticket.id === id ? data : ticket));
+    if (selectedTicket?.id === id) setSelectedTicket(data);
   }
+
   async function deleteTicket(id) {
-    const confirmed = window.confirm(
-      'Are you sure you want to delete this ticket?'
-    );
+    const confirmed = window.confirm('Are you sure you want to delete this ticket?');
     if (!confirmed) return;
     setTicketError('');
-    const { error } = await supabase
-      .from('tickets')
-      .delete()
-      .eq('id', id);
-    if (error) {
-      console.error('Error deleting ticket:', error);
-      setTicketError(error.message);
-      return;
-    }
-    setTickets(prev =>
-      prev.filter(ticket => ticket.id !== id)
-    );
+    const { error } = await supabase.from('tickets').delete().eq('id', id);
+    if (error) { console.error('Error deleting ticket:', error); setTicketError(error.message); return; }
+    setTickets(prev => prev.filter(ticket => ticket.id !== id));
+    if (selectedTicket?.id === id) setSelectedTicket(null);
   }
 
   if (authLoading || authorizationLoading) {
@@ -967,6 +1348,7 @@ function App() {
         password={password}
         setPassword={setPassword}
         error={authError}
+        notice={authNotice}
         loading={authLoading || authorizationLoading || emailLoading}
       />
     );
@@ -975,31 +1357,30 @@ function App() {
   // The rendering of the entire page is done here
   return <div className="app-shell">
     <aside className={`sidebar ${sidebarOpen ? 'sidebar-open' : ''}`}>
-      <div className="brand"><div className="brand-mark">O</div><span>orbit<span className="brand-accent">CRM</span></span><button className="icon-btn close-mobile" onClick={() => setSidebarOpen(false)}><X size={18} /></button></div>
+      <div className="brand">
+        <div className="brand-mark"></div>
+        <span>orbit<span className="brand-accent">CRM</span></span>
+        <button className="icon-btn close-mobile" onClick={() => setSidebarOpen(false)}><X size={18} /></button>
+      </div>
       <div className="workspace-label">WORKSPACE</div>
-      <nav>
-        {navItems.map(([label, Icon]) => (
-          <button
-            key={label} className={`nav-item ${page === label ? 'active' : ''}`} onClick={() => {
-              setPage(label); setSidebarOpen(false);
-            }}
-          >
-            <Icon size={18} />
-            <span>{label}</span>
-          </button>
+      <nav className="nav-sections" style={{ overflowY: "auto", paddingBottom: 12 }}>
+        {navSections.map(section => (
+          <div className="nav-section" key={section.title} style={{ marginBottom: 10 }}>
+            <div className="nav-section-title" style={{ fontSize: 11, fontWeight: 700, letterSpacing: ".08em", opacity: .55, padding: "10px 14px 6px", textTransform: "uppercase" }}>{section.title}</div>
+            {section.items.map(([label, Icon]) => (
+              <button key={label} className={`nav-item ${page === label ? 'active' : ''}`} onClick={() => { setPage(label); setSidebarOpen(false); }}>
+                <Icon size={18} /><span>{label}</span>
+              </button>
+            ))}
+          </div>
         ))}
-
         {authorizationProfile?.role === 'admin' && (
-          <button
-            className={`nav-item ${page === 'UserManagement' ? 'active' : ''}`}
-            onClick={() => {
-              setPage('UserManagement');
-              setSidebarOpen(false);
-            }}
-          >
-            <UserCog size={18} />
-            <span>User Management</span>
-          </button>
+          <div className="nav-section" style={{ marginBottom: 10 }}>
+            <div className="nav-section-title" style={{ fontSize: 11, fontWeight: 700, letterSpacing: ".08em", opacity: .55, padding: "10px 14px 6px", textTransform: "uppercase" }}>Administration</div>
+            <button className={`nav-item ${page === 'UserManagement' ? 'active' : ''}`} onClick={() => { setPage('UserManagement'); setSidebarOpen(false); }}>
+              <UserCog size={18} /><span>User Management</span>
+            </button>
+          </div>
         )}
       </nav>
       <div className="sidebar-bottom">
@@ -1035,12 +1416,132 @@ function App() {
       </div>
     </aside>
     <main className="main-content">
-      <header className="topbar"><button className="icon-btn menu-mobile" onClick={() => setSidebarOpen(true)}><Menu size={20} /></button><div className="breadcrumb"><span>Workspace</span><b>/</b><strong>{page}</strong></div><div className="top-actions"><div className="global-search"><Search size={16} /><input placeholder="Search anything..." value={search} onChange={e => setSearch(e.target.value)} /><kbd>⌘ K</kbd></div><button className="icon-btn"><Bell size={19} /><span className="notification-dot" /></button><div className="avatar">{(session?.user?.email?.[0] || 'U').toUpperCase()}</div></div></header>
+      <header className="topbar">
+        <button className="icon-btn menu-mobile" onClick={() => setSidebarOpen(true)}><Menu size={20} /></button>
+        <div className="breadcrumb">
+          <span>Workspace</span>
+          <b>/</b>
+          <strong>{page}</strong>
+        </div>
+        <div className="top-actions">
+          <div className="global-search">
+            <Search size={16} />
+            <input
+              ref={searchInputRef}
+              placeholder="Search anything..."
+              value={globalSearch}
+              onChange={e => setGlobalSearch(e.target.value)}
+            />
+            <kbd>⌘ K</kbd>
+            {globalSearch.trim() && (
+              <div
+                style={{
+                  position: 'absolute',
+                  top: 'calc(100% + 8px)',
+                  left: 0,
+                  right: 0,
+                  zIndex: 1000,
+                  background: 'white',
+                  border: '1px solid #e5e7eb',
+                  borderRadius: '10px',
+                  boxShadow: '0 10px 30px rgba(0,0,0,0.12)',
+                  overflow: 'hidden'
+                }}
+              >
+                {globalSearchResults.length === 0 ? (
+                  <div style={{ padding: '14px', fontSize: '14px', color: '#6b7280' }}>
+                    No results found.
+                  </div>
+                ) : (
+                  globalSearchResults.map((result, index) => (
+                    <button
+                      key={`${result.type}-${index}`}
+                      type="button"
+                      onClick={() => {
+                        setPage(result.page);
+                        setGlobalSearch('');
+
+                        if (result.type === 'Customer') {
+                          setSelectedCustomer(result.customer);
+                        }
+                      }}
+                      style={{
+                        width: '100%',
+                        display: 'block',
+                        textAlign: 'left',
+                        padding: '12px 14px',
+                        border: 'none',
+                        borderBottom: '1px solid #f1f5f9',
+                        background: 'white',
+                        cursor: 'pointer'
+                      }}
+                    >
+                      <strong style={{ display: 'block', fontSize: '14px' }}>
+                        {result.title}
+                      </strong>
+
+                      <span style={{ fontSize: '12px', color: '#6b7280' }}>
+                        {result.type} · {result.subtitle}
+                      </span>
+                    </button>
+                  ))
+                )}
+              </div>
+            )}
+          </div>
+          <button className="icon-btn" style={{ position: 'relative' }} title='Notifications' onClick={() => setShowNotifications(prev => !prev)}>
+            <Bell size={19} />
+            {unreadNotificationCount > 0 && (
+              <span
+                style={{
+                  position: 'absolute',
+                  top: '-4px',
+                  right: '-4px',
+                  minWidth: '16px',
+                  height: '16px',
+                  borderRadius: '999px',
+                  fontSize: '10px',
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'center'
+                }}
+              >
+                {unreadNotificationCount}
+              </span>
+            )}
+          </button>
+          <div className="avatar">{(session?.user?.email?.[0] || 'U').toUpperCase()}</div>
+        </div>
+      </header>
       <section className="page-content">
         {page === 'Dashboard' && (
-          <Dashboard revenue={revenue} customers={customers} deals={deals} activities={activities} setPage={setPage} formatAmount={formatAmount} />
+          <Dashboard revenue={revenue} customers={customers} deals={deals} activities={activities} tickets={tickets} setPage={setPage} formatAmount={formatAmount} onSelectCustomer={setSelectedCustomer} onEditCustomer={setEditingCustomer} onDeleteCustomer={deleteCustomer} />
         )}
-        {page === 'Customers' && <Customers customers={filteredCustomers} search={search} setSearch={setSearch} onAdd={() => setShowCustomerForm(true)} formatAmount={formatAmount} />}
+        {page === 'Customers' && (
+          <Customers customers={filteredCustomers}
+            allCustomers={customers}
+            search={search}
+            setSearch={setSearch}
+            statusFilter={statusFilter}
+            setStatusFilter={setStatusFilter}
+            deals={deals}
+            onImport={importCustomers}
+            onAdd={() => { setCustomerError(''); setShowCustomerForm(true); }}
+            formatAmount={formatAmount}
+            onSelectCustomer={setSelectedCustomer}
+            onDeleteCustomer={deleteCustomer}
+            onEditCustomer={setEditingCustomer}
+          />
+        )}
+        {page === 'Leads' && <Leads leads={leads} customers={customers} onAdd={addLead} onUpdate={updateLead} onDelete={deleteLead} currentUserId={session.user.id} isAdmin={authorizationProfile?.role === 'admin'} />}
+        {page === 'Email' && <EmailPage emailLogs={emailLogs} customers={customers} integrations={emailIntegrations} loading={emailIntegrationLoading} error={emailIntegrationError} onConnect={connectEmailProvider} onDisconnect={disconnectEmailProvider} onAdd={async payload => { try { await addEmailLog(payload); showToast('Email logged.'); } catch (e) { alert(e.message); } }} />}
+        {page === 'Calendar' && <CalendarPage events={calendarEvents} customers={customers} onAdd={addCalendarEvent} onUpdate={updateCalendarEvent} onDelete={deleteCalendarEvent} />}
+        {page === 'Quotes' && <Quotes quotes={quotes} customers={customers} onAdd={addQuote} onUpdate={updateQuote} formatAmount={formatAmount} currentUserId={session.user.id} isAdmin={authorizationProfile?.role === 'admin'} />}
+        {page === 'Invoices' && <Invoices invoices={invoices} payments={payments} customers={customers} onAdd={addInvoice} onUpdate={updateInvoice} onAddPayment={addPayment} formatAmount={formatAmount} currentUserId={session.user.id} isAdmin={authorizationProfile?.role === 'admin'} />}
+        {page === 'Documents' && <Documents documents={documents} customers={customers} onUpload={uploadDocument} onDownload={downloadDocument} onDelete={deleteDocument} />}
+        {page === 'Automation' && <Automation workflows={workflows} onAdd={addWorkflow} onUpdate={updateWorkflow} />}
+        {page === 'Segments' && <Segments segments={segments} customers={customers} onAdd={addSegment} onUpdate={updateSegment} />}
+        {page === 'Forecast' && <Forecast deals={deals} formatAmount={formatAmount} />}
         {page === 'Pipeline' && (
           <Pipeline
             deals={deals}
@@ -1048,6 +1549,8 @@ function App() {
             moveDeal={moveDeal}
             deleteDeal={deleteDeal}
             formatAmount={formatAmount}
+            currentUserId={session.user.id}
+            isAdmin={authorizationProfile?.role === 'admin'}
             onEdit={deal => {
               setEditDealError('');
               setEditingDeal({
@@ -1057,119 +1560,30 @@ function App() {
             }}
             onAdd={() => {
               setDealError('');
+              setNewDeal({ title: '', company: '', amount: '', stage: 'New Lead', customer_id: '' });
               setShowDealForm(true);
             }}
           />
         )}
         {page === 'Activities' && (
-          <Activities activities={activities} customers={customers} onAdd={() => { setActivityError(''); setShowActivityForm(true); }} onStatusChange={updateActivityStatus} onDelete={deleteActivity} />
+          <Activities activities={activities} customers={customers} onAdd={() => { setActivityError(''); setNewActivity(a => ({ ...a, customer_id: '' })); setShowActivityForm(true); }} onStatusChange={updateActivityStatus} onDelete={deleteActivity} onEdit={activity => { setEditActivityError(''); setEditingActivity({ ...activity, activity_date: formatDateTimeLocal(activity.activity_date) }); }} onView={setSelectedActivity} currentUserId={session.user.id} isAdmin={authorizationProfile?.role === 'admin'} />
         )}
         {page === 'Tickets' && (
-          <>
-            <PageHeading
-              eyebrow="SUPPORT"
-              title="Tickets"
-              description="Manage customer issues and support requests."
-              action="Create Ticket"
-              onAction={() => {
-                setTicketError('');
-                setShowTicketForm(true);
-              }}
-            />
-
-            <div className="panel">
-              <div className="panel-heading">
-                <div>
-                  <h3>All Tickets</h3>
-                  <p>{tickets.length} total tickets</p>
-                </div>
-              </div>
-
-              {tickets.length === 0 ? (
-                <div className="empty-state">
-                  <p>No tickets yet.</p>
-
-                  <button
-                    type="button"
-                    className="secondary-btn"
-                    onClick={() => {
-                      setTicketError('');
-                      setShowTicketForm(true);
-                    }}
-                  >
-                    Create your first ticket
-                  </button>
-                </div>
-              ) : (
-                <div className="table-wrap">
-                  <table>
-                    <thead>
-                      <tr>
-                        <th>Ticket</th>
-                        <th>Customer</th>
-                        <th>Priority</th>
-                        <th>Status</th>
-                        <th>Created</th>
-                        <th>Actions</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {tickets.map((ticket) => (
-                        <tr key={ticket.id}>
-                          <td>
-                            <strong>{ticket.title}</strong>
-                            <div className="deal-customer">
-                              {ticket.category || 'General'}
-                            </div>
-                          </td>
-                          <td>
-                            {ticket.customers?.name || 'Unassigned'}
-                          </td>
-                          <td>
-                            <span className={`status ${ticket.priority.toLowerCase()}`}>
-                              {ticket.priority}
-                            </span>
-                          </td>
-                          <td>
-                            <select
-                              className="ticket-status-select"
-                              value={ticket.status}
-                              onChange={e =>
-                                updateTicketStatus(ticket.id, e.target.value)
-                              }
-                            >
-                              <option value="Open">Open</option>
-                              <option value="In Progress">In Progress</option>
-                              <option value="Resolved">Resolved</option>
-                              <option value="Closed">Closed</option>
-                            </select>
-                          </td>
-                          <td>
-                            {ticket.created_at
-                              ? new Date(ticket.created_at).toLocaleDateString()
-                              : '—'}
-                          </td>
-                          <td>
-                            <button
-                              type="button"
-                              className="icon-btn"
-                              title="Delete ticket"
-                              onClick={() => deleteTicket(ticket.id)}
-                            >
-                              <X size={16} />
-                            </button>
-                          </td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
-                </div>
-              )}
-            </div>
-          </>
+          <Tickets
+            tickets={tickets}
+            error={ticketError}
+            onAdd={() => { setTicketError(''); setNewTicket(t => ({ ...t, customer_id: '' })); setShowTicketForm(true); }}
+            onStatusChange={updateTicketStatus}
+            onDelete={deleteTicket}
+            onEdit={ticket => { setEditTicketError(''); setEditingTicket(ticket); }}
+            onView={setSelectedTicket}
+            currentUserId={session.user.id}
+            isAdmin={authorizationProfile?.role === 'admin'}
+          />
         )}
         {page === 'Chat' && <Chat />}
-        {page === 'Reports' && <Reports customers={customers} deals={deals} formatAmount={formatAmount} />}
+        {page === 'Reports' && <AdvancedReports customers={customers} deals={deals} activities={activities} tickets={tickets} leads={leads} quotes={quotes} invoices={invoices} payments={payments} formatAmount={formatAmount} />}
+        {page === 'Email Logs' && <EmailLogs emailLogs={emailLogs} customers={customers} onAdd={addEmailLog} />}
         {page === 'UserManagement' && <UserManagement users={authorizedUsers} loading={usersLoading} error={usersError} onRefresh={fetchAuthorizedUsers} onUpdateUser={updateAuthorizedUser} currentUserId={session?.user?.id} />}
         {page === 'Settings' && <SettingsPage currency={currency} setCurrency={setCurrency} />}
       </section>
@@ -1181,6 +1595,7 @@ function App() {
             <h2>Add customer</h2>
             <button type="button" className="icon-btn" onClick={() => setShowCustomerForm(false)}><X size={18} /></button>
           </div>
+          {customerError && <div className="form-error">{customerError}</div>}
           <label>Full name<input value={newCustomer.name} onChange={e => setNewCustomer({ ...newCustomer, name: e.target.value })} required /> </label>
           <label>
             Company
@@ -1195,12 +1610,116 @@ function App() {
             />
           </label>
           <label>Email<input type="email" value={newCustomer.email} onChange={e => setNewCustomer({ ...newCustomer, email: e.target.value })} required /> </label>
+          <label>
+            Status
+            <select value={newCustomer.status} onChange={e => setNewCustomer({ ...newCustomer, status: e.target.value })}>
+              <option value="Lead">Lead</option>
+              <option value="Active">Active</option>
+              <option value="Inactive">Inactive</option>
+            </select>
+          </label>
           <button
             className="primary-btn"
             type="submit"
             disabled={saving}
           >
             {saving ? 'Creating...' : 'Create customer'}
+          </button>
+        </form>
+      </div>
+    )}
+    {selectedCustomer && (
+      <CustomerDetail
+        customer={selectedCustomer}
+        deals={deals}
+        activities={activities}
+        tickets={tickets}
+        formatAmount={formatAmount}
+        onClose={() => setSelectedCustomer(null)}
+        onEdit={c => { setSelectedCustomer(null); setEditingCustomer(c); }}
+        onAddDeal={c => { setSelectedCustomer(null); setDealError(''); setNewDeal(d => ({ ...d, customer_id: c.id, company: c.company || '' })); setShowDealForm(true); }}
+        onAddActivity={c => { setSelectedCustomer(null); setActivityError(''); setNewActivity(a => ({ ...a, customer_id: c.id })); setShowActivityForm(true); }}
+        onAddTicket={c => { setSelectedCustomer(null); setTicketError(''); setNewTicket(t => ({ ...t, customer_id: c.id })); setShowTicketForm(true); }}
+      />
+    )}
+    {editingCustomer && (
+      <div
+        className="modal-backdrop"
+        onClick={() => setEditingCustomer(null)}
+      >
+        <form
+          className="modal"
+          onSubmit={updateCustomer}
+          onClick={e => e.stopPropagation()}
+        >
+          <div className="modal-heading">
+            <h2>Edit customer</h2>
+
+            <button
+              type="button"
+              className="icon-btn"
+              onClick={() => setEditingCustomer(null)}
+            >
+              <X size={18} />
+            </button>
+          </div>
+
+          <label>
+            Name
+            <input
+              type="text"
+              value={editingCustomer.name || ''}
+              onChange={e =>
+                setEditingCustomer({
+                  ...editingCustomer,
+                  name: e.target.value
+                })
+              }
+            />
+          </label>
+
+          <label>
+            Company
+            <input
+              type="text"
+              value={editingCustomer.company || ''}
+              onChange={e =>
+                setEditingCustomer({
+                  ...editingCustomer,
+                  company: e.target.value
+                })
+              }
+            />
+          </label>
+
+          <label>
+            Email
+            <input
+              type="email"
+              value={editingCustomer.email || ''}
+              onChange={e =>
+                setEditingCustomer({
+                  ...editingCustomer,
+                  email: e.target.value
+                })
+              }
+            />
+          </label>
+
+          <label>
+            Status
+            <select
+              value={editingCustomer.status || 'Active'}
+              onChange={e => setEditingCustomer({ ...editingCustomer, status: e.target.value })}
+            >
+              <option value="Lead">Lead</option>
+              <option value="Active">Active</option>
+              <option value="Inactive">Inactive</option>
+            </select>
+          </label>
+
+          <button type="submit" className="primary-btn">
+            Save changes
           </button>
         </form>
       </div>
@@ -1244,7 +1763,6 @@ function App() {
 
           <label>
             Company
-
             <input
               value={newDeal.company}
               onChange={e =>
@@ -1253,7 +1771,7 @@ function App() {
                   company: e.target.value
                 })
               }
-              placeholder="e.g. Acme Ltd"
+              placeholder="e.g. Storhet Ltd"
             />
           </label>
           <label>
@@ -1286,7 +1804,7 @@ function App() {
             </select>
           </label>
           <label>
-            Deal amount
+            Deal amount (USD)
 
             <input
               type="number"
@@ -1415,7 +1933,7 @@ function App() {
           </label>
 
           <label>
-            Deal amount
+            Deal amount (USD)
 
             <input
               type="number"
@@ -1583,6 +2101,7 @@ function App() {
                 }
               >
                 <option value="Scheduled">Scheduled</option>
+                <option value="In Progress">In Progress</option>
                 <option value="Completed">Completed</option>
                 <option value="Cancelled">Cancelled</option>
               </select>
@@ -1613,6 +2132,10 @@ function App() {
         </div>
       </div>
     )}
+    {selectedActivity && <ActivityDetail activity={selectedActivity} customer={customers.find(c => c.id === selectedActivity.customer_id)} onClose={() => setSelectedActivity(null)} onEdit={activity => { setSelectedActivity(null); setEditActivityError(''); setEditingActivity({ ...activity, activity_date: formatDateTimeLocal(activity.activity_date) }); }} />}
+    {editingActivity && <div className="modal-backdrop" onClick={() => setEditingActivity(null)}><form className="modal" onSubmit={updateActivity} onClick={e => e.stopPropagation()}><div className="modal-heading"><h2>Edit Activity</h2><button type="button" className="icon-btn" onClick={() => setEditingActivity(null)}><X size={18} /></button></div>{editActivityError && <p className="form-error">{editActivityError}</p>}<label>Activity title<input type="text" value={editingActivity.title || ''} onChange={e => setEditingActivity({ ...editingActivity, title: e.target.value })} required /></label><label>Activity type<select value={editingActivity.type || 'Task'} onChange={e => setEditingActivity({ ...editingActivity, type: e.target.value })}><option value="Task">Task</option><option value="Call">Call</option><option value="Meeting">Meeting</option><option value="Email">Email</option><option value="Follow-up">Follow-up</option></select></label><label>Date and time<input type="datetime-local" value={editingActivity.activity_date || ''} onChange={e => setEditingActivity({ ...editingActivity, activity_date: e.target.value })} /></label><label>Customer<select value={editingActivity.customer_id || ''} onChange={e => setEditingActivity({ ...editingActivity, customer_id: e.target.value })}><option value="">No customer selected</option>{customers.map(customer => <option key={customer.id} value={customer.id}>{customer.name}{customer.company ? ` — ${customer.company}` : ''}</option>)}</select></label><label>Notes<textarea value={editingActivity.notes || ''} onChange={e => setEditingActivity({ ...editingActivity, notes: e.target.value })} rows="4" /></label><label>Status<select value={editingActivity.status || 'Scheduled'} onChange={e => setEditingActivity({ ...editingActivity, status: e.target.value })}><option value="Scheduled">Scheduled</option><option value="In Progress">In Progress</option><option value="Completed">Completed</option><option value="Cancelled">Cancelled</option></select></label><div className="modal-actions"><button type="button" className="secondary-btn" onClick={() => setEditingActivity(null)}>Cancel</button><button type="submit" className="primary-btn" disabled={editActivitySaving}>{editActivitySaving ? 'Saving...' : 'Save changes'}</button></div></form></div>}
+    {selectedTicket && <TicketDetail ticket={selectedTicket} onClose={() => setSelectedTicket(null)} onEdit={ticket => { setSelectedTicket(null); setEditTicketError(''); setEditingTicket(ticket); }} />}
+    {editingTicket && <div className="modal-backdrop" onClick={() => setEditingTicket(null)}><form className="modal" onSubmit={updateTicket} onClick={e => e.stopPropagation()}><div className="modal-heading"><h2>Edit Ticket</h2><button type="button" className="icon-btn" onClick={() => setEditingTicket(null)}><X size={18} /></button></div>{editTicketError && <p className="form-error">{editTicketError}</p>}<label>Ticket title<input type="text" value={editingTicket.title || ''} onChange={e => setEditingTicket({ ...editingTicket, title: e.target.value })} required /></label><label>Description<textarea value={editingTicket.description || ''} onChange={e => setEditingTicket({ ...editingTicket, description: e.target.value })} rows="4" /></label><label>Customer<select value={editingTicket.customer_id || ''} onChange={e => setEditingTicket({ ...editingTicket, customer_id: e.target.value })}><option value="">No customer selected</option>{customers.map(customer => <option key={customer.id} value={customer.id}>{customer.name}{customer.company ? ` — ${customer.company}` : ''}</option>)}</select></label><label>Category<select value={editingTicket.category || 'General'} onChange={e => setEditingTicket({ ...editingTicket, category: e.target.value })}><option value="General">General</option><option value="Technical">Technical</option><option value="Billing">Billing</option><option value="Account">Account</option><option value="Feature Request">Feature Request</option></select></label><label>Priority<select value={editingTicket.priority || 'Medium'} onChange={e => setEditingTicket({ ...editingTicket, priority: e.target.value })}><option value="Low">Low</option><option value="Medium">Medium</option><option value="High">High</option><option value="Urgent">Urgent</option></select></label><label>Status<select value={editingTicket.status || 'Open'} onChange={e => setEditingTicket({ ...editingTicket, status: e.target.value })}><option value="Open">Open</option><option value="In Progress">In Progress</option><option value="Resolved">Resolved</option><option value="Closed">Closed</option></select></label><div className="modal-actions"><button type="button" className="secondary-btn" onClick={() => setEditingTicket(null)}>Cancel</button><button type="submit" className="primary-btn" disabled={editTicketSaving}>{editTicketSaving ? 'Saving...' : 'Save changes'}</button></div></form></div>}
     {showTicketForm && (
       <div className="modal-backdrop">
         <form className="modal" onSubmit={addTicket}>
@@ -1754,11 +2277,113 @@ function App() {
         </form>
       </div>
     )}
-    {customerError && (
-      <div className="form-error">
-        {customerError}
+    {showNotifications && (
+      <div
+        style={{
+          position: 'fixed',
+          top: '70px',
+          right: '24px',
+          width: '360px',
+          maxHeight: '70vh',
+          overflowY: 'auto',
+          zIndex: 1000
+        }}
+      >
+        <div className="panel">
+          <div className="panel-heading">
+            <div>
+              <h3>Notifications</h3>
+              <p>
+                {unreadNotificationCount > 0
+                  ? `${unreadNotificationCount} unread`
+                  : 'All caught up'}
+              </p>
+            </div>
+
+            <div className="toolbar-actions">
+              <button
+                type="button"
+                className="secondary-btn"
+                onClick={markAllNotificationsRead}
+                disabled={unreadNotificationCount === 0}
+              >
+                Mark all read
+              </button>
+              <button
+                type="button"
+                className="secondary-btn"
+                onClick={() => setShowNotifications(false)}
+              >
+                Close
+              </button>
+            </div>
+          </div>
+
+          {notifications.length === 0 ? (
+            <div className="empty-state">
+              <p>No notifications yet.</p>
+            </div>
+          ) : (
+            <div>
+              {notifications.map(notification => (
+                <div
+                  key={notification.id}
+                  onClick={async () => {
+                    if (notification.read) return;
+
+                    const { error } = await supabase
+                      .from('notifications')
+                      .update({ read: true })
+                      .eq('id', notification.id)
+                      .eq('user_id', session.user.id);
+
+                    if (error) {
+                      console.error('Failed to mark notification as read:', error);
+                      return;
+                    }
+
+                    setNotifications(prev =>
+                      prev.map(item =>
+                        item.id === notification.id
+                          ? { ...item, read: true }
+                          : item
+                      )
+                    );
+
+                    setUnreadNotificationCount(prev => Math.max(0, prev - 1));
+                    if (notification.type === 'new_chat') {
+                      setPage('Chat');
+                      setShowNotifications(false);
+                    }
+                  }}
+                  style={{
+                    cursor: notification.read ? 'default' : 'pointer',
+                    padding: '12px 0',
+                    borderBottom: '1px solid rgba(0,0,0,0.08)',
+                    fontWeight: notification.read ? 'normal' : '600'
+                  }}
+                >
+                  <strong>{notification.title}</strong>
+
+                  {notification.message && (
+                    <p style={{ margin: '4px 0' }}>
+                      {notification.message}
+                    </p>
+                  )}
+
+                  <small>
+                    {notification.created_at
+                      ? new Date(notification.created_at).toLocaleString()
+                      : ''}
+                  </small>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
       </div>
     )}
+    {toast && <div className="toast" role="status">{toast}</div>}
   </div>
 }
 
@@ -1773,95 +2398,220 @@ function PageHeading({ eyebrow, title, description, action, onAction }) {
       <Plus size={17} />{action}</button>}
   </div>
 }
-function StatCard({ label, value, change, icon, tone }) { return <div className="stat-card"><div className={`stat-icon ${tone}`}>{icon}</div><div className="stat-label">{label}</div><div className="stat-value">{value}</div><div className="stat-change"><span>↗ {change}</span><small>vs last month</small></div></div> }
-function Dashboard({ revenue, customers, deals, activities, setPage, onAddCustomer, formatAmount }) {
+const PIPELINE_STAGES = ['New Lead', 'Qualified', 'Proposal', 'Won'];
+const CUSTOMER_STATUSES = ['Lead', 'Active', 'Inactive'];
+
+const isOpenActivity = a => a.status !== 'Completed' && a.status !== 'Cancelled';
+const isOverdue = a => isOpenActivity(a) && !!a.activity_date && new Date(a.activity_date) < new Date();
+const sumAmount = list => list.reduce((sum, d) => sum + (Number(d.amount) || 0), 0);
+const lifetimeValue = (customer, deals) => {
+  const won = sumAmount(deals.filter(d => d.customer_id === customer.id && d.stage === 'Won'));
+  return won || Number(customer.value) || 0;
+};
+const formatDate = value => value
+  ? new Date(value).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })
+  : '—';
+const formatDateTime = value => value
+  ? new Date(value).toLocaleString('en-US', { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' })
+  : 'No date';
+const formatDateTimeLocal = value => {
+  if (!value) return '';
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return '';
+  const offset = date.getTimezoneOffset();
+  return new Date(date.getTime() - offset * 60000).toISOString().slice(0, 16);
+};
+const trend = (current, previous) => {
+  if (!previous) return current ? '↗ New' : '0%';
+  const pct = ((current - previous) / previous) * 100;
+  return `${pct >= 0 ? '↗' : '↘'} ${Math.abs(pct).toFixed(1)}%`;
+};
+
+function parseCSV(text) {
+  const rows = [];
+  let row = [];
+  let cell = '';
+  let quoted = false;
+  for (let i = 0; i < text.length; i++) {
+    const ch = text[i];
+    if (quoted) {
+      if (ch === '"' && text[i + 1] === '"') { cell += '"'; i++; }
+      else if (ch === '"') quoted = false;
+      else cell += ch;
+    } else if (ch === '"') quoted = true;
+    else if (ch === ',') { row.push(cell); cell = ''; }
+    else if (ch === '\n' || ch === '\r') {
+      if (ch === '\r' && text[i + 1] === '\n') i++;
+      row.push(cell); cell = ''; rows.push(row); row = [];
+    } else cell += ch;
+  }
+  if (cell !== '' || row.length) { row.push(cell); rows.push(row); }
+  return rows.filter(r => r.some(c => c.trim() !== ''));
+}
+
+function downloadCSV(filename, header, rows) {
+  const escape = v => `"${String(v ?? '').replace(/"/g, '""')}"`;
+  const csv = [header, ...rows].map(r => r.map(escape).join(',')).join('\n');
+  const url = URL.createObjectURL(new Blob([csv], { type: 'text/csv;charset=utf-8;' }));
+  const link = document.createElement('a');
+  link.href = url;
+  link.download = filename;
+  link.click();
+  URL.revokeObjectURL(url);
+}
+
+function StatCard({ label, value, change, hint, icon, tone }) {
+  return (
+    <div className="stat-card">
+      <div className={`stat-icon ${tone}`}>{icon}</div>
+      <div className="stat-label">{label}</div>
+      <div className="stat-value">{value}</div>
+      <div className="stat-change">
+        {change != null ? <><span>{change}</span><small>vs last month</small></> : <small>{hint}</small>}
+      </div>
+    </div>
+  );
+}
+
+function Dashboard({ revenue, customers, deals, activities, tickets, setPage, formatAmount, onSelectCustomer, onEditCustomer, onDeleteCustomer }) {
+  const [range, setRange] = useState(6);
+
+  const monthlyRevenue = useMemo(() => {
+    const now = new Date();
+    const months = [];
+    for (let i = range - 1; i >= 0; i--) {
+      const d = new Date(now.getFullYear(), now.getMonth() - i, 1);
+      months.push({
+        label: d.toLocaleDateString('en-US', { month: 'short' }),
+        year: d.getFullYear(),
+        month: d.getMonth(),
+        revenue: 0
+      });
+    }
+    deals.forEach(deal => {
+      if (deal.stage !== 'Won' || !deal.created_at) return;
+      const d = new Date(deal.created_at);
+      const m = months.find(x => x.year === d.getFullYear() && x.month === d.getMonth());
+      if (m) m.revenue += Number(deal.amount) || 0;
+    });
+    return months;
+  }, [deals, range]);
+
+  const now = new Date();
+  const sameMonth = (value, offset) => {
+    if (!value) return false;
+    const d = new Date(value);
+    const ref = new Date(now.getFullYear(), now.getMonth() - offset, 1);
+    return d.getFullYear() === ref.getFullYear() && d.getMonth() === ref.getMonth();
+  };
+  const thisMonthRevenue = monthlyRevenue[monthlyRevenue.length - 1].revenue;
+  const lastMonthRevenue = monthlyRevenue[monthlyRevenue.length - 2]?.revenue || 0;
+  const newCustomers = customers.filter(c => sameMonth(c.created_at, 0)).length;
+  const lastNewCustomers = customers.filter(c => sameMonth(c.created_at, 1)).length;
+
+  const wonDeals = deals.filter(d => d.stage === 'Won');
+  const openDeals = deals.filter(d => d.stage !== 'Won');
+  const winRate = deals.length ? (wonDeals.length / deals.length) * 100 : 0;
+  const overdueCount = activities.filter(isOverdue).length;
+  const dueTodayCount = activities.filter(a => { if (!isOpenActivity(a) || !a.activity_date) return false; const d = new Date(a.activity_date); const today = new Date(); return d.getFullYear() === today.getFullYear() && d.getMonth() === today.getMonth() && d.getDate() === today.getDate(); }).length;
+  const openTickets = tickets.filter(t => t.status === 'Open' || t.status === 'In Progress').length;
+  const avgDeal = wonDeals.length ? sumAmount(wonDeals) / wonDeals.length : 0;
+
+  const upcoming = useMemo(() => activities
+    .filter(isOpenActivity)
+    .sort((a, b) => new Date(a.activity_date || 8.64e15) - new Date(b.activity_date || 8.64e15))
+    .slice(0, 4), [activities]);
+
+  const maxRevenue = Math.max(...monthlyRevenue.map(item => item.revenue), 0);
+  const step = maxRevenue > 0 ? maxRevenue / 4 : 0;
+  const chartMax = Math.max(maxRevenue, 1);
+  const points = monthlyRevenue.map((item, index) => {
+    const x = monthlyRevenue.length === 1 ? 0 : (index / (monthlyRevenue.length - 1)) * 600;
+    const y = 200 - (item.revenue / chartMax) * 175;
+    return `${x} ${y}`;
+  });
+  const linePath = `M${points[0]}${points.slice(1).map(p => ` L${p}`).join('')}`;
+  const areaPath = `${linePath} L600 220 L0 220 Z`;
+
   return <>
-    <PageHeading eyebrow="OVERVIEW" title="Good morning, Dan" description="Here's what's happening with your business today." />
+    <PageHeading eyebrow="OVERVIEW" title="Dashboard" description="Here's what's happening with your business today." />
     <div className="stats-grid">
-      <StatCard label="Total revenue" value={formatAmount(revenue)} change="0%" tone="purple" icon="↗" />
-      <StatCard label="Total customers" value={customers.length} change="8.2%" tone="blue" icon="♙" />
-      <StatCard label="Open opportunities" value={deals.filter(d => d.stage !== 'Won').length} change="4.6%" tone="orange" icon="◈" />
-      <StatCard label="Conversion rate" value="24.8%" change="2.4%" tone="green" icon="◉" />
+      <StatCard label="Revenue (won deals)" value={formatAmount(revenue)} change={trend(thisMonthRevenue, lastMonthRevenue)} tone="purple" icon="↗" />
+      <StatCard label="Customers" value={customers.length} change={trend(newCustomers, lastNewCustomers)} tone="blue" icon="♙" />
+      <StatCard label="Open pipeline" value={formatAmount(sumAmount(openDeals))} hint={`${openDeals.length} open deals`} tone="orange" icon="◈" />
+      <StatCard label="Win rate" value={`${winRate.toFixed(1)}%`} hint={`${wonDeals.length} of ${deals.length} deals won`} tone="green" icon="◉" />
+      <StatCard label="Overdue activities" value={overdueCount} hint={overdueCount ? 'Needs attention' : 'You are on track'} tone="orange" icon="◷" />
+      <StatCard label="Due today" value={dueTodayCount} hint="Activity reminders" tone="blue" icon="!" />
+      <StatCard label="Open tickets" value={openTickets} hint={`${tickets.length} tickets in total`} tone="blue" icon="✉" />
+      <StatCard label="Average deal size" value={formatAmount(avgDeal)} hint="Across won deals" tone="purple" icon="◆" />
+      <StatCard label="Deals won" value={wonDeals.length} hint={`${formatAmount(sumAmount(wonDeals))} closed`} tone="green" icon="✓" />
     </div>
     <div className="dashboard-grid">
       <div className="panel chart-panel">
         <div className="panel-heading">
-          <div><h3>Revenue overview</h3><p>Monthly revenue performance</p></div>
-          <select><option>Last 6 months</option><option>Last 12 months</option></select>
+          <div><h3>Revenue overview</h3><p>Won deals by month</p></div>
+          <select value={range} onChange={e => setRange(Number(e.target.value))}>
+            <option value={6}>Last 6 months</option>
+            <option value={12}>Last 12 months</option>
+          </select>
         </div>
         <div className="chart">
-          <div className="chart-y"><span>$40k</span><span>$30k</span><span>$20k</span><span>$10k</span><span>$0</span></div>
+          <div className="chart-y">
+            {[4, 3, 2, 1, 0].map(level => <span key={level}>{formatAmount(step * level)}</span>)}
+          </div>
           <div className="chart-body">
             <div className="grid-lines"><i /><i /><i /><i /><i /></div>
             <svg viewBox="0 0 600 220" preserveAspectRatio="none" className="line-chart">
               <defs>
                 <linearGradient id="fill" x1="0" x2="0" y1="0" y2="1"><stop offset="0%" stopColor="#7357f0" stopOpacity=".25" /><stop offset="100%" stopColor="#7357f0" stopOpacity="0" /></linearGradient>
               </defs>
-              <path d="M0 180 C55 160 75 120 120 140 S190 105 240 120 S300 60 360 90 S430 30 480 65 S550 15 600 25 L600 220 L0 220 Z" fill="url(#fill)" />
-              <path d="M0 180 C55 160 75 120 120 140 S190 105 240 120 S300 60 360 90 S430 30 480 65 S550 15 600 25" fill="none" stroke="#7357f0" strokeWidth="3" strokeLinecap="round" />
+              <path d={areaPath} fill="url(#fill)" />
+              <path d={linePath} fill="none" stroke="#7357f0" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round" />
             </svg>
-            <div className="chart-labels"><span>Apr</span><span>May</span><span>Jun</span><span>Jul</span><span>Aug</span><span>Sep</span>
+            <div className="chart-labels">
+              {monthlyRevenue.map(item => <span key={`${item.year}-${item.month}`}>{item.label}</span>)}
             </div>
           </div>
         </div>
       </div>
-      <div className="panel activity-panel"><div className="panel-heading">
-        <div><h3>Recent activity</h3><p>Your latest updates</p></div>
-        <button className="text-btn" onClick={() => setPage('Activities')}>View all</button>
-      </div>
-        {activities.length === 0 ? (
+      <div className="panel activity-panel">
+        <div className="panel-heading">
+          <div><h3>Upcoming &amp; overdue</h3><p>What needs doing next</p></div>
+          <button className="text-btn" onClick={() => setPage('Activities')}>View all</button>
+        </div>
+        {upcoming.length === 0 ? (
           <div className="empty-state">
-            <p>No activities yet.</p>
-
-            <button
-              type="button"
-              className="secondary-btn"
-              onClick={() => setPage('Activities')}
-            >
-              View activities
-            </button>
+            <p>Nothing scheduled.</p>
+            <button type="button" className="secondary-btn" onClick={() => setPage('Activities')}>Plan an activity</button>
           </div>
-        ) : (
-          activities.slice(0, 4).map((activity) => (
-            <Activity
-              key={activity.id}
-              icon={
-                activity.status === 'Completed'
-                  ? '✓'
-                  : activity.type === 'Call'
-                    ? '☎'
-                    : activity.type === 'Meeting'
-                      ? '◷'
-                      : '↗'
-              }
-              title={activity.title}
-              text={activity.type || 'Task'}
-              time={
-                activity.activity_date
-                  ? new Date(
-                    activity.activity_date
-                  ).toLocaleDateString('en-US', {
-                    month: 'short',
-                    day: 'numeric',
-                  })
-                  : 'No date'
-              }
-            />
-          ))
-        )}
+        ) : upcoming.map(activity => (
+          <Activity
+            key={activity.id}
+            icon={isOverdue(activity) ? '!' : activity.type === 'Call' ? '☎' : activity.type === 'Meeting' ? '◷' : '↗'}
+            title={activity.title}
+            text={isOverdue(activity) ? `${activity.type || 'Task'} · overdue` : (activity.type || 'Task')}
+            time={activity.activity_date ? new Date(activity.activity_date).toLocaleDateString('en-US', { month: 'short', day: 'numeric' }) : 'No date'}
+          />
+        ))}
       </div>
     </div>
     <div className="panel">
       <div className="panel-heading">
-        <div>
-          <h3>Recent customers</h3>
-          <p>Your newest customer relationships</p>
-        </div>
+        <div><h3>Recent customers</h3><p>Your newest customer relationships</p></div>
         <button className="text-btn" onClick={() => setPage('Customers')}>View all</button>
       </div>
-      <CustomerTable customers={customers.slice(0, 4)} formatAmount={formatAmount} />
-    </div></>
+      <CustomerTable
+        customers={customers.slice(0, 4)}
+        deals={deals}
+        formatAmount={formatAmount}
+        onSelectCustomer={onSelectCustomer}
+        onEditCustomer={onEditCustomer}
+        onDeleteCustomer={onDeleteCustomer}
+      />
+    </div>
+  </>;
 }
+
 function Activity({ icon, title, text, time }) {
   return (
     <div className="activity-row">
@@ -1869,9 +2619,23 @@ function Activity({ icon, title, text, time }) {
       <div><strong>{title}</strong><p>{text}</p></div>
       <time>{time}</time>
     </div>
-  )
+  );
 }
-function CustomerTable({ customers, formatAmount }) {
+
+function CustomerTable({ customers, deals = [], formatAmount, onSelectCustomer, onEditCustomer, onDeleteCustomer }) {
+  const [openMenuId, setOpenMenuId] = useState(null);
+
+  useEffect(() => {
+    if (openMenuId === null) return;
+    const close = () => setOpenMenuId(null);
+    document.addEventListener('click', close);
+    return () => document.removeEventListener('click', close);
+  }, [openMenuId]);
+
+  if (customers.length === 0) {
+    return <div className="empty-state"><p>No customers match your filters.</p></div>;
+  }
+
   return (
     <div className="table-wrap">
       <table>
@@ -1881,28 +2645,85 @@ function CustomerTable({ customers, formatAmount }) {
             <th>Company</th>
             <th>Status</th>
             <th>Value</th>
+            <th>Open deals</th>
             <th></th>
           </tr>
         </thead>
-        <tbody>{customers.map(c => <tr key={c.id}>
-          <td>
-            <div className="customer-cell">
-              <div className="avatar small">{c.name.split(' ').map(x => x[0]).join('')}</div>
-              <div><strong>{c.name}</strong><span>{c.email}</span></div>
-            </div></td>
-          <td>{c.company || '—'}</td>
-          <td><span className={`status ${c.status.toLowerCase()}`}>{c.status}</span></td><td>${(c.value || 0).toLocaleString()}</td>
-          <td>{formatAmount(c.value || 0)}</td>
-          <td>
-            <button className="icon-btn"><MoreHorizontal size={17} /></button>
-          </td>
-        </tr>)}
+        <tbody>
+          {customers.map(c => {
+            const status = c.status || 'Active';
+            const openDeals = deals.filter(d => d.customer_id === c.id && d.stage !== 'Won').length;
+            return (
+              <tr key={c.id}>
+                <td onClick={() => onSelectCustomer?.(c)} style={{ cursor: onSelectCustomer ? 'pointer' : 'default' }}>
+                  <div className="customer-cell">
+                    <div className="avatar small">{(c.name || '?').split(' ').map(x => x[0]).join('').slice(0, 2).toUpperCase()}</div>
+                    <div>
+                      <strong>{c.name}</strong>
+                      <span>{c.email}</span>
+                    </div>
+                  </div>
+                </td>
+                <td>{c.company || '—'}</td>
+                <td><span className={`status ${status.toLowerCase()}`}>{status}</span></td>
+                <td>{formatAmount(lifetimeValue(c, deals))}</td>
+                <td>{openDeals}</td>
+                <td>
+                  <div style={{ position: 'relative' }}>
+                    <button
+                      className="icon-btn"
+                      aria-label="Customer actions"
+                      onClick={e => { e.stopPropagation(); setOpenMenuId(openMenuId === c.id ? null : c.id); }}
+                    >
+                      <MoreHorizontal size={17} />
+                    </button>
+                    {openMenuId === c.id && (
+                      <div className="customer-menu" onClick={e => e.stopPropagation()}>
+                        <button className="secondary-btn" type="button" onClick={() => { setOpenMenuId(null); onSelectCustomer?.(c); }}>View</button>
+                        <button className="secondary-btn" type="button" onClick={() => { setOpenMenuId(null); onEditCustomer?.(c); }}>Edit</button>
+                        <button className="secondary-btn" type="button" onClick={() => { setOpenMenuId(null); onDeleteCustomer?.(c.id); }}>Delete</button>
+                      </div>
+                    )}
+                  </div>
+                </td>
+              </tr>
+            );
+          })}
         </tbody>
       </table>
     </div>
-  )
+  );
 }
-function Customers({ customers, onAdd, formatAmount }) {
+
+function Customers({ customers, allCustomers, deals, search, setSearch, statusFilter, setStatusFilter, onAdd, onImport, formatAmount, onSelectCustomer, onEditCustomer, onDeleteCustomer }) {
+  const fileRef = useRef(null);
+
+  async function handleFile(event) {
+    const file = event.target.files?.[0];
+    event.target.value = '';
+    if (!file) return;
+    const rows = parseCSV(await file.text());
+    const header = (rows[0] || []).map(h => h.trim().toLowerCase());
+    const col = key => header.indexOf(key);
+    const read = (r, key) => (col(key) >= 0 ? (r[col(key)] || '').trim() : '');
+    onImport(rows.slice(1).map(r => ({
+      name: read(r, 'name'),
+      company: read(r, 'company'),
+      email: read(r, 'email'),
+      status: read(r, 'status')
+    })));
+  }
+
+  function exportCustomers() {
+    downloadCSV(
+      'customers.csv',
+      ['name', 'company', 'email', 'status', 'lifetime_value'],
+      customers.map(c => [c.name, c.company || '', c.email, c.status || 'Active', lifetimeValue(c, deals)])
+    );
+  }
+
+  const counts = CUSTOMER_STATUSES.reduce((acc, s) => ({ ...acc, [s]: allCustomers.filter(c => (c.status || 'Active') === s).length }), {});
+
   return (
     <>
       <PageHeading eyebrow="RELATIONSHIPS" title="Customers" description="Manage your customer relationships in one place." action="Add customer" onAction={onAdd} />
@@ -1910,304 +2731,400 @@ function Customers({ customers, onAdd, formatAmount }) {
         <div className="panel-heading">
           <div>
             <h3>All customers <span className="count-badge">{customers.length}</span></h3>
-            <p>Search and manage your contacts.</p>
+            <p>Search, filter and manage your contacts.</p>
           </div>
-          <button className="secondary-btn"><Users size={15} /> Import</button>
+          <div className="toolbar-actions">
+            <input ref={fileRef} type="file" accept=".csv,text/csv" onChange={handleFile} hidden />
+            <button className="secondary-btn" type="button" onClick={() => fileRef.current?.click()}><Users size={15} /> Import CSV</button>
+            <button className="secondary-btn" type="button" onClick={exportCustomers} disabled={customers.length === 0}>Export CSV</button>
+          </div>
         </div>
-        <CustomerTable customers={customers} formatAmount={formatAmount} />
+        <div className="toolbar">
+          <div className="toolbar-search">
+            <Search size={15} />
+            <input
+              type="search"
+              placeholder="Search by name, company or email"
+              value={search}
+              onChange={e => setSearch(e.target.value)}
+            />
+          </div>
+          <div className="filter-tabs" role="tablist" aria-label="Filter by status">
+            {['All', ...CUSTOMER_STATUSES].map(s => (
+              <button
+                key={s}
+                type="button"
+                className={`filter-tab ${statusFilter === s ? 'active' : ''}`}
+                onClick={() => setStatusFilter(s)}
+              >
+                {s}{s !== 'All' ? ` (${counts[s]})` : ` (${allCustomers.length})`}
+              </button>
+            ))}
+          </div>
+        </div>
+        <CustomerTable
+          customers={customers}
+          deals={deals}
+          formatAmount={formatAmount}
+          onSelectCustomer={onSelectCustomer}
+          onEditCustomer={onEditCustomer}
+          onDeleteCustomer={onDeleteCustomer}
+        />
       </div>
     </>
-
-  )
+  );
 }
-function Pipeline({ deals, customers, moveDeal, deleteDeal, onEdit, onAdd, formatAmount }) {
-  const stages = ['New Lead', 'Qualified', 'Proposal', 'Won'];
+
+function CustomerDetail({ customer, deals, activities, tickets, formatAmount, onClose, onEdit, onAddDeal, onAddActivity, onAddTicket }) {
+  const myDeals = deals.filter(d => d.customer_id === customer.id);
+  const myActivities = activities.filter(a => a.customer_id === customer.id);
+  const myTickets = tickets.filter(t => t.customer_id === customer.id);
+  const status = customer.status || 'Active';
+
+  const timeline = [
+    ...myDeals.map(d => ({ key: `d-${d.id}`, kind: 'Deal', title: d.title, meta: `${d.stage} · ${formatAmount(d.amount)}`, date: d.created_at })),
+    ...myActivities.map(a => ({ key: `a-${a.id}`, kind: 'Activity', title: a.title, meta: `${a.type || 'Task'} · ${a.status || 'Scheduled'}`, date: a.activity_date })),
+    ...myTickets.map(t => ({ key: `t-${t.id}`, kind: 'Ticket', title: t.title, meta: `${t.priority || 'Medium'} · ${t.status}`, date: t.created_at }))
+  ].sort((a, b) => new Date(b.date || 0) - new Date(a.date || 0));
+
+  return (
+    <div className="modal-backdrop" onClick={onClose}>
+      <div className="modal modal-wide" onClick={e => e.stopPropagation()}>
+        <div className="modal-heading customer-header">
+          <div>
+            <h2>{customer.name}</h2>
+            <span className={`status ${status.toLowerCase()}`}>{status}</span>
+          </div>
+          <div className="toolbar-actions">
+            <button type="button" className="secondary-btn" onClick={() => onEdit(customer)}><Pencil size={14} /> Edit</button>
+            <button type="button" className="icon-btn" onClick={onClose} aria-label="Close"><X size={18} /></button>
+          </div>
+        </div>
+
+        <div className="detail-grid">
+          <div><small>Email</small><p>{customer.email ? <a href={`mailto:${customer.email}`}>{customer.email}</a> : '—'}</p></div>
+          <div><small>Company</small><p>{customer.company || '—'}</p></div>
+          <div><small>Customer since</small><p>{formatDate(customer.created_at)}</p></div>
+          <div><small>Lifetime value</small><p>{formatAmount(lifetimeValue(customer, deals))}</p></div>
+          <div><small>Open pipeline</small><p>{formatAmount(sumAmount(myDeals.filter(d => d.stage !== 'Won')))}</p></div>
+          <div><small>Open tickets</small><p>{myTickets.filter(t => t.status === 'Open' || t.status === 'In Progress').length}</p></div>
+        </div>
+
+        <div className="detail-actions">
+          <button type="button" className="primary-btn" onClick={() => onAddDeal(customer)}><Plus size={15} /> New deal</button>
+          <button type="button" className="secondary-btn" onClick={() => onAddActivity(customer)}>Log activity</button>
+          <button type="button" className="secondary-btn" onClick={() => onAddTicket(customer)}>Create ticket</button>
+        </div>
+
+        <h3 className="detail-title">History</h3>
+        {timeline.length === 0 ? (
+          <p className="detail-empty">No deals, activities or tickets yet. Use the buttons above to add the first one.</p>
+        ) : (
+          <ul className="timeline">
+            {timeline.map(item => (
+              <li key={item.key} className="timeline-item">
+                <span className={`timeline-kind ${item.kind.toLowerCase()}`}>{item.kind}</span>
+                <div>
+                  <strong>{item.title}</strong>
+                  <p>{item.meta}</p>
+                </div>
+                <time>{formatDate(item.date)}</time>
+              </li>
+            ))}
+          </ul>
+        )}
+      </div>
+    </div>
+  );
+}
+
+function Pipeline({ deals, customers, moveDeal, deleteDeal, onEdit, onAdd, formatAmount, currentUserId, isAdmin }) {
+  const [query, setQuery] = useState('');
+  const [mineOnly, setMineOnly] = useState(false);
+  const [dragOver, setDragOver] = useState(null);
+
+  const q = query.trim().toLowerCase();
+  const visible = deals.filter(d =>
+    (!mineOnly || d.created_by === currentUserId) &&
+    (!q || `${d.title} ${d.company || ''}`.toLowerCase().includes(q))
+  );
+  const canEditDeal = deal => isAdmin || deal.created_by === currentUserId;
+
   return (
     <>
       <PageHeading
         eyebrow="SALES"
         title="Sales pipeline"
-        description="Track deals from first contact to closed revenue."
+        description="Drag deals between stages to track them from first contact to closed revenue."
         action="New deal"
         onAction={onAdd}
       />
-      <div className="pipeline-grid">
-        {stages.map(stage => (
-          <div className="pipeline-column" key={stage}>
-            <div className="pipeline-title">
-              <span>{stage}</span>
-              <span className="count-badge">{deals.filter(d => d.stage === stage).length}</span>
-            </div>
-            {deals.filter(d => d.stage === stage).map(deal => (
-              <div className="deal-card" key={deal.id}>
-                <div className="deal-top">
-                  <span className="deal-label">DEAL</span>
-
-                  <div className="deal-actions">
-                    <button
-                      type="button"
-                      className="icon-btn"
-                      title="Edit deal"
-                      onClick={() => onEdit(deal)}
-                    >
-                      <Pencil size={16} />
-                    </button>
-
-                    <button
-                      type="button"
-                      className="icon-btn"
-                      title="Delete deal"
-                      onClick={() => deleteDeal(deal.id)}
-                    >
-                      <X size={16} />
-                    </button>
-                  </div>
-                </div>
-                <h3>{deal.title}</h3>
-                <p>{deal.company || 'No company specified'}</p>
-                {deal.customer_id && (
-                  <small className="deal-customer">
-                    Customer:{' '}
-                    {customers.find(
-                      customer => customer.id === deal.customer_id
-                    )?.name || 'Unknown customer'}
-                  </small>
-                )}
-
-                <strong>{formatAmount(deal.amount)}</strong>
-                <select value={deal.stage} onChange={e => moveDeal(deal.id, e.target.value)}>
-                  {stages.map(s => <option key={s}>{s}</option>)}
-                </select>
-              </div>
-            ))}
-          </div>
-        ))}
-      </div>
-    </>
-  );
-}
-function Activities({ activities, customers, onAdd, onStatusChange, onDelete, }) {
-  function getCustomerName(customerId) {
-    const customer = customers.find(
-      (item) => item.id === customerId
-    );
-
-    return customer ? customer.name : 'No customer linked';
-  }
-
-  function formatActivityDate(dateValue) {
-    if (!dateValue) return 'No date';
-
-    return new Date(dateValue).toLocaleDateString('en-US', {
-      month: 'short',
-      day: 'numeric',
-      year: 'numeric',
-    });
-  }
-
-  return (
-    <>
-      <PageHeading
-        eyebrow="PRODUCTIVITY"
-        title="Activities"
-        description="Keep track of meetings, calls, and follow-ups."
-        action="New activity"
-        onAction={onAdd}
-      />
-
-      <div className="panel">
-        <div className="panel-heading">
-          <div>
-            <h3>Upcoming activities</h3>
-            <p>Your schedule and follow-ups.</p>
-          </div>
+      <div className="toolbar">
+        <div className="toolbar-search">
+          <Search size={15} />
+          <input type="search" placeholder="Search deals or companies" value={query} onChange={e => setQuery(e.target.value)} />
         </div>
-
-        {activities.length === 0 ? (
-          <div className="empty-state">
-            <p>No activities yet.</p>
-            <button
-              type="button"
-              className="primary-btn"
-              onClick={onAdd}
-            >
-              Create your first activity
-            </button>
-          </div>
-        ) : (
-          activities.map((activity) => (
+        <button type="button" className={`filter-tab ${mineOnly ? 'active' : ''}`} onClick={() => setMineOnly(v => !v)}>My deals</button>
+        <span className="toolbar-summary">
+          Open: <strong>{formatAmount(sumAmount(visible.filter(d => d.stage !== 'Won')))}</strong>
+          {' · '}Won: <strong>{formatAmount(sumAmount(visible.filter(d => d.stage === 'Won')))}</strong>
+        </span>
+      </div>
+      <div className="pipeline-grid">
+        {PIPELINE_STAGES.map(stage => {
+          const stageDeals = visible.filter(d => d.stage === stage);
+          return (
             <div
-              className="activity-row large"
-              key={activity.id}
+              className={`pipeline-column ${dragOver === stage ? 'drag-over' : ''}`}
+              key={stage}
+              onDragOver={e => { e.preventDefault(); setDragOver(stage); }}
+              onDragLeave={() => setDragOver(null)}
+              onDrop={e => {
+                e.preventDefault();
+                setDragOver(null);
+                const id = e.dataTransfer.getData('text/plain');
+                const deal = deals.find(d => String(d.id) === id);
+                if (deal && deal.stage !== stage && canEditDeal(deal)) moveDeal(deal.id, stage);
+              }}
             >
-              <div className="date-box">
-                <strong>
-                  {activity.activity_date
-                    ? new Date(
-                      activity.activity_date
-                    ).getDate()
-                    : '--'}
-                </strong>
-
-                <span>
-                  {activity.activity_date
-                    ? new Date(
-                      activity.activity_date
-                    )
-                      .toLocaleDateString('en-US', {
-                        month: 'short',
-                      })
-                      .toUpperCase()
-                    : '---'}
-                </span>
+              <div className="pipeline-title">
+                <span>{stage}</span>
+                <span className="count-badge">{stageDeals.length}</span>
               </div>
-
-              <div className="activity-content">
-                <strong>{activity.title}</strong>
-
-                <p>
-                  {activity.type || 'Task'} ·{' '}
-                  {getCustomerName(activity.customer_id)}
-                </p>
-
-                <small>
-                  {formatActivityDate(activity.activity_date)}
-                </small>
-              </div>
-
-              <div className="activity-actions">
-                <select
-                  value={activity.status || 'Scheduled'}
-                  onChange={(event) =>
-                    onStatusChange(
-                      activity.id,
-                      event.target.value
-                    )
-                  }
-                >
-                  <option value="Scheduled">
-                    Scheduled
-                  </option>
-
-                  <option value="In Progress">
-                    In Progress
-                  </option>
-
-                  <option value="Completed">
-                    Completed
-                  </option>
-                  <option value="Cancelled">
-                    Cancelled
-                  </option>
-                </select>
-                <button
-                  type="button"
-                  className="icon-btn"
-                  title="Delete activity"
-                  onClick={() => onDelete(activity.id)}
-                >
-                  <X size={16} />
-                </button>
-              </div>
+              <div className="stage-total">{formatAmount(sumAmount(stageDeals))}</div>
+              {stageDeals.length === 0 && <div className="pipeline-empty">Drop a deal here</div>}
+              {stageDeals.map(deal => {
+                const canEdit = canEditDeal(deal);
+                return (
+                  <div
+                    className="deal-card"
+                    key={deal.id}
+                    draggable={canEdit}
+                    onDragStart={e => { e.dataTransfer.setData('text/plain', String(deal.id)); e.dataTransfer.effectAllowed = 'move'; }}
+                    style={{ cursor: canEdit ? 'grab' : 'default' }}
+                  >
+                    <div className="deal-top">
+                      <span className="deal-label">DEAL</span>
+                      {canEdit && (
+                        <div className="deal-actions">
+                          <button type="button" className="icon-btn" title="Edit deal" onClick={() => onEdit(deal)}><Pencil size={16} /></button>
+                          <button type="button" className="icon-btn" title="Delete deal" onClick={() => deleteDeal(deal.id)}><X size={16} /></button>
+                        </div>
+                      )}
+                    </div>
+                    <h3>{deal.title}</h3>
+                    <p>{deal.company || 'No company specified'}</p>
+                    {deal.customer_id && (
+                      <small className="deal-customer">
+                        Customer: {customers.find(c => c.id === deal.customer_id)?.name || 'Unknown customer'}
+                      </small>
+                    )}
+                    <strong>{formatAmount(deal.amount)}</strong>
+                    <small className="deal-customer">Added {formatDate(deal.created_at)}</small>
+                    <select value={deal.stage} onChange={e => moveDeal(deal.id, e.target.value)} disabled={!canEdit}>
+                      {PIPELINE_STAGES.map(s => <option key={s}>{s}</option>)}
+                    </select>
+                  </div>
+                );
+              })}
             </div>
-          ))
-        )}
+          );
+        })}
       </div>
     </>
   );
 }
-function Reports({ customers, deals, formatAmount }) {
-  const customerValue = customers.reduce(
-    (sum, customer) =>
-      sum + (Number(customer.value) || 0),
-    0
-  );
 
-  const wonDeals = deals.filter(
-    (deal) => deal.stage === 'Won'
-  ).length;
+function Activities({ activities, customers, onAdd, onStatusChange, onDelete, onEdit, onView, currentUserId, isAdmin }) {
+  const [tab, setTab] = useState('All');
+  const getCustomerName = id => customers.find(c => c.id === id)?.name || 'No customer linked';
+  const filters = { All: () => true, Upcoming: a => isOpenActivity(a) && !isOverdue(a), Overdue: isOverdue, Completed: a => a.status === 'Completed' };
+  const counts = Object.fromEntries(Object.entries(filters).map(([k, f]) => [k, activities.filter(f).length]));
+  const list = activities.filter(filters[tab]).sort((a, b) => { const diff = new Date(a.activity_date || 8.64e15) - new Date(b.activity_date || 8.64e15); return tab === 'Completed' ? -diff : diff; });
+  return <><PageHeading eyebrow="PRODUCTIVITY" title="Activities" description="Keep track of meetings, calls, and follow-ups." action="New activity" onAction={onAdd} /><div className="panel"><div className="panel-heading"><div><h3>Schedule</h3><p>Your tasks, calls and follow-ups.</p></div></div><div className="filter-tabs" role="tablist" aria-label="Filter activities">{Object.keys(filters).map(name => <button key={name} type="button" className={`filter-tab ${tab === name ? 'active' : ''} ${name === 'Overdue' && counts.Overdue ? 'danger' : ''}`} onClick={() => setTab(name)}>{name} ({counts[name]})</button>)}</div>{list.length === 0 ? <div className="empty-state"><p>{activities.length === 0 ? 'No activities yet.' : `No ${tab.toLowerCase()} activities.`}</p>{activities.length === 0 && <button type="button" className="primary-btn" onClick={onAdd}>Create your first activity</button>}</div> : list.map(activity => { const canEdit = isAdmin || activity.created_by === currentUserId; const date = activity.activity_date ? new Date(activity.activity_date) : null; return <div className="activity-row large" key={activity.id}><div className="date-box"><strong>{date ? date.getDate() : '--'}</strong><span>{date ? date.toLocaleDateString('en-US', { month: 'short' }).toUpperCase() : '---'}</span></div><div className="activity-content"><strong>{activity.title} {isOverdue(activity) && <span className="status overdue">Overdue</span>}</strong><p>{activity.type || 'Task'} · {getCustomerName(activity.customer_id)}</p><small>{formatDateTime(activity.activity_date)}</small>{activity.notes && <p className="activity-notes">{activity.notes}</p>}</div><div className="activity-actions"><button type="button" className="secondary-btn" onClick={() => onView(activity)}>View</button>{canEdit && <button type="button" className="secondary-btn" onClick={() => onEdit(activity)}><Pencil size={14} /> Edit</button>}{canEdit && isOpenActivity(activity) && <button type="button" className="secondary-btn" onClick={() => onStatusChange(activity.id, 'Completed')}>Mark done</button>}<select value={activity.status || 'Scheduled'} onChange={e => onStatusChange(activity.id, e.target.value)} disabled={!canEdit}><option value="Scheduled">Scheduled</option><option value="In Progress">In Progress</option><option value="Completed">Completed</option><option value="Cancelled">Cancelled</option></select>{canEdit && <button type="button" className="icon-btn" title="Delete activity" onClick={() => onDelete(activity.id)}><X size={16} /></button>}</div></div> })}</div></>;
+}
+
+function ActivityDetail({ activity, customer, onClose, onEdit }) { return <div className="modal-backdrop" onClick={onClose}><div className="modal modal-wide" onClick={e => e.stopPropagation()}><div className="modal-heading"><div><h2>{activity.title}</h2><p>{activity.type || 'Task'} · {activity.status || 'Scheduled'}</p></div><div className="toolbar-actions"><button type="button" className="secondary-btn" onClick={() => onEdit(activity)}><Pencil size={14} /> Edit</button><button type="button" className="icon-btn" onClick={onClose}><X size={18} /></button></div></div><div className="detail-grid"><div><small>Status</small><p>{activity.status || 'Scheduled'}</p></div><div><small>Type</small><p>{activity.type || 'Task'}</p></div><div><small>Date & time</small><p>{formatDateTime(activity.activity_date)}</p></div><div><small>Customer</small><p>{customer?.name || 'No customer linked'}</p></div><div><small>Created</small><p>{formatDate(activity.created_at)}</p></div><div><small>Reminder state</small><p>{isOverdue(activity) ? 'Overdue' : isOpenActivity(activity) ? 'Upcoming' : 'Completed/closed'}</p></div></div><h3 className="detail-title">Notes</h3><p className="detail-empty" style={{ whiteSpace: 'pre-wrap' }}>{activity.notes || 'No notes added.'}</p></div></div>; }
+
+function Tickets({ tickets, error, onAdd, onStatusChange, onDelete, onEdit, onView, currentUserId, isAdmin }) {
+  const [query, setQuery] = useState(''); const [status, setStatus] = useState('All'); const [priority, setPriority] = useState('All'); const q = query.trim().toLowerCase(); const filtered = tickets.filter(t => (status === 'All' || t.status === status) && (priority === 'All' || t.priority === priority) && (!q || `${t.title} ${t.description || ''} ${t.customers?.name || ''} ${t.category || ''}`.toLowerCase().includes(q))); const count = s => tickets.filter(t => t.status === s).length;
+  return <><PageHeading eyebrow="SUPPORT" title="Tickets" description="Manage customer issues and support requests." action="Create Ticket" onAction={onAdd} /><div className="stats-grid"><StatCard label="Open" value={count('Open')} hint="Waiting for a response" tone="orange" icon="!" /><StatCard label="In progress" value={count('In Progress')} hint="Being worked on" tone="blue" icon="◷" /><StatCard label="Resolved" value={count('Resolved') + count('Closed')} hint="Resolved or closed" tone="green" icon="✓" /><StatCard label="Urgent open" value={tickets.filter(t => t.priority === 'Urgent' && (t.status === 'Open' || t.status === 'In Progress')).length} hint="Highest priority" tone="purple" icon="↑" /></div><div className="panel"><div className="panel-heading"><div><h3>All Tickets</h3><p>{filtered.length} of {tickets.length} tickets</p></div></div>{error && <div className="form-error">{error}</div>}<div className="toolbar"><div className="toolbar-search"><Search size={15} /><input type="search" placeholder="Search tickets or customers" value={query} onChange={e => setQuery(e.target.value)} /></div><select value={status} onChange={e => setStatus(e.target.value)}>{['All', 'Open', 'In Progress', 'Resolved', 'Closed'].map(x => <option key={x} value={x}>{x === 'All' ? 'All statuses' : x}</option>)}</select><select value={priority} onChange={e => setPriority(e.target.value)}>{['All', 'Low', 'Medium', 'High', 'Urgent'].map(x => <option key={x} value={x}>{x === 'All' ? 'All priorities' : x}</option>)}</select></div>{tickets.length === 0 ? <div className="empty-state"><p>No tickets yet.</p><button type="button" className="secondary-btn" onClick={onAdd}>Create your first ticket</button></div> : filtered.length === 0 ? <div className="empty-state"><p>No tickets match your filters.</p></div> : <div className="table-wrap"><table><thead><tr><th>Ticket</th><th>Customer</th><th>Priority</th><th>Status</th><th>Created</th><th>Actions</th></tr></thead><tbody>{filtered.map(ticket => { const canEdit = isAdmin || ticket.created_by === currentUserId; return <tr key={ticket.id}><td><button type="button" className="text-btn" onClick={() => onView(ticket)}><strong>{ticket.title}</strong></button><div className="deal-customer">{ticket.category || 'General'}</div></td><td>{ticket.customers?.name || 'Unassigned'}</td><td><span className={`status ${(ticket.priority || 'medium').toLowerCase()}`}>{ticket.priority || 'Medium'}</span></td><td><select className="ticket-status-select" value={ticket.status} onChange={e => onStatusChange(ticket.id, e.target.value)} disabled={!canEdit}><option value="Open">Open</option><option value="In Progress">In Progress</option><option value="Resolved">Resolved</option><option value="Closed">Closed</option></select></td><td>{formatDate(ticket.created_at)}</td><td><div className="toolbar-actions"><button type="button" className="secondary-btn" onClick={() => onView(ticket)}>View</button>{canEdit && <button type="button" className="secondary-btn" onClick={() => onEdit(ticket)}><Pencil size={14} /> Edit</button>}{canEdit && <button type="button" className="icon-btn" title="Delete ticket" onClick={() => onDelete(ticket.id)}><X size={16} /></button>}</div></td></tr> })}</tbody></table></div>}</div></>;
+}
+
+function TicketDetail({ ticket, onClose, onEdit }) { return <div className="modal-backdrop" onClick={onClose}><div className="modal modal-wide" onClick={e => e.stopPropagation()}><div className="modal-heading"><div><h2>{ticket.title}</h2><p>{ticket.category || 'General'} · {ticket.status || 'Open'}</p></div><div className="toolbar-actions"><button type="button" className="secondary-btn" onClick={() => onEdit(ticket)}><Pencil size={14} /> Edit</button><button type="button" className="icon-btn" onClick={onClose}><X size={18} /></button></div></div><div className="detail-grid"><div><small>Customer</small><p>{ticket.customers?.name || 'Unassigned'}</p></div><div><small>Company</small><p>{ticket.customers?.company || '—'}</p></div><div><small>Priority</small><p>{ticket.priority || 'Medium'}</p></div><div><small>Status</small><p>{ticket.status || 'Open'}</p></div><div><small>Category</small><p>{ticket.category || 'General'}</p></div><div><small>Created</small><p>{formatDate(ticket.created_at)}</p></div></div><h3 className="detail-title">Description</h3><p className="detail-empty" style={{ whiteSpace: 'pre-wrap' }}>{ticket.description || 'No description added.'}</p></div></div>; }
+
+function BarRow({ label, percent, display }) {
+  return (
+    <div className="report-row wide">
+      <span>{label}</span>
+      <div className="progress"><i style={{ width: `${percent > 0 ? Math.max(6, percent) : 0}%` }} /></div>
+      <strong>{display}</strong>
+    </div>
+  );
+}
+
+function Reports({ customers, deals, activities, tickets, formatAmount }) {
+  const won = deals.filter(d => d.stage === 'Won');
+  const open = deals.filter(d => d.stage !== 'Won');
+  const winRate = deals.length ? (won.length / deals.length) * 100 : 0;
+  const totalPipeline = sumAmount(deals) || 1;
+
+  const topCustomers = Object.values(won.reduce((acc, d) => {
+    if (!d.customer_id) return acc;
+    acc[d.customer_id] = acc[d.customer_id] || { id: d.customer_id, value: 0, deals: 0 };
+    acc[d.customer_id].value += Number(d.amount) || 0;
+    acc[d.customer_id].deals += 1;
+    return acc;
+  }, {})).sort((a, b) => b.value - a.value).slice(0, 5);
+  const topMax = topCustomers[0]?.value || 1;
+
+  const months = useMemo(() => {
+    const now = new Date();
+    const list = [];
+    for (let i = 5; i >= 0; i--) {
+      const d = new Date(now.getFullYear(), now.getMonth() - i, 1);
+      list.push({ label: d.toLocaleDateString('en-US', { month: 'short' }), year: d.getFullYear(), month: d.getMonth(), revenue: 0 });
+    }
+    won.forEach(deal => {
+      if (!deal.created_at) return;
+      const d = new Date(deal.created_at);
+      const m = list.find(x => x.year === d.getFullYear() && x.month === d.getMonth());
+      if (m) m.revenue += Number(deal.amount) || 0;
+    });
+    return list;
+  }, [deals]);
+  const monthMax = Math.max(...months.map(m => m.revenue), 1);
+
+  const doneActivities = activities.filter(a => a.status === 'Completed').length;
+  const countedActivities = activities.filter(a => a.status !== 'Cancelled').length;
+  const solvedTickets = tickets.filter(t => t.status === 'Resolved' || t.status === 'Closed').length;
+
+  function exportDeals() {
+    downloadCSV(
+      'deals.csv',
+      ['title', 'company', 'customer', 'stage', 'amount_usd', 'created'],
+      deals.map(d => [d.title, d.company || '', customers.find(c => c.id === d.customer_id)?.name || '', d.stage, d.amount, d.created_at || ''])
+    );
+  }
 
   return (
     <>
-      <PageHeading eyebrow="INSIGHTS" title="Reports & analytics" description="Understand your sales and customer performance." />
+      <PageHeading eyebrow="INSIGHTS" title="Reports & analytics" description="Understand your sales, customers and support performance." />
       <div className="stats-grid">
-        <StatCard label="Customer value" value={formatAmount(customerValue)} change="0%" tone="purple" icon="↗" />
-        <StatCard label="Won deals" value={wonDeals} change="6.1%" tone="green" icon="✓" />
+        <StatCard label="Won revenue" value={formatAmount(sumAmount(won))} hint={`${won.length} deals won`} tone="purple" icon="↗" />
+        <StatCard label="Open pipeline" value={formatAmount(sumAmount(open))} hint={`${open.length} open deals`} tone="orange" icon="◈" />
+        <StatCard label="Win rate" value={`${winRate.toFixed(1)}%`} hint={`${won.length} of ${deals.length} deals`} tone="green" icon="◉" />
+        <StatCard label="Average deal size" value={formatAmount(won.length ? sumAmount(won) / won.length : 0)} hint="Won deals only" tone="blue" icon="◆" />
       </div>
-      <div className="panel report-summary">
-        <h3>Pipeline distribution</h3>
-        {['New Lead', 'Qualified', 'Proposal', 'Won'].map(
-          (stage) => {
-            const count = deals.filter(
-              (deal) => deal.stage === stage
-            ).length;
-
-            const percentage = deals.length
-              ? (count / deals.length) * 100
-              : 0;
-
-            return (
-              <div className="report-row" key={stage}>
-                <span>{stage}</span>
-
-                <div className="progress">
-                  <i
-                    style={{
-                      width: `${count > 0
-                        ? Math.max(8, percentage)
-                        : 0
-                        }%`,
-                    }}
-                  />
-                </div>
-                <strong>{count}</strong>
-              </div>
-            );
-          }
-        )}
+      <div className="report-grid">
+        <div className="panel report-summary">
+          <h3>Pipeline by stage</h3>
+          {PIPELINE_STAGES.map(stage => {
+            const list = deals.filter(d => d.stage === stage);
+            return <BarRow key={stage} label={stage} percent={(sumAmount(list) / totalPipeline) * 100} display={`${list.length} · ${formatAmount(sumAmount(list))}`} />;
+          })}
+        </div>
+        <div className="panel report-summary">
+          <h3>Won revenue by month</h3>
+          {months.map(m => <BarRow key={`${m.year}-${m.month}`} label={m.label} percent={(m.revenue / monthMax) * 100} display={formatAmount(m.revenue)} />)}
+        </div>
+        <div className="panel report-summary">
+          <h3>Top customers</h3>
+          {topCustomers.length === 0 ? <p className="detail-empty">Won deals linked to a customer will appear here.</p> : topCustomers.map(t => (
+            <BarRow key={t.id} label={customers.find(c => c.id === t.id)?.name || 'Unknown'} percent={(t.value / topMax) * 100} display={`${t.deals} · ${formatAmount(t.value)}`} />
+          ))}
+        </div>
+        <div className="panel report-summary">
+          <h3>Customers and support</h3>
+          {CUSTOMER_STATUSES.map(s => {
+            const n = customers.filter(c => (c.status || 'Active') === s).length;
+            return <BarRow key={s} label={`${s} customers`} percent={customers.length ? (n / customers.length) * 100 : 0} display={n} />;
+          })}
+          <BarRow label="Tickets resolved" percent={tickets.length ? (solvedTickets / tickets.length) * 100 : 0} display={`${solvedTickets}/${tickets.length}`} />
+          <BarRow label="Activities done" percent={countedActivities ? (doneActivities / countedActivities) * 100 : 0} display={`${doneActivities}/${countedActivities}`} />
+        </div>
+      </div>
+      <div className="toolbar-actions">
+        <button type="button" className="secondary-btn" onClick={exportDeals} disabled={deals.length === 0}>Export deals (CSV)</button>
       </div>
     </>
   );
 }
-function SettingsPage({ currency, setCurrency, loading, error }) {
 
+function Leads({ leads, customers, onAdd, onUpdate, onDelete, currentUserId, isAdmin }) {
+  const [show, setShow] = useState(false); const [editing, setEditing] = useState(null); const [form, setForm] = useState({ name: '', email: '', phone: '', company: '', source: 'Website', status: 'New', score: 0, customer_id: '' }); const [q, setQ] = useState('');
+  const visible = leads.filter(x => `${x.name || ''} ${x.email || ''} ${x.company || ''} ${x.source || ''}`.toLowerCase().includes(q.toLowerCase()));
+  const save = async e => { e.preventDefault(); try { if (editing) await onUpdate(editing.id, form); else await onAdd(form); setShow(false); setEditing(null); } catch (err) { alert(err.message) } };
+  const openEdit = x => { setEditing(x); setForm({ name: x.name || '', email: x.email || '', phone: x.phone || '', company: x.company || '', source: x.source || 'Website', status: x.status || 'New', score: x.score || 0, customer_id: x.customer_id || '' }); setShow(true) };
+  return <><PageHeading eyebrow="PROSPECTING" title="Leads" description="Capture, qualify and convert prospects." action="New lead" onAction={() => { setEditing(null); setForm({ name: '', email: '', phone: '', company: '', source: 'Website', status: 'New', score: 0, customer_id: '' }); setShow(true) }} /><div className="panel"><div className="toolbar"><div className="toolbar-search"><Search size={15} /><input placeholder="Search leads" value={q} onChange={e => setQ(e.target.value)} /></div></div>{visible.length === 0 ? <div className="empty-state"><p>No leads yet.</p></div> : <div className="table-wrap"><table><thead><tr><th>Lead</th><th>Company</th><th>Source</th><th>Status</th><th>Score</th><th>Actions</th></tr></thead><tbody>{visible.map(x => <tr key={x.id}><td><strong>{x.name || x.email}</strong><div className="deal-customer">{x.email}</div></td><td>{x.company || '—'}</td><td>{x.source || '—'}</td><td><span className="status">{x.status}</span></td><td>{x.score || 0}</td><td><div className="toolbar-actions"><button className="secondary-btn" onClick={() => openEdit(x)}>Edit</button>{(isAdmin || x.created_by === currentUserId) && <button className="icon-btn" onClick={() => onDelete(x.id)}><X size={16} /></button>}</div></td></tr>)}</tbody></table></div>}</div>{show && <div className="modal-backdrop" onClick={() => setShow(false)}><form className="modal" onSubmit={save} onClick={e => e.stopPropagation()}><div className="modal-heading"><h2>{editing ? 'Edit lead' : 'New lead'}</h2><button type="button" className="icon-btn" onClick={() => setShow(false)}><X size={18} /></button></div>{[['name', 'Name'], ['email', 'Email'], ['phone', 'Phone'], ['company', 'Company']].map(([k, l]) => <label key={k}>{l}<input value={form[k]} onChange={e => setForm({ ...form, [k]: e.target.value })} required={k === 'name' || k === 'email'} /></label>)}<label>Source<select value={form.source} onChange={e => setForm({ ...form, source: e.target.value })}>{['Website', 'Referral', 'Social', 'Campaign', 'Cold outreach', 'Other'].map(x => <option key={x}>{x}</option>)}</select></label><label>Status<select value={form.status} onChange={e => setForm({ ...form, status: e.target.value })}>{['New', 'Contacted', 'Qualified', 'Unqualified', 'Converted'].map(x => <option key={x}>{x}</option>)}</select></label><label>Lead score<input type="number" min="0" max="100" value={form.score} onChange={e => setForm({ ...form, score: Number(e.target.value) })} /></label><label>Convert/link customer<select value={form.customer_id} onChange={e => setForm({ ...form, customer_id: e.target.value })}><option value="">None</option>{customers.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}</select></label><div className="modal-actions"><button type="button" className="secondary-btn" onClick={() => setShow(false)}>Cancel</button><button className="primary-btn">Save lead</button></div></form></div>}</>;
+}
+
+function EmailPage({ emailLogs, customers, integrations, loading, error, onConnect, onDisconnect, onAdd }) {
+  const [showLog, setShowLog] = useState(false);
+  useEffect(() => { const handler = () => setShowLog(true); window.addEventListener('orbit-open-email-log', handler); return () => window.removeEventListener('orbit-open-email-log', handler); }, []);
+  return <>
+    <PageHeading eyebrow="COMMUNICATIONS" title="Email" description="Connect Gmail or Outlook and keep customer communication in your CRM." />
+    <div className="stats-grid">
+      <StatCard label="Connected accounts" value={integrations.filter(x => x.status === 'connected').length} hint="Gmail and Outlook" tone="blue" icon="@" />
+      <StatCard label="Email logs" value={emailLogs.length} hint="CRM communication history" tone="green" icon="✉" />
+    </div>
+    <div className="report-grid">
+      {['gmail', 'outlook'].map(provider => { const account = integrations.find(x => x.provider === provider && x.status === 'connected'); const label = provider === 'gmail' ? 'Gmail' : 'Outlook'; return <div className="panel" key={provider}><div className="panel-heading"><div><h3>{label}</h3><p>{account?.email_address || 'Connect your account'}</p></div></div>{account ? <div className="toolbar-actions"><span className="status completed">Connected</span><button className="secondary-btn" onClick={() => onDisconnect(account.id)}>Disconnect</button></div> : <button className="primary-btn" onClick={() => onConnect(provider)} disabled={loading}>Connect {label}</button>}</div>; })}
+    </div>
+    {error && <div className="form-error">{error}</div>}
+    <div className="panel"><div className="panel-heading"><div><h3>CRM Email Log</h3><p>Manual and synchronized communication history.</p></div><button className="secondary-btn" onClick={() => setShowLog(true)}>Log email</button></div><EmailLogs emailLogs={emailLogs} customers={customers} onAdd={async payload => { await onAdd(payload); setShowLog(false); }} openExternally={showLog} onCloseExternal={() => setShowLog(false)} /></div>
+  </>;
+}
+
+function EmailLogs({ emailLogs, customers, onAdd, openExternally = false, onCloseExternal }) { const [show, setShow] = useState(openExternally); useEffect(() => { if (openExternally) setShow(true) }, [openExternally]); const [form, setForm] = useState({ to_email: '', subject: '', body: '', direction: 'Outgoing', status: 'Logged', customer_id: '' }); const save = async e => { e.preventDefault(); try { await onAdd(form); setShow(false); setForm({ to_email: '', subject: '', body: '', direction: 'Outgoing', status: 'Logged', customer_id: '' }) } catch (err) { alert(err.message) } }; return <><PageHeading eyebrow="COMMUNICATIONS" title="Email" description="Log customer emails and keep communication history in one place." action="Log email" onAction={() => setShow(true)} /><div className="panel"><div className="table-wrap"><table><thead><tr><th>Subject</th><th>Contact</th><th>Direction</th><th>Status</th><th>Date</th></tr></thead><tbody>{emailLogs.length === 0 ? <tr><td colSpan="5">No email logs yet.</td></tr> : emailLogs.map(e => <tr key={e.id}><td><strong>{e.subject}</strong><div className="deal-customer">{e.body?.slice(0, 80)}</div></td><td>{e.customers?.name || e.to_email}</td><td>{e.direction}</td><td>{e.status}</td><td>{formatDate(e.sent_at || e.created_at)}</td></tr>)}</tbody></table></div></div>{show && <div className="modal-backdrop" onClick={() => setShow(false)}><form className="modal" onSubmit={save} onClick={e => e.stopPropagation()}><div className="modal-heading"><h2>Log email</h2><button type="button" className="icon-btn" onClick={() => setShow(false)}><X size={18} /></button></div><label>To email<input type="email" required value={form.to_email} onChange={e => setForm({ ...form, to_email: e.target.value })} /></label><label>Customer<select value={form.customer_id} onChange={e => setForm({ ...form, customer_id: e.target.value })}><option value="">None</option>{customers.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}</select></label><label>Subject<input required value={form.subject} onChange={e => setForm({ ...form, subject: e.target.value })} /></label><label>Body<textarea rows="6" value={form.body} onChange={e => setForm({ ...form, body: e.target.value })} /></label><label>Direction<select value={form.direction} onChange={e => setForm({ ...form, direction: e.target.value })}><option>Outgoing</option><option>Incoming</option></select></label><div className="modal-actions"><button type="button" className="secondary-btn" onClick={() => setShow(false)}>Cancel</button><button className="primary-btn">Save email</button></div></form></div>}</> }
+
+function CalendarPage({ events, customers, onAdd, onUpdate, onDelete }) { const [show, setShow] = useState(false); const [editing, setEditing] = useState(null); const blank = { title: '', description: '', start_at: '', end_at: '', event_type: 'Meeting', customer_id: '', location: '', status: 'Scheduled' }; const [form, setForm] = useState(blank); const save = async e => { e.preventDefault(); try { if (editing) await onUpdate(editing.id, form); else await onAdd(form); setShow(false); setEditing(null); setForm(blank) } catch (err) { alert(err.message) } }; const open = x => { setEditing(x); setForm({ ...x, start_at: formatDateTimeLocal(x.start_at), end_at: formatDateTimeLocal(x.end_at) }); setShow(true) }; return <><PageHeading eyebrow="PRODUCTIVITY" title="Calendar" description="Manage meetings, calls and customer appointments." action="New event" onAction={() => { setEditing(null); setForm(blank); setShow(true) }} /><div className="panel"><div className="table-wrap"><table><thead><tr><th>Event</th><th>Customer</th><th>When</th><th>Type</th><th>Status</th><th>Actions</th></tr></thead><tbody>{events.length === 0 ? <tr><td colSpan="6">No calendar events yet.</td></tr> : events.map(x => <tr key={x.id}><td><strong>{x.title}</strong><div className="deal-customer">{x.location || ''}</div></td><td>{x.customers?.name || '—'}</td><td>{formatDateTime(x.start_at)}</td><td>{x.event_type}</td><td>{x.status}</td><td><div className="toolbar-actions"><button className="secondary-btn" onClick={() => open(x)}>Edit</button><button className="icon-btn" onClick={() => onDelete(x.id)}><X size={16} /></button></div></td></tr>)}</tbody></table></div></div>{show && <div className="modal-backdrop" onClick={() => setShow(false)}><form className="modal" onSubmit={save} onClick={e => e.stopPropagation()}><div className="modal-heading"><h2>{editing ? 'Edit event' : 'New event'}</h2><button type="button" className="icon-btn" onClick={() => setShow(false)}><X size={18} /></button></div><label>Title<input required value={form.title} onChange={e => setForm({ ...form, title: e.target.value })} /></label><label>Customer<select value={form.customer_id} onChange={e => setForm({ ...form, customer_id: e.target.value })}><option value="">None</option>{customers.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}</select></label><label>Start<input type="datetime-local" required value={form.start_at || ''} onChange={e => setForm({ ...form, start_at: e.target.value })} /></label><label>End<input type="datetime-local" value={form.end_at || ''} onChange={e => setForm({ ...form, end_at: e.target.value })} /></label><label>Type<select value={form.event_type} onChange={e => setForm({ ...form, event_type: e.target.value })}>{['Meeting', 'Call', 'Demo', 'Task', 'Other'].map(x => <option key={x}>{x}</option>)}</select></label><label>Location<input value={form.location || ''} onChange={e => setForm({ ...form, location: e.target.value })} /></label><label>Description<textarea value={form.description || ''} onChange={e => setForm({ ...form, description: e.target.value })} /></label><div className="modal-actions"><button type="button" className="secondary-btn" onClick={() => setShow(false)}>Cancel</button><button className="primary-btn">Save event</button></div></form></div>}</> }
+
+function Quotes({ quotes, customers, onAdd, onUpdate, formatAmount, currentUserId, isAdmin }) { const [show, setShow] = useState(false); const [editing, setEditing] = useState(null); const blank = { title: '', quote_number: `Q-${Date.now().toString().slice(-6)}`, customer_id: '', amount: 0, status: 'Draft', valid_until: '', notes: '' }; const [form, setForm] = useState(blank); const save = async e => { e.preventDefault(); try { if (editing) await onUpdate(editing.id, form); else await onAdd(form); setShow(false); setEditing(null) } catch (err) { alert(err.message) } }; return <><PageHeading eyebrow="SALES OPERATIONS" title="Quotes" description="Create and track customer quotations." action="New quote" onAction={() => { setEditing(null); setForm({ ...blank, quote_number: `Q-${Date.now().toString().slice(-6)}` }); setShow(true) }} /><div className="panel"><div className="table-wrap"><table><thead><tr><th>Quote</th><th>Customer</th><th>Amount</th><th>Status</th><th>Valid until</th><th>Actions</th></tr></thead><tbody>{quotes.length === 0 ? <tr><td colSpan="6">No quotes yet.</td></tr> : quotes.map(q => <tr key={q.id}><td><strong>{q.quote_number}</strong><div className="deal-customer">{q.title}</div></td><td>{q.customers?.name || '—'}</td><td>{formatAmount(q.amount)}</td><td>{q.status}</td><td>{q.valid_until ? formatDate(q.valid_until) : '—'}</td><td>{(isAdmin || q.created_by === currentUserId) && <button className="secondary-btn" onClick={() => { setEditing(q); setForm(q); setShow(true) }}>Edit</button>}</td></tr>)}</tbody></table></div></div>{show && <div className="modal-backdrop" onClick={() => setShow(false)}><form className="modal" onSubmit={save} onClick={e => e.stopPropagation()}><div className="modal-heading"><h2>{editing ? 'Edit quote' : 'New quote'}</h2><button type="button" className="icon-btn" onClick={() => setShow(false)}><X size={18} /></button></div><label>Quote number<input required value={form.quote_number} onChange={e => setForm({ ...form, quote_number: e.target.value })} /></label><label>Title<input required value={form.title} onChange={e => setForm({ ...form, title: e.target.value })} /></label><label>Customer<select value={form.customer_id} onChange={e => setForm({ ...form, customer_id: e.target.value })}><option value="">None</option>{customers.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}</select></label><label>Amount<input type="number" min="0" value={form.amount} onChange={e => setForm({ ...form, amount: Number(e.target.value) })} /></label><label>Status<select value={form.status} onChange={e => setForm({ ...form, status: e.target.value })}>{['Draft', 'Sent', 'Accepted', 'Rejected', 'Expired'].map(x => <option key={x}>{x}</option>)}</select></label><label>Valid until<input type="date" value={form.valid_until || ''} onChange={e => setForm({ ...form, valid_until: e.target.value })} /></label><label>Notes<textarea value={form.notes || ''} onChange={e => setForm({ ...form, notes: e.target.value })} /></label><div className="modal-actions"><button type="button" className="secondary-btn" onClick={() => setShow(false)}>Cancel</button><button className="primary-btn">Save quote</button></div></form></div>}</> }
+
+function Invoices({ invoices, payments, customers, onAdd, onUpdate, onAddPayment, formatAmount, currentUserId, isAdmin }) { const [show, setShow] = useState(false); const [pay, setPay] = useState(null); const blank = { invoice_number: `INV-${Date.now().toString().slice(-6)}`, title: '', customer_id: '', amount: 0, due_date: '', status: 'Draft', notes: '' }; const [form, setForm] = useState(blank); const save = async e => { e.preventDefault(); try { await onAdd(form); setShow(false) } catch (err) { alert(err.message) } }; const paymentSave = async e => { e.preventDefault(); try { await onAddPayment({ ...pay, payment_method: pay.payment_method || 'Bank transfer' }); setPay(null) } catch (err) { alert(err.message) } }; return <><PageHeading eyebrow="BILLING" title="Invoices & payments" description="Track invoices, balances and payments." action="New invoice" onAction={() => { setForm({ ...blank, invoice_number: `INV-${Date.now().toString().slice(-6)}` }); setShow(true) }} /><div className="stats-grid"><StatCard label="Invoiced" value={formatAmount(invoices.reduce((s, x) => s + Number(x.amount || 0), 0))} hint={`${invoices.length} invoices`} tone="blue" icon="$" /><StatCard label="Paid" value={formatAmount(payments.reduce((s, x) => s + Number(x.amount || 0), 0))} hint={`${payments.length} payments`} tone="green" icon="✓" /><StatCard label="Outstanding" value={formatAmount(invoices.filter(x => !['Paid', 'Cancelled'].includes(x.status)).reduce((s, x) => s + Number(x.amount || 0), 0))} hint="Open balances" tone="orange" icon="!" /></div><div className="panel"><div className="table-wrap"><table><thead><tr><th>Invoice</th><th>Customer</th><th>Amount</th><th>Status</th><th>Due</th><th>Actions</th></tr></thead><tbody>{invoices.length === 0 ? <tr><td colSpan="6">No invoices yet.</td></tr> : invoices.map(i => <tr key={i.id}><td><strong>{i.invoice_number}</strong><div className="deal-customer">{i.title}</div></td><td>{i.customers?.name || '—'}</td><td>{formatAmount(i.amount)}</td><td>{i.status}</td><td>{i.due_date ? formatDate(i.due_date) : '—'}</td><td><div className="toolbar-actions">{(isAdmin || i.created_by === currentUserId) && <button className="secondary-btn" onClick={() => onUpdate(i.id, { status: i.status === 'Paid' ? 'Sent' : 'Paid' })}>{i.status === 'Paid' ? 'Reopen' : 'Mark paid'}</button>}{i.status !== 'Paid' && <button className="secondary-btn" onClick={() => setPay({ invoice_id: i.id, amount: i.amount, paid_at: new Date().toISOString().slice(0, 16), payment_method: 'Bank transfer' })}>Record payment</button>}</div></td></tr>)}</tbody></table></div></div>{show && <div className="modal-backdrop" onClick={() => setShow(false)}><form className="modal" onSubmit={save} onClick={e => e.stopPropagation()}><div className="modal-heading"><h2>New invoice</h2><button type="button" className="icon-btn" onClick={() => setShow(false)}><X size={18} /></button></div><label>Invoice number<input required value={form.invoice_number} onChange={e => setForm({ ...form, invoice_number: e.target.value })} /></label><label>Title<input required value={form.title} onChange={e => setForm({ ...form, title: e.target.value })} /></label><label>Customer<select value={form.customer_id} onChange={e => setForm({ ...form, customer_id: e.target.value })}><option value="">None</option>{customers.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}</select></label><label>Amount<input type="number" min="0" value={form.amount} onChange={e => setForm({ ...form, amount: Number(e.target.value) })} /></label><label>Due date<input type="date" value={form.due_date || ''} onChange={e => setForm({ ...form, due_date: e.target.value })} /></label><label>Status<select value={form.status} onChange={e => setForm({ ...form, status: e.target.value })}>{['Draft', 'Sent', 'Partially Paid', 'Paid', 'Overdue', 'Cancelled'].map(x => <option key={x}>{x}</option>)}</select></label><label>Notes<textarea value={form.notes || ''} onChange={e => setForm({ ...form, notes: e.target.value })} /></label><div className="modal-actions"><button type="button" className="secondary-btn" onClick={() => setShow(false)}>Cancel</button><button className="primary-btn">Create invoice</button></div></form></div>}{pay && <div className="modal-backdrop" onClick={() => setPay(null)}><form className="modal" onSubmit={paymentSave} onClick={e => e.stopPropagation()}><div className="modal-heading"><h2>Record payment</h2><button type="button" className="icon-btn" onClick={() => setPay(null)}><X size={18} /></button></div><label>Amount<input type="number" min="0" value={pay.amount} onChange={e => setPay({ ...pay, amount: Number(e.target.value) })} /></label><label>Method<select value={pay.payment_method} onChange={e => setPay({ ...pay, payment_method: e.target.value })}>{['Bank transfer', 'Card', 'Cash', 'Online', 'Other'].map(x => <option key={x}>{x}</option>)}</select></label><label>Date<input type="datetime-local" value={pay.paid_at} onChange={e => setPay({ ...pay, paid_at: e.target.value })} /></label><div className="modal-actions"><button type="button" className="secondary-btn" onClick={() => setPay(null)}>Cancel</button><button className="primary-btn">Save payment</button></div></form></div>}</> }
+
+function Documents({ documents, customers, onUpload, onDownload, onDelete }) { const [customerId, setCustomerId] = useState(''); const upload = e => { const f = e.target.files?.[0]; if (!f) return; onUpload(f, customerId).catch(err => alert(err.message)); e.target.value = '' }; return <><PageHeading eyebrow="FILES" title="Documents" description="Store customer and CRM files in Supabase Storage." /><div className="panel"><div className="toolbar"><select value={customerId} onChange={e => setCustomerId(e.target.value)}><option value="">No customer link</option>{customers.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}</select><label className="secondary-btn" style={{ display: 'inline-flex', alignItems: 'center', gap: 8, cursor: 'pointer' }}><Upload size={15} /> Upload file<input type="file" hidden onChange={upload} /></label></div><div className="table-wrap"><table><thead><tr><th>File</th><th>Customer</th><th>Type</th><th>Size</th><th>Created</th><th>Actions</th></tr></thead><tbody>{documents.length === 0 ? <tr><td colSpan="6">No documents yet.</td></tr> : documents.map(d => <tr key={d.id}><td><strong>{d.name}</strong></td><td>{d.customers?.name || '—'}</td><td>{d.mime_type}</td><td>{Math.max(1, Math.round(Number(d.size_bytes || 0) / 1024))} KB</td><td>{formatDate(d.created_at)}</td><td><div className="toolbar-actions"><button className="secondary-btn" onClick={() => onDownload(d)}><Download size={14} /> Download</button><button className="icon-btn" onClick={() => onDelete(d)}><X size={16} /></button></div></td></tr>)}</tbody></table></div></div></> }
+
+function Automation({ workflows, onAdd, onUpdate }) { const [show, setShow] = useState(false); const blank = { name: '', description: '', trigger_type: 'customer_created', action_type: 'create_notification', active: true, config: {} }; const [form, setForm] = useState(blank); const save = async e => { e.preventDefault(); try { await onAdd(form); setShow(false); setForm(blank) } catch (err) { alert(err.message) } }; return <><PageHeading eyebrow="AUTOMATION" title="Workflow automation" description="Define rules that turn CRM events into actions." action="New workflow" onAction={() => setShow(true)} /><div className="panel"><div className="table-wrap"><table><thead><tr><th>Workflow</th><th>Trigger</th><th>Action</th><th>Status</th><th>Created</th><th>Toggle</th></tr></thead><tbody>{workflows.length === 0 ? <tr><td colSpan="6">No workflows yet.</td></tr> : workflows.map(w => <tr key={w.id}><td><strong>{w.name}</strong><div className="deal-customer">{w.description}</div></td><td>{w.trigger_type}</td><td>{w.action_type}</td><td>{w.active ? 'Active' : 'Paused'}</td><td>{formatDate(w.created_at)}</td><td><button className="secondary-btn" onClick={() => onUpdate(w.id, { active: !w.active })}>{w.active ? 'Pause' : 'Activate'}</button></td></tr>)}</tbody></table></div></div>{show && <div className="modal-backdrop" onClick={() => setShow(false)}><form className="modal" onSubmit={save} onClick={e => e.stopPropagation()}><div className="modal-heading"><h2>New workflow</h2><button type="button" className="icon-btn" onClick={() => setShow(false)}><X size={18} /></button></div><label>Name<input required value={form.name} onChange={e => setForm({ ...form, name: e.target.value })} /></label><label>Description<input value={form.description} onChange={e => setForm({ ...form, description: e.target.value })} /></label><label>Trigger<select value={form.trigger_type} onChange={e => setForm({ ...form, trigger_type: e.target.value })}>{['customer_created', 'lead_created', 'deal_stage_changed', 'ticket_created', 'invoice_overdue', 'activity_due'].map(x => <option key={x}>{x}</option>)}</select></label><label>Action<select value={form.action_type} onChange={e => setForm({ ...form, action_type: e.target.value })}>{['create_notification', 'create_activity', 'log_event', 'send_email'].map(x => <option key={x}>{x}</option>)}</select></label><div className="modal-actions"><button type="button" className="secondary-btn" onClick={() => setShow(false)}>Cancel</button><button className="primary-btn">Create workflow</button></div></form></div>}</> }
+
+function Segments({ segments, customers, onAdd, onUpdate }) { const [show, setShow] = useState(false); const [form, setForm] = useState({ name: '', description: '', rule_json: { status: 'Active' }, active: true }); const [selected, setSelected] = useState(null); const save = async e => { e.preventDefault(); try { await onAdd(form); setShow(false) } catch (err) { alert(err.message) } }; const count = s => customers.filter(c => (c.status || 'Active') === (s.rule_json?.status || 'Active')).length; return <><PageHeading eyebrow="CUSTOMER INTELLIGENCE" title="Segments" description="Group customers for targeted follow-up and reporting." action="New segment" onAction={() => setShow(true)} /><div className="panel"><div className="table-wrap"><table><thead><tr><th>Segment</th><th>Rule</th><th>Customers</th><th>Status</th><th>Actions</th></tr></thead><tbody>{segments.length === 0 ? <tr><td colSpan="5">No segments yet.</td></tr> : segments.map(s => <tr key={s.id}><td><strong>{s.name}</strong><div className="deal-customer">{s.description}</div></td><td>Status = {s.rule_json?.status || 'Active'}</td><td>{count(s)}</td><td>{s.active ? 'Active' : 'Paused'}</td><td><button className="secondary-btn" onClick={() => onUpdate(s.id, { active: !s.active })}>{s.active ? 'Pause' : 'Activate'}</button></td></tr>)}</tbody></table></div></div>{show && <div className="modal-backdrop" onClick={() => setShow(false)}><form className="modal" onSubmit={save} onClick={e => e.stopPropagation()}><div className="modal-heading"><h2>New segment</h2><button type="button" className="icon-btn" onClick={() => setShow(false)}><X size={18} /></button></div><label>Name<input required value={form.name} onChange={e => setForm({ ...form, name: e.target.value })} /></label><label>Description<input value={form.description} onChange={e => setForm({ ...form, description: e.target.value })} /></label><label>Customer status<select value={form.rule_json.status} onChange={e => setForm({ ...form, rule_json: { ...form.rule_json, status: e.target.value } })}>{['Active', 'Inactive', 'Prospect', 'VIP'].map(x => <option key={x}>{x}</option>)}</select></label><div className="modal-actions"><button type="button" className="secondary-btn" onClick={() => setShow(false)}>Cancel</button><button className="primary-btn">Create segment</button></div></form></div>}</> }
+
+function Forecast({ deals, formatAmount }) { const weighted = deals.filter(d => d.stage !== 'Lost' && d.stage !== 'Won').reduce((s, d) => s + (Number(d.amount) || 0) * stageProbability(d.stage), 0); const open = deals.filter(d => !['Lost', 'Won'].includes(d.stage)); return <><PageHeading eyebrow="SALES INTELLIGENCE" title="Sales forecast" description="Weighted forecast based on current pipeline stages." /><div className="stats-grid"><StatCard label="Weighted forecast" value={formatAmount(weighted)} hint="Open pipeline × stage probability" tone="purple" icon="↗" /><StatCard label="Open pipeline" value={formatAmount(open.reduce((s, d) => s + Number(d.amount || 0), 0))} hint={`${open.length} open deals`} tone="orange" icon="◈" /><StatCard label="Won revenue" value={formatAmount(deals.filter(d => d.stage === 'Won').reduce((s, d) => s + Number(d.amount || 0), 0))} hint="Closed won" tone="green" icon="✓" /></div><div className="panel"><h3>Forecast by stage</h3>{PIPELINE_STAGES.filter(s => s !== 'Lost').map(stage => { const list = deals.filter(d => d.stage === stage); const value = list.reduce((s, d) => s + Number(d.amount || 0), 0); return <BarRow key={stage} label={`${stage} (${Math.round(stageProbability(stage) * 100)}%)`} percent={weighted ? value * stageProbability(stage) / weighted * 100 : 0} display={formatAmount(value * stageProbability(stage))} /> })}</div></> }
+
+function stageProbability(stage) { return ({ 'New Lead': 0.1, 'Qualified': 0.25, 'Proposal': 0.5, 'Negotiation': 0.75, 'Won': 1, 'Lost': 0 })[stage] ?? 0.2; }
+
+function AdvancedReports({ customers, deals, activities, tickets, leads, quotes, invoices, payments, formatAmount }) { const pipeline = deals.filter(d => !['Won', 'Lost'].includes(d.stage)).reduce((s, d) => s + Number(d.amount || 0), 0); const won = deals.filter(d => d.stage === 'Won').reduce((s, d) => s + Number(d.amount || 0), 0); const paid = payments.reduce((s, p) => s + Number(p.amount || 0), 0); const leadConversion = leads.length ? leads.filter(l => l.status === 'Converted').length / leads.length * 100 : 0; const overdue = invoices.filter(i => i.status === 'Overdue').length; const response = tickets.filter(t => ['Resolved', 'Closed'].includes(t.status)).length; return <><PageHeading eyebrow="INSIGHTS" title="Advanced reports" description="Cross-module performance, conversion and revenue intelligence." /><div className="stats-grid"><StatCard label="Won revenue" value={formatAmount(won)} hint={`${deals.filter(d => d.stage === 'Won').length} won deals`} tone="green" icon="✓" /><StatCard label="Weighted forecast" value={formatAmount(deals.filter(d => !['Won', 'Lost'].includes(d.stage)).reduce((s, d) => s + Number(d.amount || 0) * stageProbability(d.stage), 0))} hint="Probability weighted" tone="purple" icon="↗" /><StatCard label="Lead conversion" value={`${leadConversion.toFixed(1)}%`} hint={`${leads.filter(l => l.status === 'Converted').length}/${leads.length} converted`} tone="blue" icon="◉" /><StatCard label="Collected" value={formatAmount(paid)} hint="Recorded payments" tone="orange" icon="$" /></div><div className="report-grid"><div className="panel report-summary"><h3>Sales funnel</h3><BarRow label="Leads" percent={100} display={leads.length} /><BarRow label="Qualified" percent={leads.length ? (leads.filter(l => l.status === 'Qualified').length / leads.length * 100) : 0} display={leads.filter(l => l.status === 'Qualified').length} /><BarRow label="Won deals" percent={leads.length ? (deals.filter(d => d.stage === 'Won').length / leads.length * 100) : 0} display={deals.filter(d => d.stage === 'Won').length} /></div><div className="panel report-summary"><h3>Revenue</h3><BarRow label="Open pipeline" percent={pipeline + won ? (pipeline / (pipeline + won)) * 100 : 0} display={formatAmount(pipeline)} /><BarRow label="Won" percent={pipeline + won ? (won / (pipeline + won)) * 100 : 0} display={formatAmount(won)} /><BarRow label="Collected" percent={won ? Math.min(100, paid / won * 100) : 0} display={formatAmount(paid)} /></div><div className="panel report-summary"><h3>Operations</h3><BarRow label="Activities completed" percent={activities.length ? activities.filter(a => a.status === 'Completed').length / activities.length * 100 : 0} display={`${activities.filter(a => a.status === 'Completed').length}/${activities.length}`} /><BarRow label="Tickets resolved" percent={tickets.length ? response / tickets.length * 100 : 0} display={`${response}/${tickets.length}`} /><BarRow label="Overdue invoices" percent={invoices.length ? overdue / invoices.length * 100 : 0} display={overdue} /></div><div className="panel report-summary"><h3>Quotes</h3><BarRow label="Accepted" percent={quotes.length ? quotes.filter(q => q.status === 'Accepted').length / quotes.length * 100 : 0} display={quotes.filter(q => q.status === 'Accepted').length} /><BarRow label="Sent" percent={quotes.length ? quotes.filter(q => q.status === 'Sent').length / quotes.length * 100 : 0} display={quotes.filter(q => q.status === 'Sent').length} /><BarRow label="Rejected" percent={quotes.length ? quotes.filter(q => q.status === 'Rejected').length / quotes.length * 100 : 0} display={quotes.filter(q => q.status === 'Rejected').length} /></div></div></> }
+
+function SettingsPage({ currency, setCurrency }) {
   const [selectedCurrency, setSelectedCurrency] = useState(currency);
-  const [isSaving, setIsSaving] = useState(false);
   const [saved, setSaved] = useState(false);
 
- const handleSave = async () => {
-    setIsSaving(true);
-    setSaved(false);
-  
+  const handleSave = () => {
     setCurrency(selectedCurrency);
-
-    await new Promise(resolve => setTimeout(resolve, 800));
-
-    setIsSaving(false);
     setSaved(true);
-
-    setTimeout(() => {
-      setSaved(false);
-    }, 2000);
+    setTimeout(() => setSaved(false), 2000);
   };
+
   return (
     <>
       <PageHeading eyebrow="WORKSPACE" title="Settings" description="Manage your workspace preferences." />
       <div className="panel settings-panel">
         <h3>Workspace settings</h3>
-        <label>Workspace name<input defaultValue="Orbit CRM" /></label>
-        <label>Default currency
+        <label>Display currency
           <select value={selectedCurrency} onChange={e => setSelectedCurrency(e.target.value)}>
             <option value="NGN">NGN — Nigerian Naira (₦)</option>
             <option value="USD">USD — US Dollar ($)</option>
             <option value="EUR">EUR — Euro (€)</option>
-            </select>
+          </select>
         </label>
-        <button className="primary-btn" onClick={handleSave} disabled={isSaving}>{isSaving ? 'Saving...' : saved ? 'Changes saved!' : 'Save changes'}</button>
+        <p className="settings-hint">Deal amounts are stored in USD and converted for display. Your choice is saved on this device.</p>
+        <button className="primary-btn" onClick={handleSave}>{saved ? 'Changes saved' : 'Save changes'}</button>
       </div>
     </>
-  )
+  );
 }
+
 function Chat() {
   const [users, setUsers] = useState([]);
   const [selectedUser, setSelectedUser] = useState(null);
@@ -2273,6 +3190,7 @@ function Chat() {
     if (!currentUserId || !user?.user_id) return;
 
     setSelectedUser(user);
+    setMessages([]);
     setLoadingMessages(true);
     setError('');
 
@@ -2370,6 +3288,29 @@ function Chat() {
 
       return [...prev, data];
     });
+    const recipientId =
+      conversation.user_one === currentUserId
+        ? conversation.user_two
+        : conversation.user_one;
+
+    if (recipientId !== currentUserId) {
+      const { error: notificationError } = await supabase
+        .from('notifications')
+        .insert({
+          user_id: recipientId,
+          type: 'new_chat',
+          title: 'New chat message',
+          message: body,
+          link: 'Chat'
+        });
+
+      if (notificationError) {
+        console.error(
+          'Failed to create chat notification:',
+          notificationError
+        );
+      }
+    }
     setMessageText('');
     setSending(false);
   }
