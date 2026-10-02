@@ -14,7 +14,7 @@ function AuthScreen({ onGoogleSignIn, onEmailSignIn, onEmailSignUp, authMode, se
     <div className="auth-page">
       <div className="auth-card">
         <div className="auth-brand">
-          <div className="brand-mark">O</div>
+          <div className="brand-mark"><OrbitLogo/></div>
           <span>
             orbit<span className="brand-accent">CRM</span>
           </span>
@@ -614,7 +614,6 @@ function App() {
     else setEmailIntegrations(data || []);
     setEmailIntegrationLoading(false);
   }
-
   async function connectEmailProvider(provider) {
     setEmailIntegrationError('');
     try {
@@ -625,7 +624,6 @@ function App() {
       window.location.href = data.url;
     } catch (error) { console.error(`Error connecting ${provider}:`, error); setEmailIntegrationError(error.message || `Could not start ${provider} connection.`); }
   }
-
   async function disconnectEmailProvider(id) {
     if (!window.confirm('Disconnect this email account?')) return;
     const { error } = await supabase.from('email_integrations').update({ status: 'disconnected' }).eq('id', id).eq('user_id', session.user.id);
@@ -633,7 +631,15 @@ function App() {
     fetchEmailIntegrations();
   }
 
-  async function fetchLeads() { const { data, error } = await supabase.from('leads').select('*, customers(name,company)').order('created_at', { ascending: false }); if (error) { console.error('Error fetching leads:', error); return; } setLeads(data || []); }
+  async function fetchLeads() {
+    const { data, error } = await supabase.from('leads')
+      .select('*, customers(name,company)')
+      .order('created_at', { ascending: false });
+    if (error) {
+      console.error('Error fetching leads:', error);
+      return;
+    } setLeads(data || []);
+  }
   async function fetchEmailLogs() { const { data, error } = await supabase.from('email_logs').select('*, customers(name,company)').order('sent_at', { ascending: false }); if (error) { console.error('Error fetching email logs:', error); return; } setEmailLogs(data || []); }
   async function fetchCalendarEvents() { const { data, error } = await supabase.from('calendar_events').select('*, customers(name,company)').order('start_at', { ascending: true }); if (error) { console.error('Error fetching calendar events:', error); return; } setCalendarEvents(data || []); }
   async function fetchQuotes() { const { data, error } = await supabase.from('quotes').select('*, customers(name,company)').order('created_at', { ascending: false }); if (error) { console.error('Error fetching quotes:', error); return; } setQuotes(data || []); }
@@ -798,8 +804,7 @@ function App() {
       setAuthorizationLoading(false);
       return;
     }
-    // Token refreshes and tab refocus create a new session object for the same user.
-    // Only run the full check (and loader) when the user actually changes.
+    
     const isSameUser = lastCheckedUserId.current === session.user.id;
     lastCheckedUserId.current = session.user.id;
     checkAuthorization(session, { silent: isSameUser });
@@ -1321,7 +1326,7 @@ function App() {
       <div className="auth-page">
         <div className="auth-card auth-loading">
           <div className="auth-brand">
-            <div className="brand-mark">O</div>
+            <div className="brand-mark"><OrbitLogo/></div>
             <span>
               orbit<span className="brand-accent">CRM</span>
             </span>
@@ -1358,7 +1363,7 @@ function App() {
   return <div className="app-shell">
     <aside className={`sidebar ${sidebarOpen ? 'sidebar-open' : ''}`}>
       <div className="brand">
-        <div className="brand-mark"></div>
+        <div className="brand-mark"><OrbitLogo/></div>
         <span>orbit<span className="brand-accent">CRM</span></span>
         <button className="icon-btn close-mobile" onClick={() => setSidebarOpen(false)}><X size={18} /></button>
       </div>
@@ -3662,4 +3667,49 @@ function UserManagement({ users = [], loading = false, error = '', onRefresh, on
     </>
   );
 }
+function OrbitLogo({ className = "w-8 h-8" }) {
+  return (
+    <svg
+      xmlns="http://www.w3.org/2000/svg"
+      viewBox="0 0 100 100"
+      className={className}
+      fill="none"
+    >
+      <defs>
+        <linearGradient id="orbitGrad1" x1="0%" y1="100%" x2="100%" y2="0%">
+          <stop offset="0%" stopColor="#10B981" />
+          <stop offset="100%" stopColor="#059669" />
+        </linearGradient>
+
+        <linearGradient id="orbitGrad2" x1="0%" y1="0%" x2="100%" y2="100%">
+          <stop offset="0%" stopColor="#6366F1" />
+          <stop offset="100%" stopColor="#3B82F6" />
+        </linearGradient>
+
+        <radialGradient id="coreGrad" cx="35%" cy="35%" r="65%">
+          <stop offset="0%" stopColor="#334155" />
+          <stop offset="100%" stopColor="#0F172A" />
+        </radialGradient>
+      </defs>
+
+      <ellipse
+        cx="50" cy="50" rx="38" ry="14"
+        stroke="url(#orbitGrad2)" strokeWidth="4.5" strokeLinecap="round"
+        transform="rotate(-28 50 50)"
+      />
+      <ellipse
+        cx="50" cy="50" rx="38" ry="14"
+        stroke="url(#orbitGrad1)" strokeWidth="5" strokeLinecap="round"
+        transform="rotate(32 50 50)"
+      />
+      <circle cx="50" cy="50" r="15" fill="url(#coreGrad)" />
+      <circle cx="18" cy="30" r="3.5" fill="#10B981" />
+      <circle cx="82" cy="70" r="3.5" fill="#10B981" />
+      <circle cx="75" cy="28" r="3" fill="#6366F1" />
+      <circle cx="25" cy="72" r="3" fill="#3B82F6" />
+      <circle cx="45" cy="45" r="2.5" fill="#F8FAFC" opacity="0.8" />
+    </svg>
+  )
+}
+
 export default App;
