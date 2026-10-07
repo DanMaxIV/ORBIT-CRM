@@ -14,7 +14,7 @@ function AuthScreen({ onGoogleSignIn, onEmailSignIn, onEmailSignUp, authMode, se
     <div className="auth-page">
       <div className="auth-card">
         <div className="auth-brand">
-          <div className="brand-mark"><OrbitLogo/></div>
+          <div className="brand-mark"><OrbitLogo /></div>
           <span>
             orbit<span className="brand-accent">CRM</span>
           </span>
@@ -804,7 +804,7 @@ function App() {
       setAuthorizationLoading(false);
       return;
     }
-    
+
     const isSameUser = lastCheckedUserId.current === session.user.id;
     lastCheckedUserId.current = session.user.id;
     checkAuthorization(session, { silent: isSameUser });
@@ -1326,7 +1326,7 @@ function App() {
       <div className="auth-page">
         <div className="auth-card auth-loading">
           <div className="auth-brand">
-            <div className="brand-mark"><OrbitLogo/></div>
+            <div className="brand-mark"><OrbitLogo /></div>
             <span>
               orbit<span className="brand-accent">CRM</span>
             </span>
@@ -1363,7 +1363,7 @@ function App() {
   return <div className="app-shell">
     <aside className={`sidebar ${sidebarOpen ? 'sidebar-open' : ''}`}>
       <div className="brand">
-        <div className="brand-mark"><OrbitLogo/></div>
+        <div className="brand-mark"><OrbitLogo /></div>
         <span>orbit<span className="brand-accent">CRM</span></span>
         <button className="icon-btn close-mobile" onClick={() => setSidebarOpen(false)}><X size={18} /></button>
       </div>
@@ -3081,9 +3081,144 @@ function EmailPage({ emailLogs, customers, integrations, loading, error, onConne
   </>;
 }
 
-function EmailLogs({ emailLogs, customers, onAdd, openExternally = false, onCloseExternal }) { const [show, setShow] = useState(openExternally); useEffect(() => { if (openExternally) setShow(true) }, [openExternally]); const [form, setForm] = useState({ to_email: '', subject: '', body: '', direction: 'Outgoing', status: 'Logged', customer_id: '' }); const save = async e => { e.preventDefault(); try { await onAdd(form); setShow(false); setForm({ to_email: '', subject: '', body: '', direction: 'Outgoing', status: 'Logged', customer_id: '' }) } catch (err) { alert(err.message) } }; return <><PageHeading eyebrow="COMMUNICATIONS" title="Email" description="Log customer emails and keep communication history in one place." action="Log email" onAction={() => setShow(true)} /><div className="panel"><div className="table-wrap"><table><thead><tr><th>Subject</th><th>Contact</th><th>Direction</th><th>Status</th><th>Date</th></tr></thead><tbody>{emailLogs.length === 0 ? <tr><td colSpan="5">No email logs yet.</td></tr> : emailLogs.map(e => <tr key={e.id}><td><strong>{e.subject}</strong><div className="deal-customer">{e.body?.slice(0, 80)}</div></td><td>{e.customers?.name || e.to_email}</td><td>{e.direction}</td><td>{e.status}</td><td>{formatDate(e.sent_at || e.created_at)}</td></tr>)}</tbody></table></div></div>{show && <div className="modal-backdrop" onClick={() => setShow(false)}><form className="modal" onSubmit={save} onClick={e => e.stopPropagation()}><div className="modal-heading"><h2>Log email</h2><button type="button" className="icon-btn" onClick={() => setShow(false)}><X size={18} /></button></div><label>To email<input type="email" required value={form.to_email} onChange={e => setForm({ ...form, to_email: e.target.value })} /></label><label>Customer<select value={form.customer_id} onChange={e => setForm({ ...form, customer_id: e.target.value })}><option value="">None</option>{customers.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}</select></label><label>Subject<input required value={form.subject} onChange={e => setForm({ ...form, subject: e.target.value })} /></label><label>Body<textarea rows="6" value={form.body} onChange={e => setForm({ ...form, body: e.target.value })} /></label><label>Direction<select value={form.direction} onChange={e => setForm({ ...form, direction: e.target.value })}><option>Outgoing</option><option>Incoming</option></select></label><div className="modal-actions"><button type="button" className="secondary-btn" onClick={() => setShow(false)}>Cancel</button><button className="primary-btn">Save email</button></div></form></div>}</> }
+function EmailLogs({ emailLogs, customers, onAdd, openExternally = false, onCloseExternal }) {
+  const [show, setShow] = useState(openExternally);
+  useEffect(() => { if (openExternally) setShow(true) }, [openExternally]);
+  const [form, setForm] = useState({ to_email: '', subject: '', body: '', direction: 'Outgoing', status: 'Logged', customer_id: '' });
+  const save = async e => {
+    e.preventDefault(); try {
+      await onAdd(form); setShow(false);
+      setForm({ to_email: '', subject: '', body: '', direction: 'Outgoing', status: 'Logged', customer_id: '' })
+    }
+    catch (err) { alert(err.message) }
+  };
+  return <>
+    <PageHeading eyebrow="COMMUNICATIONS" title="Email" description="Log customer emails and keep communication history in one place." action="Log email" onAction={() => setShow(true)} />
+    <div className="panel">
+      <div className="table-wrap">
+        <table>
+          <thead>
+            <tr>
+              <th>Subject</th>
+              <th>Contact</th>
+              <th>Direction</th>
+              <th>Status</th>
+              <th>Date</th>
+            </tr>
+          </thead>
+          <tbody>
+            {emailLogs.length === 0 ?
+              <tr>
+                <td colSpan="5">No email logs yet.</td>
+              </tr> : emailLogs.map(
+                e => <tr key={e.id}><td><strong>{e.subject}</strong>
+                  <div className="deal-customer">{e.body?.slice(0, 80)}</div>
+                </td>
+                  <td>{e.customers?.name || e.to_email}</td>
+                  <td>{e.direction}</td>
+                  <td>{e.status}</td>
+                  <td>{formatDate(e.sent_at || e.created_at)}</td>
+                </tr>)
+            }
+          </tbody>
+        </table>
+      </div>
+    </div>
+    {show && <div className="modal-backdrop" onClick={() => setShow(false)}>
+      <form className="modal" onSubmit={save} onClick={e => e.stopPropagation()}>
+        <div className="modal-heading">
+          <h2>Log email</h2>
+          <button type="button" className="icon-btn" onClick={() => setShow(false)}><X size={18} /></button>
+        </div>
+        <label>To email<input type="email" required value={form.to_email} onChange={e => setForm({ ...form, to_email: e.target.value })} /></label>
+        <label>Customer<select value={form.customer_id} onChange={e => setForm({ ...form, customer_id: e.target.value })}>
+          <option value="">None</option>
+          {customers.map(c =>
+            <option key={c.id} value={c.id}>{c.name}</option>
+          )}
+        </select>
+        </label>
+        <label>Subject<input required value={form.subject} onChange={e => setForm({ ...form, subject: e.target.value })} />
+        </label><label>Body<textarea rows="6" value={form.body} onChange={e => setForm({ ...form, body: e.target.value })} />
+        </label><label>Direction<select value={form.direction} onChange={e => setForm({ ...form, direction: e.target.value })}>
+          <option>Outgoing</option>
+          <option>Incoming</option>
+        </select>
+        </label>
+        <div className="modal-actions">
+          <button type="button" className="secondary-btn" onClick={() => setShow(false)}>Cancel</button>
+          <button className="primary-btn">Save email</button>
+        </div>
+      </form>
+    </div>
+    }
+  </>
+}
 
-function CalendarPage({ events, customers, onAdd, onUpdate, onDelete }) { const [show, setShow] = useState(false); const [editing, setEditing] = useState(null); const blank = { title: '', description: '', start_at: '', end_at: '', event_type: 'Meeting', customer_id: '', location: '', status: 'Scheduled' }; const [form, setForm] = useState(blank); const save = async e => { e.preventDefault(); try { if (editing) await onUpdate(editing.id, form); else await onAdd(form); setShow(false); setEditing(null); setForm(blank) } catch (err) { alert(err.message) } }; const open = x => { setEditing(x); setForm({ ...x, start_at: formatDateTimeLocal(x.start_at), end_at: formatDateTimeLocal(x.end_at) }); setShow(true) }; return <><PageHeading eyebrow="PRODUCTIVITY" title="Calendar" description="Manage meetings, calls and customer appointments." action="New event" onAction={() => { setEditing(null); setForm(blank); setShow(true) }} /><div className="panel"><div className="table-wrap"><table><thead><tr><th>Event</th><th>Customer</th><th>When</th><th>Type</th><th>Status</th><th>Actions</th></tr></thead><tbody>{events.length === 0 ? <tr><td colSpan="6">No calendar events yet.</td></tr> : events.map(x => <tr key={x.id}><td><strong>{x.title}</strong><div className="deal-customer">{x.location || ''}</div></td><td>{x.customers?.name || '—'}</td><td>{formatDateTime(x.start_at)}</td><td>{x.event_type}</td><td>{x.status}</td><td><div className="toolbar-actions"><button className="secondary-btn" onClick={() => open(x)}>Edit</button><button className="icon-btn" onClick={() => onDelete(x.id)}><X size={16} /></button></div></td></tr>)}</tbody></table></div></div>{show && <div className="modal-backdrop" onClick={() => setShow(false)}><form className="modal" onSubmit={save} onClick={e => e.stopPropagation()}><div className="modal-heading"><h2>{editing ? 'Edit event' : 'New event'}</h2><button type="button" className="icon-btn" onClick={() => setShow(false)}><X size={18} /></button></div><label>Title<input required value={form.title} onChange={e => setForm({ ...form, title: e.target.value })} /></label><label>Customer<select value={form.customer_id} onChange={e => setForm({ ...form, customer_id: e.target.value })}><option value="">None</option>{customers.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}</select></label><label>Start<input type="datetime-local" required value={form.start_at || ''} onChange={e => setForm({ ...form, start_at: e.target.value })} /></label><label>End<input type="datetime-local" value={form.end_at || ''} onChange={e => setForm({ ...form, end_at: e.target.value })} /></label><label>Type<select value={form.event_type} onChange={e => setForm({ ...form, event_type: e.target.value })}>{['Meeting', 'Call', 'Demo', 'Task', 'Other'].map(x => <option key={x}>{x}</option>)}</select></label><label>Location<input value={form.location || ''} onChange={e => setForm({ ...form, location: e.target.value })} /></label><label>Description<textarea value={form.description || ''} onChange={e => setForm({ ...form, description: e.target.value })} /></label><div className="modal-actions"><button type="button" className="secondary-btn" onClick={() => setShow(false)}>Cancel</button><button className="primary-btn">Save event</button></div></form></div>}</> }
+function CalendarPage({ events, customers, onAdd, onUpdate, onDelete }) {
+  const [show, setShow] = useState(false); const [editing, setEditing] = useState(null);
+  const blank = { title: '', description: '', start_at: '', end_at: '', event_type: 'Meeting', customer_id: '', location: '', status: 'Scheduled' };
+  const [form, setForm] = useState(blank);
+  const save = async e => {
+    e.preventDefault();
+    try {
+      if (editing) await onUpdate(editing.id, form);
+      else await onAdd(form);
+      setShow(false);
+      setEditing(null);
+      setForm(blank)
+    } catch (err) { alert(err.message) }
+  };
+  const open = x => {
+    setEditing(x);
+    setForm({ ...x, start_at: formatDateTimeLocal(x.start_at), end_at: formatDateTimeLocal(x.end_at) }); setShow(true)
+  };
+  return <>
+    <PageHeading eyebrow="PRODUCTIVITY" title="Calendar" description="Manage meetings, calls and customer appointments." action="New event" onAction={() => { setEditing(null); setForm(blank); setShow(true) }} />
+    <div className="panel">
+      <div className="table-wrap">
+        <table>
+          <thead>
+            <tr>
+              <th>Event</th>
+              <th>Customer</th>
+              <th>When</th>
+              <th>Type</th>
+              <th>Status</th>
+              <th>Actions</th>
+            </tr>
+          </thead>
+          <tbody>{events.length === 0 ?
+            <tr>
+              <td colSpan="6">No calendar events yet.</td>
+            </tr> : events.map(x => <tr key={x.id}>
+              <td>
+                <strong>{x.title}</strong>
+                <div className="deal-customer">{x.location || ''}</div>
+              </td>
+              <td>{x.customers?.name || '—'}</td>
+              <td>{formatDateTime(x.start_at)}</td>
+              <td>{x.event_type}</td><td>{x.status}</td>
+              <td>
+                <div className="toolbar-actions">
+                  <button className="secondary-btn" onClick={() => open(x)}>Edit</button>
+                  <button className="icon-btn" onClick={() => onDelete(x.id)}><X size={16} /></button>
+                </div>
+              </td>
+            </tr>
+            )}
+          </tbody>
+        </table>
+      </div>
+    </div>
+    {show && <div className="modal-backdrop" onClick={() => setShow(false)}><form className="modal" onSubmit={save} onClick={e => e.stopPropagation()}>
+      <div className="modal-heading">
+        <h2>{editing ? 'Edit event' : 'New event'}</h2>
+        <button type="button" className="icon-btn" onClick={() => setShow(false)}><X size={18} /></button>
+        </div>
+        <label>Title<input required value={form.title} onChange={e => setForm({ ...form, title: e.target.value })} /></label>
+        <label>Customer<select value={form.customer_id} onChange={e => setForm({ ...form, customer_id: e.target.value })}><option value="">None</option>{customers.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}</select></label><label>Start<input type="datetime-local" required value={form.start_at || ''} onChange={e => setForm({ ...form, start_at: e.target.value })} /></label><label>End<input type="datetime-local" value={form.end_at || ''} onChange={e => setForm({ ...form, end_at: e.target.value })} /></label><label>Type<select value={form.event_type} onChange={e => setForm({ ...form, event_type: e.target.value })}>{['Meeting', 'Call', 'Demo', 'Task', 'Other'].map(x => <option key={x}>{x}</option>)}</select></label><label>Location<input value={form.location || ''} onChange={e => setForm({ ...form, location: e.target.value })} /></label><label>Description<textarea value={form.description || ''} onChange={e => setForm({ ...form, description: e.target.value })} /></label><div className="modal-actions"><button type="button" className="secondary-btn" onClick={() => setShow(false)}>Cancel</button><button className="primary-btn">Save event</button></div></form></div>}</>
+}
 
 function Quotes({ quotes, customers, onAdd, onUpdate, formatAmount, currentUserId, isAdmin }) { const [show, setShow] = useState(false); const [editing, setEditing] = useState(null); const blank = { title: '', quote_number: `Q-${Date.now().toString().slice(-6)}`, customer_id: '', amount: 0, status: 'Draft', valid_until: '', notes: '' }; const [form, setForm] = useState(blank); const save = async e => { e.preventDefault(); try { if (editing) await onUpdate(editing.id, form); else await onAdd(form); setShow(false); setEditing(null) } catch (err) { alert(err.message) } }; return <><PageHeading eyebrow="SALES OPERATIONS" title="Quotes" description="Create and track customer quotations." action="New quote" onAction={() => { setEditing(null); setForm({ ...blank, quote_number: `Q-${Date.now().toString().slice(-6)}` }); setShow(true) }} /><div className="panel"><div className="table-wrap"><table><thead><tr><th>Quote</th><th>Customer</th><th>Amount</th><th>Status</th><th>Valid until</th><th>Actions</th></tr></thead><tbody>{quotes.length === 0 ? <tr><td colSpan="6">No quotes yet.</td></tr> : quotes.map(q => <tr key={q.id}><td><strong>{q.quote_number}</strong><div className="deal-customer">{q.title}</div></td><td>{q.customers?.name || '—'}</td><td>{formatAmount(q.amount)}</td><td>{q.status}</td><td>{q.valid_until ? formatDate(q.valid_until) : '—'}</td><td>{(isAdmin || q.created_by === currentUserId) && <button className="secondary-btn" onClick={() => { setEditing(q); setForm(q); setShow(true) }}>Edit</button>}</td></tr>)}</tbody></table></div></div>{show && <div className="modal-backdrop" onClick={() => setShow(false)}><form className="modal" onSubmit={save} onClick={e => e.stopPropagation()}><div className="modal-heading"><h2>{editing ? 'Edit quote' : 'New quote'}</h2><button type="button" className="icon-btn" onClick={() => setShow(false)}><X size={18} /></button></div><label>Quote number<input required value={form.quote_number} onChange={e => setForm({ ...form, quote_number: e.target.value })} /></label><label>Title<input required value={form.title} onChange={e => setForm({ ...form, title: e.target.value })} /></label><label>Customer<select value={form.customer_id} onChange={e => setForm({ ...form, customer_id: e.target.value })}><option value="">None</option>{customers.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}</select></label><label>Amount<input type="number" min="0" value={form.amount} onChange={e => setForm({ ...form, amount: Number(e.target.value) })} /></label><label>Status<select value={form.status} onChange={e => setForm({ ...form, status: e.target.value })}>{['Draft', 'Sent', 'Accepted', 'Rejected', 'Expired'].map(x => <option key={x}>{x}</option>)}</select></label><label>Valid until<input type="date" value={form.valid_until || ''} onChange={e => setForm({ ...form, valid_until: e.target.value })} /></label><label>Notes<textarea value={form.notes || ''} onChange={e => setForm({ ...form, notes: e.target.value })} /></label><div className="modal-actions"><button type="button" className="secondary-btn" onClick={() => setShow(false)}>Cancel</button><button className="primary-btn">Save quote</button></div></form></div>}</> }
 
