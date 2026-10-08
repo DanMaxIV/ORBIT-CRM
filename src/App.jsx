@@ -2949,11 +2949,85 @@ function Activities({ activities, customers, onAdd, onStatusChange, onDelete, on
   return <><PageHeading eyebrow="PRODUCTIVITY" title="Activities" description="Keep track of meetings, calls, and follow-ups." action="New activity" onAction={onAdd} /><div className="panel"><div className="panel-heading"><div><h3>Schedule</h3><p>Your tasks, calls and follow-ups.</p></div></div><div className="filter-tabs" role="tablist" aria-label="Filter activities">{Object.keys(filters).map(name => <button key={name} type="button" className={`filter-tab ${tab === name ? 'active' : ''} ${name === 'Overdue' && counts.Overdue ? 'danger' : ''}`} onClick={() => setTab(name)}>{name} ({counts[name]})</button>)}</div>{list.length === 0 ? <div className="empty-state"><p>{activities.length === 0 ? 'No activities yet.' : `No ${tab.toLowerCase()} activities.`}</p>{activities.length === 0 && <button type="button" className="primary-btn" onClick={onAdd}>Create your first activity</button>}</div> : list.map(activity => { const canEdit = isAdmin || activity.created_by === currentUserId; const date = activity.activity_date ? new Date(activity.activity_date) : null; return <div className="activity-row large" key={activity.id}><div className="date-box"><strong>{date ? date.getDate() : '--'}</strong><span>{date ? date.toLocaleDateString('en-US', { month: 'short' }).toUpperCase() : '---'}</span></div><div className="activity-content"><strong>{activity.title} {isOverdue(activity) && <span className="status overdue">Overdue</span>}</strong><p>{activity.type || 'Task'} · {getCustomerName(activity.customer_id)}</p><small>{formatDateTime(activity.activity_date)}</small>{activity.notes && <p className="activity-notes">{activity.notes}</p>}</div><div className="activity-actions"><button type="button" className="secondary-btn" onClick={() => onView(activity)}>View</button>{canEdit && <button type="button" className="secondary-btn" onClick={() => onEdit(activity)}><Pencil size={14} /> Edit</button>}{canEdit && isOpenActivity(activity) && <button type="button" className="secondary-btn" onClick={() => onStatusChange(activity.id, 'Completed')}>Mark done</button>}<select value={activity.status || 'Scheduled'} onChange={e => onStatusChange(activity.id, e.target.value)} disabled={!canEdit}><option value="Scheduled">Scheduled</option><option value="In Progress">In Progress</option><option value="Completed">Completed</option><option value="Cancelled">Cancelled</option></select>{canEdit && <button type="button" className="icon-btn" title="Delete activity" onClick={() => onDelete(activity.id)}><X size={16} /></button>}</div></div> })}</div></>;
 }
 
-function ActivityDetail({ activity, customer, onClose, onEdit }) { return <div className="modal-backdrop" onClick={onClose}><div className="modal modal-wide" onClick={e => e.stopPropagation()}><div className="modal-heading"><div><h2>{activity.title}</h2><p>{activity.type || 'Task'} · {activity.status || 'Scheduled'}</p></div><div className="toolbar-actions"><button type="button" className="secondary-btn" onClick={() => onEdit(activity)}><Pencil size={14} /> Edit</button><button type="button" className="icon-btn" onClick={onClose}><X size={18} /></button></div></div><div className="detail-grid"><div><small>Status</small><p>{activity.status || 'Scheduled'}</p></div><div><small>Type</small><p>{activity.type || 'Task'}</p></div><div><small>Date & time</small><p>{formatDateTime(activity.activity_date)}</p></div><div><small>Customer</small><p>{customer?.name || 'No customer linked'}</p></div><div><small>Created</small><p>{formatDate(activity.created_at)}</p></div><div><small>Reminder state</small><p>{isOverdue(activity) ? 'Overdue' : isOpenActivity(activity) ? 'Upcoming' : 'Completed/closed'}</p></div></div><h3 className="detail-title">Notes</h3><p className="detail-empty" style={{ whiteSpace: 'pre-wrap' }}>{activity.notes || 'No notes added.'}</p></div></div>; }
+function ActivityDetail({ activity, customer, onClose, onEdit }) {
+  return (
+    <div className="modal-backdrop" onClick={onClose}>
+      <div className="modal modal-wide" onClick={e => e.stopPropagation()}>
+        <div className="modal-heading">
+          <div>
+            <h2>{activity.title}</h2>
+            <p>{activity.type || 'Task'} · {activity.status || 'Scheduled'}</p>
+          </div>
+          <div className="toolbar-actions">
+            <button type="button" className="secondary-btn" onClick={() => onEdit(activity)}><Pencil size={14} /> Edit</button>
+            <button type="button" className="icon-btn" onClick={onClose}><X size={18} /></button>
+          </div>
+        </div>
+        <div className="detail-grid">
+          <div>
+            <small>Status</small>
+            <p>{activity.status || 'Scheduled'}</p>
+          </div>
+          <div>
+            <small>Type</small><p>{activity.type || 'Task'}</p>
+          </div>
+          <div>
+            <small>Date & time</small>
+            <p>{formatDateTime(activity.activity_date)}</p>
+          </div>
+          <div>
+            <small>Customer</small><p>{customer?.name || 'No customer linked'}</p>
+          </div>
+          <div><small>Created</small>
+            <p>{formatDate(activity.created_at)}</p>
+          </div>
+          <div>
+            <small>Reminder state</small>
+            <p>{isOverdue(activity) ? 'Overdue' : isOpenActivity(activity) ? 'Upcoming' : 'Completed/closed'}</p>
+          </div>
+        </div>
+        <h3 className="detail-title">Notes</h3>
+        <p className="detail-empty" style={{ whiteSpace: 'pre-wrap' }}>{activity.notes || 'No notes added.'}</p>
+      </div>
+    </div>
+  );
+}
 
 function Tickets({ tickets, error, onAdd, onStatusChange, onDelete, onEdit, onView, currentUserId, isAdmin }) {
-  const [query, setQuery] = useState(''); const [status, setStatus] = useState('All'); const [priority, setPriority] = useState('All'); const q = query.trim().toLowerCase(); const filtered = tickets.filter(t => (status === 'All' || t.status === status) && (priority === 'All' || t.priority === priority) && (!q || `${t.title} ${t.description || ''} ${t.customers?.name || ''} ${t.category || ''}`.toLowerCase().includes(q))); const count = s => tickets.filter(t => t.status === s).length;
-  return <><PageHeading eyebrow="SUPPORT" title="Tickets" description="Manage customer issues and support requests." action="Create Ticket" onAction={onAdd} /><div className="stats-grid"><StatCard label="Open" value={count('Open')} hint="Waiting for a response" tone="orange" icon="!" /><StatCard label="In progress" value={count('In Progress')} hint="Being worked on" tone="blue" icon="◷" /><StatCard label="Resolved" value={count('Resolved') + count('Closed')} hint="Resolved or closed" tone="green" icon="✓" /><StatCard label="Urgent open" value={tickets.filter(t => t.priority === 'Urgent' && (t.status === 'Open' || t.status === 'In Progress')).length} hint="Highest priority" tone="purple" icon="↑" /></div><div className="panel"><div className="panel-heading"><div><h3>All Tickets</h3><p>{filtered.length} of {tickets.length} tickets</p></div></div>{error && <div className="form-error">{error}</div>}<div className="toolbar"><div className="toolbar-search"><Search size={15} /><input type="search" placeholder="Search tickets or customers" value={query} onChange={e => setQuery(e.target.value)} /></div><select value={status} onChange={e => setStatus(e.target.value)}>{['All', 'Open', 'In Progress', 'Resolved', 'Closed'].map(x => <option key={x} value={x}>{x === 'All' ? 'All statuses' : x}</option>)}</select><select value={priority} onChange={e => setPriority(e.target.value)}>{['All', 'Low', 'Medium', 'High', 'Urgent'].map(x => <option key={x} value={x}>{x === 'All' ? 'All priorities' : x}</option>)}</select></div>{tickets.length === 0 ? <div className="empty-state"><p>No tickets yet.</p><button type="button" className="secondary-btn" onClick={onAdd}>Create your first ticket</button></div> : filtered.length === 0 ? <div className="empty-state"><p>No tickets match your filters.</p></div> : <div className="table-wrap"><table><thead><tr><th>Ticket</th><th>Customer</th><th>Priority</th><th>Status</th><th>Created</th><th>Actions</th></tr></thead><tbody>{filtered.map(ticket => { const canEdit = isAdmin || ticket.created_by === currentUserId; return <tr key={ticket.id}><td><button type="button" className="text-btn" onClick={() => onView(ticket)}><strong>{ticket.title}</strong></button><div className="deal-customer">{ticket.category || 'General'}</div></td><td>{ticket.customers?.name || 'Unassigned'}</td><td><span className={`status ${(ticket.priority || 'medium').toLowerCase()}`}>{ticket.priority || 'Medium'}</span></td><td><select className="ticket-status-select" value={ticket.status} onChange={e => onStatusChange(ticket.id, e.target.value)} disabled={!canEdit}><option value="Open">Open</option><option value="In Progress">In Progress</option><option value="Resolved">Resolved</option><option value="Closed">Closed</option></select></td><td>{formatDate(ticket.created_at)}</td><td><div className="toolbar-actions"><button type="button" className="secondary-btn" onClick={() => onView(ticket)}>View</button>{canEdit && <button type="button" className="secondary-btn" onClick={() => onEdit(ticket)}><Pencil size={14} /> Edit</button>}{canEdit && <button type="button" className="icon-btn" title="Delete ticket" onClick={() => onDelete(ticket.id)}><X size={16} /></button>}</div></td></tr> })}</tbody></table></div>}</div></>;
+  const [query, setQuery] = useState('');
+  const [status, setStatus] = useState('All');
+  const [priority, setPriority] = useState('All');
+  const q = query.trim().toLowerCase();
+  const filtered = tickets.filter(t => (status === 'All' || t.status === status) && (priority === 'All' || t.priority === priority) && (!q || `${t.title} ${t.description || ''} ${t.customers?.name || ''} ${t.category || ''}`.toLowerCase().includes(q)));
+  const count = s => tickets.filter(t => t.status === s).length;
+  return <>
+    <PageHeading eyebrow="SUPPORT" title="Tickets" description="Manage customer issues and support requests." action="Create Ticket" onAction={onAdd} />
+    <div className="stats-grid">
+      <StatCard label="Open" value={count('Open')} hint="Waiting for a response" tone="orange" icon="!" />
+      <StatCard label="In progress" value={count('In Progress')} hint="Being worked on" tone="blue" icon="◷" />
+      <StatCard label="Resolved" value={count('Resolved') + count('Closed')} hint="Resolved or closed" tone="green" icon="✓" />
+      <StatCard label="Urgent open" value={tickets.filter(t => t.priority === 'Urgent' && (t.status === 'Open' || t.status === 'In Progress')).length} hint="Highest priority" tone="purple" icon="↑" />
+    </div>
+    <div className="panel">
+      <div className="panel-heading">
+        <div>
+          <h3>All Tickets</h3>
+          <p>{filtered.length} of {tickets.length} tickets</p>
+        </div>
+      </div>
+      {error && <div className="form-error">{error}</div>}
+      <div className="toolbar">
+        <div className="toolbar-search"><Search size={15} /><input type="search" placeholder="Search tickets or customers" value={query} onChange={e => setQuery(e.target.value)} />
+        </div>
+        <select value={status} onChange={e => setStatus(e.target.value)}>{['All', 'Open', 'In Progress', 'Resolved', 'Closed'].map(x => <option key={x} value={x}>{x === 'All' ? 'All statuses' : x}</option>)}</select>
+        <select value={priority} onChange={e => setPriority(e.target.value)}>
+          {['All', 'Low', 'Medium', 'High', 'Urgent'].map(x => <option key={x} value={x}>{x === 'All' ? 'All priorities' : x}</option>)}</select>
+      </div>
+      {tickets.length === 0 ?
+        <div className="empty-state">
+          <p>No tickets yet.</p>
+          <button type="button" className="secondary-btn" onClick={onAdd}>Create your first ticket</button>
+        </div> : filtered.length === 0 ? <div className="empty-state"><p>No tickets match your filters.</p></div> : <div className="table-wrap"><table><thead><tr><th>Ticket</th><th>Customer</th><th>Priority</th><th>Status</th><th>Created</th><th>Actions</th></tr></thead><tbody>{filtered.map(ticket => { const canEdit = isAdmin || ticket.created_by === currentUserId; return <tr key={ticket.id}><td><button type="button" className="text-btn" onClick={() => onView(ticket)}><strong>{ticket.title}</strong></button><div className="deal-customer">{ticket.category || 'General'}</div></td><td>{ticket.customers?.name || 'Unassigned'}</td><td><span className={`status ${(ticket.priority || 'medium').toLowerCase()}`}>{ticket.priority || 'Medium'}</span></td><td><select className="ticket-status-select" value={ticket.status} onChange={e => onStatusChange(ticket.id, e.target.value)} disabled={!canEdit}><option value="Open">Open</option><option value="In Progress">In Progress</option><option value="Resolved">Resolved</option><option value="Closed">Closed</option></select></td><td>{formatDate(ticket.created_at)}</td><td><div className="toolbar-actions"><button type="button" className="secondary-btn" onClick={() => onView(ticket)}>View</button>{canEdit && <button type="button" className="secondary-btn" onClick={() => onEdit(ticket)}><Pencil size={14} /> Edit</button>}{canEdit && <button type="button" className="icon-btn" title="Delete ticket" onClick={() => onDelete(ticket.id)}><X size={16} /></button>}</div></td></tr> })}</tbody></table></div>}</div></>;
 }
 
 function TicketDetail({ ticket, onClose, onEdit }) { return <div className="modal-backdrop" onClick={onClose}><div className="modal modal-wide" onClick={e => e.stopPropagation()}><div className="modal-heading"><div><h2>{ticket.title}</h2><p>{ticket.category || 'General'} · {ticket.status || 'Open'}</p></div><div className="toolbar-actions"><button type="button" className="secondary-btn" onClick={() => onEdit(ticket)}><Pencil size={14} /> Edit</button><button type="button" className="icon-btn" onClick={onClose}><X size={18} /></button></div></div><div className="detail-grid"><div><small>Customer</small><p>{ticket.customers?.name || 'Unassigned'}</p></div><div><small>Company</small><p>{ticket.customers?.company || '—'}</p></div><div><small>Priority</small><p>{ticket.priority || 'Medium'}</p></div><div><small>Status</small><p>{ticket.status || 'Open'}</p></div><div><small>Category</small><p>{ticket.category || 'General'}</p></div><div><small>Created</small><p>{formatDate(ticket.created_at)}</p></div></div><h3 className="detail-title">Description</h3><p className="detail-empty" style={{ whiteSpace: 'pre-wrap' }}>{ticket.description || 'No description added.'}</p></div></div>; }
@@ -3057,11 +3131,71 @@ function Reports({ customers, deals, activities, tickets, formatAmount }) {
 }
 
 function Leads({ leads, customers, onAdd, onUpdate, onDelete, currentUserId, isAdmin }) {
-  const [show, setShow] = useState(false); const [editing, setEditing] = useState(null); const [form, setForm] = useState({ name: '', email: '', phone: '', company: '', source: 'Website', status: 'New', score: 0, customer_id: '' }); const [q, setQ] = useState('');
+  const [show, setShow] = useState(false);
+  const [editing, setEditing] = useState(null);
+  const [form, setForm] = useState({ name: '', email: '', phone: '', company: '', source: 'Website', status: 'New', score: 0, customer_id: '' });
+  const [q, setQ] = useState('');
   const visible = leads.filter(x => `${x.name || ''} ${x.email || ''} ${x.company || ''} ${x.source || ''}`.toLowerCase().includes(q.toLowerCase()));
-  const save = async e => { e.preventDefault(); try { if (editing) await onUpdate(editing.id, form); else await onAdd(form); setShow(false); setEditing(null); } catch (err) { alert(err.message) } };
-  const openEdit = x => { setEditing(x); setForm({ name: x.name || '', email: x.email || '', phone: x.phone || '', company: x.company || '', source: x.source || 'Website', status: x.status || 'New', score: x.score || 0, customer_id: x.customer_id || '' }); setShow(true) };
-  return <><PageHeading eyebrow="PROSPECTING" title="Leads" description="Capture, qualify and convert prospects." action="New lead" onAction={() => { setEditing(null); setForm({ name: '', email: '', phone: '', company: '', source: 'Website', status: 'New', score: 0, customer_id: '' }); setShow(true) }} /><div className="panel"><div className="toolbar"><div className="toolbar-search"><Search size={15} /><input placeholder="Search leads" value={q} onChange={e => setQ(e.target.value)} /></div></div>{visible.length === 0 ? <div className="empty-state"><p>No leads yet.</p></div> : <div className="table-wrap"><table><thead><tr><th>Lead</th><th>Company</th><th>Source</th><th>Status</th><th>Score</th><th>Actions</th></tr></thead><tbody>{visible.map(x => <tr key={x.id}><td><strong>{x.name || x.email}</strong><div className="deal-customer">{x.email}</div></td><td>{x.company || '—'}</td><td>{x.source || '—'}</td><td><span className="status">{x.status}</span></td><td>{x.score || 0}</td><td><div className="toolbar-actions"><button className="secondary-btn" onClick={() => openEdit(x)}>Edit</button>{(isAdmin || x.created_by === currentUserId) && <button className="icon-btn" onClick={() => onDelete(x.id)}><X size={16} /></button>}</div></td></tr>)}</tbody></table></div>}</div>{show && <div className="modal-backdrop" onClick={() => setShow(false)}><form className="modal" onSubmit={save} onClick={e => e.stopPropagation()}><div className="modal-heading"><h2>{editing ? 'Edit lead' : 'New lead'}</h2><button type="button" className="icon-btn" onClick={() => setShow(false)}><X size={18} /></button></div>{[['name', 'Name'], ['email', 'Email'], ['phone', 'Phone'], ['company', 'Company']].map(([k, l]) => <label key={k}>{l}<input value={form[k]} onChange={e => setForm({ ...form, [k]: e.target.value })} required={k === 'name' || k === 'email'} /></label>)}<label>Source<select value={form.source} onChange={e => setForm({ ...form, source: e.target.value })}>{['Website', 'Referral', 'Social', 'Campaign', 'Cold outreach', 'Other'].map(x => <option key={x}>{x}</option>)}</select></label><label>Status<select value={form.status} onChange={e => setForm({ ...form, status: e.target.value })}>{['New', 'Contacted', 'Qualified', 'Unqualified', 'Converted'].map(x => <option key={x}>{x}</option>)}</select></label><label>Lead score<input type="number" min="0" max="100" value={form.score} onChange={e => setForm({ ...form, score: Number(e.target.value) })} /></label><label>Convert/link customer<select value={form.customer_id} onChange={e => setForm({ ...form, customer_id: e.target.value })}><option value="">None</option>{customers.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}</select></label><div className="modal-actions"><button type="button" className="secondary-btn" onClick={() => setShow(false)}>Cancel</button><button className="primary-btn">Save lead</button></div></form></div>}</>;
+  const save = async e => {
+    e.preventDefault();
+    try {
+      if (editing) await onUpdate(editing.id, form);
+      else await onAdd(form);
+      setShow(false);
+      setEditing(null);
+    } catch (err) { alert(err.message) }
+  };
+  const openEdit = x => {
+    setEditing(x); setForm({ name: x.name || '', email: x.email || '', phone: x.phone || '', company: x.company || '', source: x.source || 'Website', status: x.status || 'New', score: x.score || 0, customer_id: x.customer_id || '' });
+    setShow(true)
+  };
+  return <>
+    <PageHeading eyebrow="PROSPECTING" title="Leads" description="Capture, qualify and convert prospects." action="New lead" onAction={() => {
+      setEditing(null);
+      setForm({ name: '', email: '', phone: '', company: '', source: 'Website', status: 'New', score: 0, customer_id: '' });
+      setShow(true)
+    }} />
+    <div className="panel">
+      <div className="toolbar">
+        <div className="toolbar-search">
+          <Search size={15} />
+          <input placeholder="Search leads" value={q} onChange={e => setQ(e.target.value)} />
+        </div>
+      </div>
+      {visible.length === 0 ?
+        <div className="empty-state">
+          <p>No leads yet.</p>
+        </div> : <div className="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>Lead</th>
+                <th>Company</th>
+                <th>Source</th>
+                <th>Status</th>
+                <th>Score</th>
+                <th>Actions</th>
+              </tr></thead>
+            <tbody>
+              {visible.map(x => <tr key={x.id}>
+                <td><strong>{x.name || x.email}</strong>
+                  <div className="deal-customer">{x.email}
+                  </div></td><td>{x.company || '—'}
+                </td>
+                <td>{x.source || '—'}</td>
+                <td><span className="status">{x.status}</span></td>
+                <td>{x.score || 0}</td>
+                <td>
+                  <div className="toolbar-actions">
+                    <button className="secondary-btn" onClick={() => openEdit(x)}>Edit</button>
+                    {(isAdmin || x.created_by === currentUserId) && <button className="icon-btn" onClick={() => onDelete(x.id)}>
+                      <X size={16} />
+                    </button>}
+                  </div>
+                </td>
+              </tr>
+              )}
+            </tbody></table></div>}</div>{show && <div className="modal-backdrop" onClick={() => setShow(false)}><form className="modal" onSubmit={save} onClick={e => e.stopPropagation()}><div className="modal-heading"><h2>{editing ? 'Edit lead' : 'New lead'}</h2><button type="button" className="icon-btn" onClick={() => setShow(false)}><X size={18} /></button></div>{[['name', 'Name'], ['email', 'Email'], ['phone', 'Phone'], ['company', 'Company']].map(([k, l]) => <label key={k}>{l}<input value={form[k]} onChange={e => setForm({ ...form, [k]: e.target.value })} required={k === 'name' || k === 'email'} /></label>)}<label>Source<select value={form.source} onChange={e => setForm({ ...form, source: e.target.value })}>{['Website', 'Referral', 'Social', 'Campaign', 'Cold outreach', 'Other'].map(x => <option key={x}>{x}</option>)}</select></label><label>Status<select value={form.status} onChange={e => setForm({ ...form, status: e.target.value })}>{['New', 'Contacted', 'Qualified', 'Unqualified', 'Converted'].map(x => <option key={x}>{x}</option>)}</select></label><label>Lead score<input type="number" min="0" max="100" value={form.score} onChange={e => setForm({ ...form, score: Number(e.target.value) })} /></label><label>Convert/link customer<select value={form.customer_id} onChange={e => setForm({ ...form, customer_id: e.target.value })}><option value="">None</option>{customers.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}</select></label><div className="modal-actions"><button type="button" className="secondary-btn" onClick={() => setShow(false)}>Cancel</button><button className="primary-btn">Save lead</button></div></form></div>}</>;
 }
 
 function EmailPage({ emailLogs, customers, integrations, loading, error, onConnect, onDisconnect, onAdd }) {
@@ -3215,9 +3349,9 @@ function CalendarPage({ events, customers, onAdd, onUpdate, onDelete }) {
       <div className="modal-heading">
         <h2>{editing ? 'Edit event' : 'New event'}</h2>
         <button type="button" className="icon-btn" onClick={() => setShow(false)}><X size={18} /></button>
-        </div>
-        <label>Title<input required value={form.title} onChange={e => setForm({ ...form, title: e.target.value })} /></label>
-        <label>Customer<select value={form.customer_id} onChange={e => setForm({ ...form, customer_id: e.target.value })}><option value="">None</option>{customers.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}</select></label><label>Start<input type="datetime-local" required value={form.start_at || ''} onChange={e => setForm({ ...form, start_at: e.target.value })} /></label><label>End<input type="datetime-local" value={form.end_at || ''} onChange={e => setForm({ ...form, end_at: e.target.value })} /></label><label>Type<select value={form.event_type} onChange={e => setForm({ ...form, event_type: e.target.value })}>{['Meeting', 'Call', 'Demo', 'Task', 'Other'].map(x => <option key={x}>{x}</option>)}</select></label><label>Location<input value={form.location || ''} onChange={e => setForm({ ...form, location: e.target.value })} /></label><label>Description<textarea value={form.description || ''} onChange={e => setForm({ ...form, description: e.target.value })} /></label><div className="modal-actions"><button type="button" className="secondary-btn" onClick={() => setShow(false)}>Cancel</button><button className="primary-btn">Save event</button></div></form></div>}</>
+      </div>
+      <label>Title<input required value={form.title} onChange={e => setForm({ ...form, title: e.target.value })} /></label>
+      <label>Customer<select value={form.customer_id} onChange={e => setForm({ ...form, customer_id: e.target.value })}><option value="">None</option>{customers.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}</select></label><label>Start<input type="datetime-local" required value={form.start_at || ''} onChange={e => setForm({ ...form, start_at: e.target.value })} /></label><label>End<input type="datetime-local" value={form.end_at || ''} onChange={e => setForm({ ...form, end_at: e.target.value })} /></label><label>Type<select value={form.event_type} onChange={e => setForm({ ...form, event_type: e.target.value })}>{['Meeting', 'Call', 'Demo', 'Task', 'Other'].map(x => <option key={x}>{x}</option>)}</select></label><label>Location<input value={form.location || ''} onChange={e => setForm({ ...form, location: e.target.value })} /></label><label>Description<textarea value={form.description || ''} onChange={e => setForm({ ...form, description: e.target.value })} /></label><div className="modal-actions"><button type="button" className="secondary-btn" onClick={() => setShow(false)}>Cancel</button><button className="primary-btn">Save event</button></div></form></div>}</>
 }
 
 function Quotes({ quotes, customers, onAdd, onUpdate, formatAmount, currentUserId, isAdmin }) { const [show, setShow] = useState(false); const [editing, setEditing] = useState(null); const blank = { title: '', quote_number: `Q-${Date.now().toString().slice(-6)}`, customer_id: '', amount: 0, status: 'Draft', valid_until: '', notes: '' }; const [form, setForm] = useState(blank); const save = async e => { e.preventDefault(); try { if (editing) await onUpdate(editing.id, form); else await onAdd(form); setShow(false); setEditing(null) } catch (err) { alert(err.message) } }; return <><PageHeading eyebrow="SALES OPERATIONS" title="Quotes" description="Create and track customer quotations." action="New quote" onAction={() => { setEditing(null); setForm({ ...blank, quote_number: `Q-${Date.now().toString().slice(-6)}` }); setShow(true) }} /><div className="panel"><div className="table-wrap"><table><thead><tr><th>Quote</th><th>Customer</th><th>Amount</th><th>Status</th><th>Valid until</th><th>Actions</th></tr></thead><tbody>{quotes.length === 0 ? <tr><td colSpan="6">No quotes yet.</td></tr> : quotes.map(q => <tr key={q.id}><td><strong>{q.quote_number}</strong><div className="deal-customer">{q.title}</div></td><td>{q.customers?.name || '—'}</td><td>{formatAmount(q.amount)}</td><td>{q.status}</td><td>{q.valid_until ? formatDate(q.valid_until) : '—'}</td><td>{(isAdmin || q.created_by === currentUserId) && <button className="secondary-btn" onClick={() => { setEditing(q); setForm(q); setShow(true) }}>Edit</button>}</td></tr>)}</tbody></table></div></div>{show && <div className="modal-backdrop" onClick={() => setShow(false)}><form className="modal" onSubmit={save} onClick={e => e.stopPropagation()}><div className="modal-heading"><h2>{editing ? 'Edit quote' : 'New quote'}</h2><button type="button" className="icon-btn" onClick={() => setShow(false)}><X size={18} /></button></div><label>Quote number<input required value={form.quote_number} onChange={e => setForm({ ...form, quote_number: e.target.value })} /></label><label>Title<input required value={form.title} onChange={e => setForm({ ...form, title: e.target.value })} /></label><label>Customer<select value={form.customer_id} onChange={e => setForm({ ...form, customer_id: e.target.value })}><option value="">None</option>{customers.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}</select></label><label>Amount<input type="number" min="0" value={form.amount} onChange={e => setForm({ ...form, amount: Number(e.target.value) })} /></label><label>Status<select value={form.status} onChange={e => setForm({ ...form, status: e.target.value })}>{['Draft', 'Sent', 'Accepted', 'Rejected', 'Expired'].map(x => <option key={x}>{x}</option>)}</select></label><label>Valid until<input type="date" value={form.valid_until || ''} onChange={e => setForm({ ...form, valid_until: e.target.value })} /></label><label>Notes<textarea value={form.notes || ''} onChange={e => setForm({ ...form, notes: e.target.value })} /></label><div className="modal-actions"><button type="button" className="secondary-btn" onClick={() => setShow(false)}>Cancel</button><button className="primary-btn">Save quote</button></div></form></div>}</> }
