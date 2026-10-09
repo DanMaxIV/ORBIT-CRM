@@ -2548,7 +2548,9 @@ tbody tr:last-child td {
 
 /* Orbit CRM additions: deal ownership, closure timer, and products */
 .deal-card-owned {
-  border-left: 4px solid var(--owner-color, #98a2b3);
+  border-top: 4px solid var(--owner-color, #98a2b3);
+  border-bottom: 4px solid var(--owner-color, #98a2b3);
+  
 }
 
 .deal-owner-marker {

@@ -1134,8 +1134,8 @@ function App() {
             amount: Number(newDeal.amount),
             stage: newDeal.stage,
             customer_id: customerId,
-            closure_start_at: newDeal.closure_start_at || null,
-            closure_end_at: newDeal.closure_end_at || null,
+            closure_start_at: newDeal.closure_start_at ? new Date(newDeal.closure_start_at).toISOString() : null,
+            closure_end_at: newDeal.closure_end_at ? new Date(newDeal.closure_end_at).toISOString() : null,
             created_by: session.user.id
           }
         ])
@@ -1250,8 +1250,8 @@ function App() {
           amount: Number(editingDeal.amount),
           stage: editingDeal.stage,
           customer_id: editingDeal.customer_id || null,
-          closure_start_at: editingDeal.closure_start_at || null,
-          closure_end_at: editingDeal.closure_end_at || null
+          closure_start_at: editingDeal.closure_start_at ? new Date(editingDeal.closure_start_at).toISOString() : null,
+          closure_end_at: editingDeal.closure_end_at ? new Date(editingDeal.closure_end_at).toISOString() : null
         })
         .eq('id', editingDeal.id)
         .select()
@@ -2598,6 +2598,7 @@ const formatDuration = milliseconds => {
   const hours = Math.floor((totalSeconds % 86400) / 3600);
   const minutes = Math.floor((totalSeconds % 3600) / 60);
   const seconds = totalSeconds % 60;
+
   const parts = [];
   if (days) parts.push(`${days}d`);
   if (hours || days) parts.push(`${hours}h`);
@@ -2608,9 +2609,18 @@ const formatDuration = milliseconds => {
 
 const closureTimerText = endAt => {
   if (!endAt) return 'No closure end date';
-  const diff = new Date(endAt).getTime() - Date.now();
-  if (Number.isNaN(diff)) return 'Invalid closure date';
-  if (diff >= 0) return `${formatDuration(diff)} remaining`;
+
+  const targetTime = new Date(endAt).getTime();
+  if (Number.isNaN(targetTime)) return 'Invalid closure date';
+
+  const diff = targetTime - Date.now();
+
+  // Active / Future timer
+  if (diff >= 0) {
+    return `${formatDuration(diff)} remaining`;
+  }
+
+  // Expired timer: Prepend explicit negative sign and indicate overdue status
   return `-${formatDuration(diff)} overdue`;
 };
 
@@ -3232,40 +3242,40 @@ function ActivityDetail({ activity, customer, ownerProfiles = {}, currentUserEma
 }
 
 function Tickets({ tickets, error, onAdd, onStatusChange, onDelete, onEdit, onView, currentUserId, isAdmin }) {
-  const [query, setQuery] = useState(''); 
-  const [status, setStatus] = useState('All'); 
-  const [priority, setPriority] = useState('All'); 
-  const q = query.trim().toLowerCase(); 
-  const filtered = tickets.filter(t => (status === 'All' || t.status === status) && (priority === 'All' || t.priority === priority) && (!q || `${t.title} ${t.description || ''} ${t.customers?.name || ''} ${t.category || ''}`.toLowerCase().includes(q))); 
+  const [query, setQuery] = useState('');
+  const [status, setStatus] = useState('All');
+  const [priority, setPriority] = useState('All');
+  const q = query.trim().toLowerCase();
+  const filtered = tickets.filter(t => (status === 'All' || t.status === status) && (priority === 'All' || t.priority === priority) && (!q || `${t.title} ${t.description || ''} ${t.customers?.name || ''} ${t.category || ''}`.toLowerCase().includes(q)));
   const count = s => tickets.filter(t => t.status === s).length;
   return <>
-  <PageHeading eyebrow="SUPPORT" title="Tickets" description="Manage customer issues and support requests." action="Create Ticket" onAction={onAdd} />
-  <div className="stats-grid">
-    <StatCard label="Open" value={count('Open')} hint="Waiting for a response" tone="orange" icon="!" />
-    <StatCard label="In progress" value={count('In Progress')} hint="Being worked on" tone="blue" icon="◷" />
-    <StatCard label="Resolved" value={count('Resolved') + count('Closed')} hint="Resolved or closed" tone="green" icon="✓" />
-    <StatCard label="Urgent open" value={tickets.filter(t => t.priority === 'Urgent' && (t.status === 'Open' || t.status === 'In Progress')).length} hint="Highest priority" tone="purple" icon="↑" />
+    <PageHeading eyebrow="SUPPORT" title="Tickets" description="Manage customer issues and support requests." action="Create Ticket" onAction={onAdd} />
+    <div className="stats-grid">
+      <StatCard label="Open" value={count('Open')} hint="Waiting for a response" tone="orange" icon="!" />
+      <StatCard label="In progress" value={count('In Progress')} hint="Being worked on" tone="blue" icon="◷" />
+      <StatCard label="Resolved" value={count('Resolved') + count('Closed')} hint="Resolved or closed" tone="green" icon="✓" />
+      <StatCard label="Urgent open" value={tickets.filter(t => t.priority === 'Urgent' && (t.status === 'Open' || t.status === 'In Progress')).length} hint="Highest priority" tone="purple" icon="↑" />
+    </div>
+    <div className="panel">
+      <div className="panel-heading">
+        <div>
+          <h3>All Tickets</h3>
+          <p>{filtered.length} of {tickets.length} tickets</p>
+        </div>
       </div>
-      <div className="panel">
-        <div className="panel-heading">
-          <div>
-            <h3>All Tickets</h3>
-            <p>{filtered.length} of {tickets.length} tickets</p>
-            </div>
-            </div>
-            {error && <div className="form-error">{error}</div>}
-            <div className="toolbar">
-              <div className="toolbar-search"><Search size={15} /><input type="search" placeholder="Search tickets or customers" value={query} onChange={e => setQuery(e.target.value)} />
-              </div>
-              <select value={status} onChange={e => setStatus(e.target.value)}>{['All', 'Open', 'In Progress', 'Resolved', 'Closed'].map(x => <option key={x} value={x}>{x === 'All' ? 'All statuses' : x}</option>)}</select>
-              <select value={priority} onChange={e => setPriority(e.target.value)}>
-                {['All', 'Low', 'Medium', 'High', 'Urgent'].map(x => <option key={x} value={x}>{x === 'All' ? 'All priorities' : x}</option>)}</select>
-                </div>
-                {tickets.length === 0 ? 
-                <div className="empty-state">
-                  <p>No tickets yet.</p>
-                  <button type="button" className="secondary-btn" onClick={onAdd}>Create your first ticket</button>
-                  </div> : filtered.length === 0 ? <div className="empty-state"><p>No tickets match your filters.</p></div> : <div className="table-wrap"><table><thead><tr><th>Ticket</th><th>Customer</th><th>Priority</th><th>Status</th><th>Created</th><th>Actions</th></tr></thead><tbody>{filtered.map(ticket => { const canEdit = isAdmin || ticket.created_by === currentUserId; return <tr key={ticket.id}><td><button type="button" className="text-btn" onClick={() => onView(ticket)}><strong>{ticket.title}</strong></button><div className="deal-customer">{ticket.category || 'General'}</div></td><td>{ticket.customers?.name || 'Unassigned'}</td><td><span className={`status ${(ticket.priority || 'medium').toLowerCase()}`}>{ticket.priority || 'Medium'}</span></td><td><select className="ticket-status-select" value={ticket.status} onChange={e => onStatusChange(ticket.id, e.target.value)} disabled={!canEdit}><option value="Open">Open</option><option value="In Progress">In Progress</option><option value="Resolved">Resolved</option><option value="Closed">Closed</option></select></td><td>{formatDate(ticket.created_at)}</td><td><div className="toolbar-actions"><button type="button" className="secondary-btn" onClick={() => onView(ticket)}>View</button>{canEdit && <button type="button" className="secondary-btn" onClick={() => onEdit(ticket)}><Pencil size={14} /> Edit</button>}{canEdit && <button type="button" className="icon-btn" title="Delete ticket" onClick={() => onDelete(ticket.id)}><X size={16} /></button>}</div></td></tr> })}</tbody></table></div>}</div></>;
+      {error && <div className="form-error">{error}</div>}
+      <div className="toolbar">
+        <div className="toolbar-search"><Search size={15} /><input type="search" placeholder="Search tickets or customers" value={query} onChange={e => setQuery(e.target.value)} />
+        </div>
+        <select value={status} onChange={e => setStatus(e.target.value)}>{['All', 'Open', 'In Progress', 'Resolved', 'Closed'].map(x => <option key={x} value={x}>{x === 'All' ? 'All statuses' : x}</option>)}</select>
+        <select value={priority} onChange={e => setPriority(e.target.value)}>
+          {['All', 'Low', 'Medium', 'High', 'Urgent'].map(x => <option key={x} value={x}>{x === 'All' ? 'All priorities' : x}</option>)}</select>
+      </div>
+      {tickets.length === 0 ?
+        <div className="empty-state">
+          <p>No tickets yet.</p>
+          <button type="button" className="secondary-btn" onClick={onAdd}>Create your first ticket</button>
+        </div> : filtered.length === 0 ? <div className="empty-state"><p>No tickets match your filters.</p></div> : <div className="table-wrap"><table><thead><tr><th>Ticket</th><th>Customer</th><th>Priority</th><th>Status</th><th>Created</th><th>Actions</th></tr></thead><tbody>{filtered.map(ticket => { const canEdit = isAdmin || ticket.created_by === currentUserId; return <tr key={ticket.id}><td><button type="button" className="text-btn" onClick={() => onView(ticket)}><strong>{ticket.title}</strong></button><div className="deal-customer">{ticket.category || 'General'}</div></td><td>{ticket.customers?.name || 'Unassigned'}</td><td><span className={`status ${(ticket.priority || 'medium').toLowerCase()}`}>{ticket.priority || 'Medium'}</span></td><td><select className="ticket-status-select" value={ticket.status} onChange={e => onStatusChange(ticket.id, e.target.value)} disabled={!canEdit}><option value="Open">Open</option><option value="In Progress">In Progress</option><option value="Resolved">Resolved</option><option value="Closed">Closed</option></select></td><td>{formatDate(ticket.created_at)}</td><td><div className="toolbar-actions"><button type="button" className="secondary-btn" onClick={() => onView(ticket)}>View</button>{canEdit && <button type="button" className="secondary-btn" onClick={() => onEdit(ticket)}><Pencil size={14} /> Edit</button>}{canEdit && <button type="button" className="icon-btn" title="Delete ticket" onClick={() => onDelete(ticket.id)}><X size={16} /></button>}</div></td></tr> })}</tbody></table></div>}</div></>;
 }
 
 function TicketDetail({ ticket, onClose, onEdit }) { return <div className="modal-backdrop" onClick={onClose}><div className="modal modal-wide" onClick={e => e.stopPropagation()}><div className="modal-heading"><div><h2>{ticket.title}</h2><p>{ticket.category || 'General'} · {ticket.status || 'Open'}</p></div><div className="toolbar-actions"><button type="button" className="secondary-btn" onClick={() => onEdit(ticket)}><Pencil size={14} /> Edit</button><button type="button" className="icon-btn" onClick={onClose}><X size={18} /></button></div></div><div className="detail-grid"><div><small>Customer</small><p>{ticket.customers?.name || 'Unassigned'}</p></div><div><small>Company</small><p>{ticket.customers?.company || '—'}</p></div><div><small>Priority</small><p>{ticket.priority || 'Medium'}</p></div><div><small>Status</small><p>{ticket.status || 'Open'}</p></div><div><small>Category</small><p>{ticket.category || 'General'}</p></div><div><small>Created</small><p>{formatDate(ticket.created_at)}</p></div></div><h3 className="detail-title">Description</h3><p className="detail-empty" style={{ whiteSpace: 'pre-wrap' }}>{ticket.description || 'No description added.'}</p></div></div>; }
