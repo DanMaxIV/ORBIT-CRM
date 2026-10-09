@@ -252,8 +252,13 @@ function App() {
   const [notifications, setNotifications] = useState([]);
   const [unreadNotificationCount, setUnreadNotificationCount] = useState(0);
   const [showNotifications, setShowNotifications] = useState(false);
+  const [profileName, setProfileName] = useState('');
+  const [profileModalOpen, setProfileModalOpen] = useState(false);
+  const [profileDraft, setProfileDraft] = useState('');
+  const [profileSaving, setProfileSaving] = useState(false);
+  const [ownerProfiles, setOwnerProfiles] = useState({});
   const [showDealForm, setShowDealForm] = useState(false);
-  const [newDeal, setNewDeal] = useState({ title: '', company: '', amount: '', stage: 'New Lead', customer_id: '', closure_start_at: '', closure_end_at: '' });
+  const [newDeal, setNewDeal] = useState({ title: '', company: '', amount: '', stage: 'New Lead', customer_id: '', new_customer_name: '', new_customer_email: '', new_customer_company: '', closure_start_at: '', closure_end_at: '' });
   const [dealSaving, setDealSaving] = useState(false);
   const [dealError, setDealError] = useState('');
   const [editingDeal, setEditingDeal] = useState(null);
@@ -270,7 +275,7 @@ function App() {
   const [showActivityForm, setShowActivityForm] = useState(false);
   const [newActivity, setNewActivity] = useState({
     title: '', type: 'Task', activity_date: '', customer_id: '',
-    notes: '', status: 'Scheduled'
+    notes: '', status: 'Scheduled', priority: 'Medium', assigned_to: ''
   });
   const [activityError, setActivityError] = useState('');
   const [activitySaving, setActivitySaving] = useState(false);
@@ -715,6 +720,55 @@ function App() {
     await fetchAuthorizedUsers();
     return true;
   }
+  const displayUserName = profileName.trim() || session?.user?.email || 'Signed-in user';
+
+  async function fetchProfile() {
+    if (!session?.user?.id) return;
+    const { data, error } = await supabase.from('user_profiles').select('full_name').eq('user_id', session.user.id).maybeSingle();
+    if (error) { console.warn('Profile lookup failed:', error.message); return; }
+    const name = data?.full_name || '';
+    setProfileName(name);
+    setProfileDraft(name);
+  }
+
+  async function saveProfile(event) {
+    event.preventDefault();
+    if (!session?.user?.id) return;
+    setProfileSaving(true);
+    try {
+      const fullName = profileDraft.trim();
+      const { error } = await supabase.from('user_profiles').upsert({ user_id: session.user.id, full_name: fullName || null, updated_at: new Date().toISOString() }, { onConflict: 'user_id' });
+      if (error) throw error;
+      setProfileName(fullName);
+      setProfileModalOpen(false);
+      showToast('Profile updated.');
+      await fetchOwnerProfiles();
+    } catch (error) {
+      showToast(`Could not save profile: ${error.message}`);
+    } finally { setProfileSaving(false); }
+  }
+
+  async function fetchOwnerProfiles() {
+    const { data, error } = await supabase.from('user_profiles').select('user_id, full_name');
+    if (error) { console.warn('Could not load user names:', error.message); return; }
+    setOwnerProfiles(Object.fromEntries((data || []).map(x => [x.user_id, x.full_name || ''])));
+  }
+
+  async function clearNotification(id) {
+    const { error } = await supabase.from('notifications').delete().eq('id', id).eq('user_id', session.user.id);
+    if (error) { showToast(`Could not clear notification: ${error.message}`); return; }
+    setNotifications(prev => prev.filter(n => n.id !== id));
+    setUnreadNotificationCount(prev => Math.max(0, prev - (notifications.find(n => n.id === id && !n.read) ? 1 : 0)));
+  }
+
+  async function clearAllNotifications() {
+    const { error } = await supabase.from('notifications').delete().eq('user_id', session.user.id);
+    if (error) { showToast(`Could not clear notifications: ${error.message}`); return; }
+    setNotifications([]);
+    setUnreadNotificationCount(0);
+    showToast('Notifications cleared.');
+  }
+
   async function fetchNotifications() {
     const { data, error } = await supabase
       .from('notifications')
@@ -748,6 +802,7 @@ function App() {
         },
         payload => {
           const newNotification = payload.new;
+          if (newNotification.title) showToast(newNotification.title);
 
           setNotifications(prev => {
             if (prev.some(notification => notification.id === newNotification.id)) {
@@ -836,6 +891,8 @@ function App() {
     if (!session?.user?.id) return;
 
     fetchNotifications();
+    fetchProfile();
+    fetchOwnerProfiles();
   }, [session?.user?.id]);
   // Fetch when page loads
   useEffect(() => {
@@ -1045,18 +1102,38 @@ function App() {
       return;
     }
 
+    if (newDeal.customer_id === '__new__' && (!newDeal.new_customer_name.trim() || !newDeal.new_customer_email.trim())) {
+      setDealError('Enter the new customer name and email.');
+      return;
+    }
+
     setDealSaving(true);
 
     try {
+      let customerId = newDeal.customer_id || null;
+      let customerCompany = newDeal.company.trim() || null;
+      if (newDeal.customer_id === '__new__') {
+        const { data: customerData, error: customerError } = await supabase.from('customers').insert({
+          name: newDeal.new_customer_name.trim(),
+          email: newDeal.new_customer_email.trim(),
+          company: newDeal.new_customer_company.trim() || newDeal.company.trim() || null,
+          status: 'Active'
+        }).select().single();
+        if (customerError) throw customerError;
+        customerId = customerData.id;
+        customerCompany = customerData.company || customerCompany;
+        setCustomers(prev => [customerData, ...prev]);
+        showToast(`Customer ${customerData.name} created.`);
+      }
       const { data, error } = await supabase
         .from('deals')
         .insert([
           {
             title: newDeal.title.trim(),
-            company: newDeal.company.trim() || null,
+            company: customerCompany,
             amount: Number(newDeal.amount),
             stage: newDeal.stage,
-            customer_id: newDeal.customer_id || null,
+            customer_id: customerId,
             closure_start_at: newDeal.closure_start_at || null,
             closure_end_at: newDeal.closure_end_at || null,
             created_by: session.user.id
@@ -1080,6 +1157,9 @@ function App() {
         amount: '',
         stage: 'New Lead',
         customer_id: '',
+        new_customer_name: '',
+        new_customer_email: '',
+        new_customer_company: '',
         closure_start_at: '',
         closure_end_at: ''
       });
@@ -1217,6 +1297,8 @@ function App() {
           customer_id: newActivity.customer_id || null,
           notes: newActivity.notes.trim() || null,
           status: newActivity.status,
+          priority: newActivity.priority || 'Medium',
+          assigned_to: newActivity.assigned_to || session.user.id,
           created_by: session.user.id
         }
       ]);
@@ -1233,7 +1315,9 @@ function App() {
       activity_date: '',
       customer_id: '',
       notes: '',
-      status: 'Scheduled'
+      status: 'Scheduled',
+      priority: 'Medium',
+      assigned_to: ''
     });
     setShowActivityForm(false);
     fetchActivities();
@@ -1249,7 +1333,9 @@ function App() {
         activity_date: editingActivity.activity_date || null,
         customer_id: editingActivity.customer_id || null,
         notes: editingActivity.notes?.trim() || null,
-        status: editingActivity.status
+        status: editingActivity.status,
+        priority: editingActivity.priority || 'Medium',
+        assigned_to: editingActivity.assigned_to || null
       }).eq('id', editingActivity.id).select('*').single();
       if (error) { console.error('Error updating activity:', error); setEditActivityError(error.message); return; }
       setActivities(prev => prev.map(activity => activity.id === data.id ? data : activity));
@@ -1416,11 +1502,11 @@ function App() {
         </div> */}
         <div className="profile-mini">
           <div className="avatar">
-            {(session?.user?.email?.[0] || 'U').toUpperCase()}
+            {(displayUserName[0] || 'U').toUpperCase()}
           </div>
 
           <div className="profile-details">
-            <strong>{session?.user?.email || 'Signed-in user'}</strong>
+            <strong>{displayUserName}</strong>
             <span>
               {authorizationProfile?.role
                 ? authorizationProfile.role.charAt(0).toUpperCase() +
@@ -1535,7 +1621,7 @@ function App() {
               </span>
             )}
           </button>
-          <div className="avatar">{(session?.user?.email?.[0] || 'U').toUpperCase()}</div>
+          <button type="button" className="avatar avatar-button" title="Edit profile" onClick={() => { setProfileDraft(profileName); setProfileModalOpen(true); }}>{(displayUserName[0] || 'U').toUpperCase()}</button>
         </div>
       </header>
       <section className="page-content">
@@ -1576,6 +1662,7 @@ function App() {
             deleteDeal={deleteDeal}
             formatAmount={formatAmount}
             currentUserId={session.user.id}
+            ownerProfiles={ownerProfiles}
             isAdmin={authorizationProfile?.role === 'admin'}
             onEdit={deal => {
               setEditDealError('');
@@ -1586,13 +1673,13 @@ function App() {
             }}
             onAdd={() => {
               setDealError('');
-              setNewDeal({ title: '', company: '', amount: '', stage: 'New Lead', customer_id: '', closure_start_at: '', closure_end_at: '' });
+              setNewDeal({ title: '', company: '', amount: '', stage: 'New Lead', customer_id: '', new_customer_name: '', new_customer_email: '', new_customer_company: '', closure_start_at: '', closure_end_at: '' });
               setShowDealForm(true);
             }}
           />
         )}
         {page === 'Activities' && (
-          <Activities activities={activities} customers={customers} onAdd={() => { setActivityError(''); setNewActivity(a => ({ ...a, customer_id: '' })); setShowActivityForm(true); }} onStatusChange={updateActivityStatus} onDelete={deleteActivity} onEdit={activity => { setEditActivityError(''); setEditingActivity({ ...activity, activity_date: formatDateTimeLocal(activity.activity_date) }); }} onView={setSelectedActivity} currentUserId={session.user.id} isAdmin={authorizationProfile?.role === 'admin'} />
+          <Activities activities={activities} customers={customers} ownerProfiles={ownerProfiles} currentUserEmail={session.user.email} onAdd={() => { setActivityError(''); setNewActivity(a => ({ ...a, customer_id: '' })); setShowActivityForm(true); }} onStatusChange={updateActivityStatus} onDelete={deleteActivity} onEdit={activity => { setEditActivityError(''); setEditingActivity({ ...activity, activity_date: formatDateTimeLocal(activity.activity_date) }); }} onView={setSelectedActivity} currentUserId={session.user.id} isAdmin={authorizationProfile?.role === 'admin'} />
         )}
         {page === 'Tickets' && (
           <Tickets
@@ -1660,6 +1747,11 @@ function App() {
         deals={deals}
         activities={activities}
         tickets={tickets}
+        quotes={quotes}
+        invoices={invoices}
+        payments={payments}
+        emailLogs={emailLogs}
+        documents={documents}
         formatAmount={formatAmount}
         onClose={() => setSelectedCustomer(null)}
         onEdit={c => { setSelectedCustomer(null); setEditingCustomer(c); }}
@@ -1815,11 +1907,15 @@ function App() {
                 setNewDeal({
                   ...newDeal,
                   customer_id: customerId,
-                  company: selectedCustomer?.company || newDeal.company
+                  company: selectedCustomer?.company || newDeal.company,
+                  new_customer_name: customerId === '__new__' ? newDeal.new_customer_name : '',
+                  new_customer_email: customerId === '__new__' ? newDeal.new_customer_email : '',
+                  new_customer_company: customerId === '__new__' ? newDeal.new_customer_company : ''
                 });
               }}
             >
-              <option value="">Select a customer</option>
+              <option value="">Select existing customer</option>
+              <option value="__new__">+ Create new customer</option>
 
               {customers.map(customer => (
                 <option key={customer.id} value={customer.id}>
@@ -1829,6 +1925,14 @@ function App() {
               ))}
             </select>
           </label>
+          {newDeal.customer_id === '__new__' && (
+            <div className="deal-new-customer-fields">
+              <p className="settings-hint">This customer will be created and linked to the deal when you save.</p>
+              <label>Customer/contact name<input required value={newDeal.new_customer_name} onChange={e => setNewDeal({ ...newDeal, new_customer_name: e.target.value })} placeholder="Contact or customer name" /></label>
+              <label>Customer email<input required type="email" value={newDeal.new_customer_email} onChange={e => setNewDeal({ ...newDeal, new_customer_email: e.target.value })} placeholder="name@company.com" /></label>
+              <label>Company name<input value={newDeal.new_customer_company} onChange={e => setNewDeal({ ...newDeal, new_customer_company: e.target.value, company: e.target.value || newDeal.company })} placeholder="Company (optional)" /></label>
+            </div>
+          )}
           <label>
             Deal amount (USD)
 
@@ -2073,7 +2177,7 @@ function App() {
             </label>
 
             <label>
-              Date and time
+              Due date and time
               <input
                 type="datetime-local"
                 value={newActivity.activity_date}
@@ -2085,6 +2189,22 @@ function App() {
                 }
               />
             </label>
+
+            <div className="activity-form-grid">
+              <label>
+                Priority
+                <select value={newActivity.priority || 'Medium'} onChange={event => setNewActivity({ ...newActivity, priority: event.target.value })}>
+                  <option value="Low">Low</option><option value="Medium">Medium</option><option value="High">High</option><option value="Urgent">Urgent</option>
+                </select>
+              </label>
+              <label>
+                Assign to
+                <select value={newActivity.assigned_to || session.user.id} onChange={event => setNewActivity({ ...newActivity, assigned_to: event.target.value })}>
+                  <option value={session.user.id}>{profileName.trim() || session.user.email || 'Me'} (me)</option>
+                  {Object.entries(ownerProfiles).filter(([id, name]) => id !== session.user.id).map(([id, name]) => <option key={id} value={id}>{name || 'Team member'}</option>)}
+                </select>
+              </label>
+            </div>
 
             <label>
               Customer
@@ -2168,8 +2288,8 @@ function App() {
         </div>
       </div>
     )}
-    {selectedActivity && <ActivityDetail activity={selectedActivity} customer={customers.find(c => c.id === selectedActivity.customer_id)} onClose={() => setSelectedActivity(null)} onEdit={activity => { setSelectedActivity(null); setEditActivityError(''); setEditingActivity({ ...activity, activity_date: formatDateTimeLocal(activity.activity_date) }); }} />}
-    {editingActivity && <div className="modal-backdrop" onClick={() => setEditingActivity(null)}><form className="modal" onSubmit={updateActivity} onClick={e => e.stopPropagation()}><div className="modal-heading"><h2>Edit Activity</h2><button type="button" className="icon-btn" onClick={() => setEditingActivity(null)}><X size={18} /></button></div>{editActivityError && <p className="form-error">{editActivityError}</p>}<label>Activity title<input type="text" value={editingActivity.title || ''} onChange={e => setEditingActivity({ ...editingActivity, title: e.target.value })} required /></label><label>Activity type<select value={editingActivity.type || 'Task'} onChange={e => setEditingActivity({ ...editingActivity, type: e.target.value })}><option value="Task">Task</option><option value="Call">Call</option><option value="Meeting">Meeting</option><option value="Email">Email</option><option value="Follow-up">Follow-up</option></select></label><label>Date and time<input type="datetime-local" value={editingActivity.activity_date || ''} onChange={e => setEditingActivity({ ...editingActivity, activity_date: e.target.value })} /></label><label>Customer<select value={editingActivity.customer_id || ''} onChange={e => setEditingActivity({ ...editingActivity, customer_id: e.target.value })}><option value="">No customer selected</option>{customers.map(customer => <option key={customer.id} value={customer.id}>{customer.name}{customer.company ? ` — ${customer.company}` : ''}</option>)}</select></label><label>Notes<textarea value={editingActivity.notes || ''} onChange={e => setEditingActivity({ ...editingActivity, notes: e.target.value })} rows="4" /></label><label>Status<select value={editingActivity.status || 'Scheduled'} onChange={e => setEditingActivity({ ...editingActivity, status: e.target.value })}><option value="Scheduled">Scheduled</option><option value="In Progress">In Progress</option><option value="Completed">Completed</option><option value="Cancelled">Cancelled</option></select></label><div className="modal-actions"><button type="button" className="secondary-btn" onClick={() => setEditingActivity(null)}>Cancel</button><button type="submit" className="primary-btn" disabled={editActivitySaving}>{editActivitySaving ? 'Saving...' : 'Save changes'}</button></div></form></div>}
+    {selectedActivity && <ActivityDetail activity={selectedActivity} customer={customers.find(c => c.id === selectedActivity.customer_id)} ownerProfiles={ownerProfiles} currentUserEmail={session?.user?.email} onClose={() => setSelectedActivity(null)} onEdit={activity => { setSelectedActivity(null); setEditActivityError(''); setEditingActivity({ ...activity, activity_date: formatDateTimeLocal(activity.activity_date) }); }} />}
+    {editingActivity && <div className="modal-backdrop" onClick={() => setEditingActivity(null)}><form className="modal" onSubmit={updateActivity} onClick={e => e.stopPropagation()}><div className="modal-heading"><h2>Edit Activity</h2><button type="button" className="icon-btn" onClick={() => setEditingActivity(null)}><X size={18} /></button></div>{editActivityError && <p className="form-error">{editActivityError}</p>}<label>Activity title<input type="text" value={editingActivity.title || ''} onChange={e => setEditingActivity({ ...editingActivity, title: e.target.value })} required /></label><label>Activity type<select value={editingActivity.type || 'Task'} onChange={e => setEditingActivity({ ...editingActivity, type: e.target.value })}><option value="Task">Task</option><option value="Call">Call</option><option value="Meeting">Meeting</option><option value="Email">Email</option><option value="Follow-up">Follow-up</option></select></label><label>Due date and time<input type="datetime-local" value={editingActivity.activity_date || ''} onChange={e => setEditingActivity({ ...editingActivity, activity_date: e.target.value })} /></label><div className="activity-form-grid"><label>Priority<select value={editingActivity.priority || 'Medium'} onChange={e => setEditingActivity({ ...editingActivity, priority: e.target.value })}><option value="Low">Low</option><option value="Medium">Medium</option><option value="High">High</option><option value="Urgent">Urgent</option></select></label><label>Assign to<select value={editingActivity.assigned_to || session.user.id} onChange={e => setEditingActivity({ ...editingActivity, assigned_to: e.target.value })}><option value={session.user.id}>{profileName.trim() || session.user.email || 'Me'} (me)</option>{Object.entries(ownerProfiles).filter(([id, name]) => id !== session.user.id).map(([id, name]) => <option key={id} value={id}>{name || 'Team member'}</option>)}</select></label></div><label>Customer<select value={editingActivity.customer_id || ''} onChange={e => setEditingActivity({ ...editingActivity, customer_id: e.target.value })}><option value="">No customer selected</option>{customers.map(customer => <option key={customer.id} value={customer.id}>{customer.name}{customer.company ? ` — ${customer.company}` : ''}</option>)}</select></label><label>Notes<textarea value={editingActivity.notes || ''} onChange={e => setEditingActivity({ ...editingActivity, notes: e.target.value })} rows="4" /></label><label>Status<select value={editingActivity.status || 'Scheduled'} onChange={e => setEditingActivity({ ...editingActivity, status: e.target.value })}><option value="Scheduled">Scheduled</option><option value="In Progress">In Progress</option><option value="Completed">Completed</option><option value="Cancelled">Cancelled</option></select></label><div className="modal-actions"><button type="button" className="secondary-btn" onClick={() => setEditingActivity(null)}>Cancel</button><button type="submit" className="primary-btn" disabled={editActivitySaving}>{editActivitySaving ? 'Saving...' : 'Save changes'}</button></div></form></div>}
     {selectedTicket && <TicketDetail ticket={selectedTicket} onClose={() => setSelectedTicket(null)} onEdit={ticket => { setSelectedTicket(null); setEditTicketError(''); setEditingTicket(ticket); }} />}
     {editingTicket && <div className="modal-backdrop" onClick={() => setEditingTicket(null)}><form className="modal" onSubmit={updateTicket} onClick={e => e.stopPropagation()}><div className="modal-heading"><h2>Edit Ticket</h2><button type="button" className="icon-btn" onClick={() => setEditingTicket(null)}><X size={18} /></button></div>{editTicketError && <p className="form-error">{editTicketError}</p>}<label>Ticket title<input type="text" value={editingTicket.title || ''} onChange={e => setEditingTicket({ ...editingTicket, title: e.target.value })} required /></label><label>Description<textarea value={editingTicket.description || ''} onChange={e => setEditingTicket({ ...editingTicket, description: e.target.value })} rows="4" /></label><label>Customer<select value={editingTicket.customer_id || ''} onChange={e => setEditingTicket({ ...editingTicket, customer_id: e.target.value })}><option value="">No customer selected</option>{customers.map(customer => <option key={customer.id} value={customer.id}>{customer.name}{customer.company ? ` — ${customer.company}` : ''}</option>)}</select></label><label>Category<select value={editingTicket.category || 'General'} onChange={e => setEditingTicket({ ...editingTicket, category: e.target.value })}><option value="General">General</option><option value="Technical">Technical</option><option value="Billing">Billing</option><option value="Account">Account</option><option value="Feature Request">Feature Request</option></select></label><label>Priority<select value={editingTicket.priority || 'Medium'} onChange={e => setEditingTicket({ ...editingTicket, priority: e.target.value })}><option value="Low">Low</option><option value="Medium">Medium</option><option value="High">High</option><option value="Urgent">Urgent</option></select></label><label>Status<select value={editingTicket.status || 'Open'} onChange={e => setEditingTicket({ ...editingTicket, status: e.target.value })}><option value="Open">Open</option><option value="In Progress">In Progress</option><option value="Resolved">Resolved</option><option value="Closed">Closed</option></select></label><div className="modal-actions"><button type="button" className="secondary-btn" onClick={() => setEditingTicket(null)}>Cancel</button><button type="submit" className="primary-btn" disabled={editTicketSaving}>{editTicketSaving ? 'Saving...' : 'Save changes'}</button></div></form></div>}
     {showTicketForm && (
@@ -2313,6 +2433,17 @@ function App() {
         </form>
       </div>
     )}
+    {profileModalOpen && (
+      <div className="modal-backdrop" onClick={() => setProfileModalOpen(false)}>
+        <form className="modal" onSubmit={saveProfile} onClick={event => event.stopPropagation()}>
+          <div className="modal-heading"><div><h2>Edit profile</h2><p>Your name is shown across Orbit CRM when provided.</p></div><button type="button" className="icon-btn" onClick={() => setProfileModalOpen(false)} aria-label="Close profile modal"><X size={18} /></button></div>
+          <label>Display name<input autoFocus value={profileDraft} onChange={event => setProfileDraft(event.target.value)} placeholder="Enter your name" maxLength={100} /></label>
+          <label>Account email<input value={session?.user?.email || ''} readOnly /></label>
+          <p className="settings-hint">Leave the name blank to use your account email. Profile photos are not used.</p>
+          <div className="modal-actions"><button type="button" className="secondary-btn" onClick={() => setProfileModalOpen(false)}>Cancel</button><button className="primary-btn" disabled={profileSaving}>{profileSaving ? 'Saving...' : 'Save profile'}</button></div>
+        </form>
+      </div>
+    )}
     {showNotifications && (
       <div
         style={{
@@ -2337,6 +2468,7 @@ function App() {
             </div>
 
             <div className="toolbar-actions">
+              <button type="button" className="secondary-btn" onClick={clearAllNotifications} disabled={notifications.length === 0}>Clear all</button>
               <button
                 type="button"
                 className="secondary-btn"
@@ -2412,6 +2544,8 @@ function App() {
                       ? new Date(notification.created_at).toLocaleString()
                       : ''}
                   </small>
+                  {notification.link && <button type="button" className="text-btn notification-clear" onClick={event => { event.stopPropagation(); const allowedPages = ['Dashboard', 'Customers', 'Leads', 'Pipeline', 'Products', 'Activities', 'Tickets', 'Quotes', 'Invoices', 'Chat', 'Email', 'Documents']; if (allowedPages.includes(notification.link)) setPage(notification.link); setShowNotifications(false); }}>Open</button>}
+                  <button type="button" className="text-btn notification-clear" onClick={event => { event.stopPropagation(); clearNotification(notification.id); }}>Clear</button>
                 </div>
               ))}
             </div>
@@ -2793,7 +2927,7 @@ function Customers({ customers, allCustomers, deals, search, setSearch, statusFi
 
   return (
     <>
-      <PageHeading eyebrow="RELATIONSHIPS" title="Customers" description="Manage your customer relationships in one place." action="Add customer" onAction={onAdd} />
+      <PageHeading eyebrow="RELATIONSHIPS" title="Customers" description="Customers are created when you add a new deal from the Pipeline." />
       <div className="panel">
         <div className="panel-heading">
           <div>
@@ -2842,21 +2976,34 @@ function Customers({ customers, allCustomers, deals, search, setSearch, statusFi
   );
 }
 
-function CustomerDetail({ customer, deals, activities, tickets, formatAmount, onClose, onEdit, onAddDeal, onAddActivity, onAddTicket }) {
+function CustomerDetail({ customer, deals, activities, tickets, quotes = [], invoices = [], payments = [], emailLogs = [], documents = [], formatAmount, onClose, onEdit, onAddDeal, onAddActivity, onAddTicket }) {
   const myDeals = deals.filter(d => d.customer_id === customer.id);
   const myActivities = activities.filter(a => a.customer_id === customer.id);
   const myTickets = tickets.filter(t => t.customer_id === customer.id);
+  const myQuotes = quotes.filter(q => q.customer_id === customer.id);
+  const myInvoices = invoices.filter(i => i.customer_id === customer.id);
+  const invoiceIds = new Set(myInvoices.map(i => i.id));
+  const myPayments = payments.filter(p => invoiceIds.has(p.invoice_id));
+  const myEmailLogs = emailLogs.filter(e => e.customer_id === customer.id);
+  const myDocuments = documents.filter(d => d.customer_id === customer.id);
+  const paidTotal = myPayments.reduce((sum, p) => sum + (Number(p.amount) || 0), 0);
+  const outstanding = myInvoices.filter(i => !['Paid', 'Cancelled'].includes(i.status)).reduce((sum, i) => sum + (Number(i.amount) || 0), 0);
   const status = customer.status || 'Active';
 
   const timeline = [
     ...myDeals.map(d => ({ key: `d-${d.id}`, kind: 'Deal', title: d.title, meta: `${d.stage} · ${formatAmount(d.amount)}`, date: d.created_at })),
-    ...myActivities.map(a => ({ key: `a-${a.id}`, kind: 'Activity', title: a.title, meta: `${a.type || 'Task'} · ${a.status || 'Scheduled'}`, date: a.activity_date })),
-    ...myTickets.map(t => ({ key: `t-${t.id}`, kind: 'Ticket', title: t.title, meta: `${t.priority || 'Medium'} · ${t.status}`, date: t.created_at }))
+    ...myActivities.map(a => ({ key: `a-${a.id}`, kind: 'Activity', title: a.title, meta: `${a.type || 'Task'} · ${a.status || 'Scheduled'}`, date: a.activity_date || a.created_at })),
+    ...myTickets.map(t => ({ key: `t-${t.id}`, kind: 'Ticket', title: t.title, meta: `${t.priority || 'Medium'} · ${t.status}`, date: t.created_at })),
+    ...myQuotes.map(q => ({ key: `q-${q.id}`, kind: 'Quote', title: q.title || q.quote_number || 'Quote', meta: `${q.quote_number || 'Quote'} · ${q.status || 'Draft'} · ${formatAmount(q.amount)}`, date: q.created_at })),
+    ...myInvoices.map(i => ({ key: `i-${i.id}`, kind: 'Invoice', title: i.title || i.invoice_number || 'Invoice', meta: `${i.invoice_number || 'Invoice'} · ${i.status || 'Draft'} · ${formatAmount(i.amount)}`, date: i.created_at })),
+    ...myPayments.map(p => ({ key: `p-${p.id}`, kind: 'Payment', title: `Payment received · ${formatAmount(p.amount)}`, meta: `${p.payment_method || 'Payment'}${p.reference ? ` · Ref ${p.reference}` : ''}`, date: p.paid_at || p.created_at })),
+    ...myEmailLogs.map(e => ({ key: `e-${e.id}`, kind: 'Email', title: e.subject || 'Email logged', meta: `${e.direction || 'Email'} · ${e.to_email || ''}`.trim(), date: e.sent_at || e.created_at })),
+    ...myDocuments.map(d => ({ key: `doc-${d.id}`, kind: 'Document', title: d.name || 'Document uploaded', meta: d.mime_type || 'CRM document', date: d.created_at }))
   ].sort((a, b) => new Date(b.date || 0) - new Date(a.date || 0));
 
   return (
     <div className="modal-backdrop" onClick={onClose}>
-      <div className="modal modal-wide" onClick={e => e.stopPropagation()}>
+      <div className="modal modal-wide customer-360-modal" onClick={e => e.stopPropagation()}>
         <div className="modal-heading customer-header">
           <div>
             <h2>{customer.name}</h2>
@@ -2873,8 +3020,14 @@ function CustomerDetail({ customer, deals, activities, tickets, formatAmount, on
           <div><small>Company</small><p>{customer.company || '—'}</p></div>
           <div><small>Customer since</small><p>{formatDate(customer.created_at)}</p></div>
           <div><small>Lifetime value</small><p>{formatAmount(lifetimeValue(customer, deals))}</p></div>
-          <div><small>Open pipeline</small><p>{formatAmount(sumAmount(myDeals.filter(d => d.stage !== 'Won')))}</p></div>
-          <div><small>Open tickets</small><p>{myTickets.filter(t => t.status === 'Open' || t.status === 'In Progress').length}</p></div>
+          <div><small>Open pipeline</small><p>{formatAmount(sumAmount(myDeals.filter(d => !['Won', 'Lost'].includes(d.stage))))}</p></div>
+          <div><small>Open tickets</small><p>{myTickets.filter(t => ['Open', 'In Progress'].includes(t.status)).length}</p></div>
+          <div><small>Quotes</small><p>{myQuotes.length}</p></div>
+          <div><small>Invoices</small><p>{myInvoices.length}</p></div>
+          <div><small>Open invoice balance</small><p>{formatAmount(Math.max(0, outstanding - paidTotal))}</p></div>
+          <div><small>Payments recorded</small><p>{formatAmount(paidTotal)}</p></div>
+          <div><small>Email logs</small><p>{myEmailLogs.length}</p></div>
+          <div><small>Documents</small><p>{myDocuments.length}</p></div>
         </div>
 
         <div className="detail-actions">
@@ -2883,9 +3036,10 @@ function CustomerDetail({ customer, deals, activities, tickets, formatAmount, on
           <button type="button" className="secondary-btn" onClick={() => onAddTicket(customer)}>Create ticket</button>
         </div>
 
-        <h3 className="detail-title">History</h3>
+        <h3 className="detail-title">Customer history</h3>
+        <p className="customer-history-hint">Deals, activities, support, quotes, invoices, payments, email logs and documents linked to this customer.</p>
         {timeline.length === 0 ? (
-          <p className="detail-empty">No deals, activities or tickets yet. Use the buttons above to add the first one.</p>
+          <p className="detail-empty">No linked history yet. Use the actions above or link records to this customer as you create them.</p>
         ) : (
           <ul className="timeline">
             {timeline.map(item => (
@@ -2895,7 +3049,7 @@ function CustomerDetail({ customer, deals, activities, tickets, formatAmount, on
                   <strong>{item.title}</strong>
                   <p>{item.meta}</p>
                 </div>
-                <time>{formatDate(item.date)}</time>
+                <time>{formatDateTime(item.date)}</time>
               </li>
             ))}
           </ul>
@@ -2904,8 +3058,7 @@ function CustomerDetail({ customer, deals, activities, tickets, formatAmount, on
     </div>
   );
 }
-
-function Pipeline({ deals, customers, moveDeal, deleteDeal, onEdit, onAdd, formatAmount, currentUserId, isAdmin }) {
+function Pipeline({ deals, customers, moveDeal, deleteDeal, onEdit, onAdd, formatAmount, currentUserId, ownerProfiles = {}, isAdmin }) {
   const [query, setQuery] = useState('');
   const [mineOnly, setMineOnly] = useState(false);
   const [dragOver, setDragOver] = useState(null);
@@ -2979,7 +3132,7 @@ function Pipeline({ deals, customers, moveDeal, deleteDeal, onEdit, onAdd, forma
                   >
                     <div className="deal-owner-marker">
                       <span className="owner-dot" style={{ background: color }} />
-                      <span>{deal.created_by === currentUserId ? 'You' : 'Team member'}</span>
+                      <span>{deal.created_by === currentUserId ? `${ownerProfiles[deal.created_by] || 'You'} (you)` : (ownerProfiles[deal.created_by] || 'Unknown user')}</span>
                     </div>
                     <div className="deal-top">
                       <span className="deal-label">DEAL</span>
@@ -3019,15 +3172,18 @@ function Pipeline({ deals, customers, moveDeal, deleteDeal, onEdit, onAdd, forma
     </>
   );
 }
-function Activities({ activities, customers, onAdd, onStatusChange, onDelete, onEdit, onView, currentUserId, isAdmin }) {
+
+
+function Activities({ activities, customers, ownerProfiles = {}, currentUserEmail, onAdd, onStatusChange, onDelete, onEdit, onView, currentUserId, isAdmin }) {
   const [tab, setTab] = useState('All');
   const getCustomerName = id => customers.find(c => c.id === id)?.name || 'No customer linked';
   const filters = { All: () => true, Upcoming: a => isOpenActivity(a) && !isOverdue(a), Overdue: isOverdue, Completed: a => a.status === 'Completed' };
   const counts = Object.fromEntries(Object.entries(filters).map(([k, f]) => [k, activities.filter(f).length]));
   const list = activities.filter(filters[tab]).sort((a, b) => { const diff = new Date(a.activity_date || 8.64e15) - new Date(b.activity_date || 8.64e15); return tab === 'Completed' ? -diff : diff; });
-  return <><PageHeading eyebrow="PRODUCTIVITY" title="Activities" description="Keep track of meetings, calls, and follow-ups." action="New activity" onAction={onAdd} /><div className="panel"><div className="panel-heading"><div><h3>Schedule</h3><p>Your tasks, calls and follow-ups.</p></div></div><div className="filter-tabs" role="tablist" aria-label="Filter activities">{Object.keys(filters).map(name => <button key={name} type="button" className={`filter-tab ${tab === name ? 'active' : ''} ${name === 'Overdue' && counts.Overdue ? 'danger' : ''}`} onClick={() => setTab(name)}>{name} ({counts[name]})</button>)}</div>{list.length === 0 ? <div className="empty-state"><p>{activities.length === 0 ? 'No activities yet.' : `No ${tab.toLowerCase()} activities.`}</p>{activities.length === 0 && <button type="button" className="primary-btn" onClick={onAdd}>Create your first activity</button>}</div> : list.map(activity => { const canEdit = isAdmin || activity.created_by === currentUserId; const date = activity.activity_date ? new Date(activity.activity_date) : null; return <div className="activity-row large" key={activity.id}><div className="date-box"><strong>{date ? date.getDate() : '--'}</strong><span>{date ? date.toLocaleDateString('en-US', { month: 'short' }).toUpperCase() : '---'}</span></div><div className="activity-content"><strong>{activity.title} {isOverdue(activity) && <span className="status overdue">Overdue</span>}</strong><p>{activity.type || 'Task'} · {getCustomerName(activity.customer_id)}</p><small>{formatDateTime(activity.activity_date)}</small>{activity.notes && <p className="activity-notes">{activity.notes}</p>}</div><div className="activity-actions"><button type="button" className="secondary-btn" onClick={() => onView(activity)}>View</button>{canEdit && <button type="button" className="secondary-btn" onClick={() => onEdit(activity)}><Pencil size={14} /> Edit</button>}{canEdit && isOpenActivity(activity) && <button type="button" className="secondary-btn" onClick={() => onStatusChange(activity.id, 'Completed')}>Mark done</button>}<select value={activity.status || 'Scheduled'} onChange={e => onStatusChange(activity.id, e.target.value)} disabled={!canEdit}><option value="Scheduled">Scheduled</option><option value="In Progress">In Progress</option><option value="Completed">Completed</option><option value="Cancelled">Cancelled</option></select>{canEdit && <button type="button" className="icon-btn" title="Delete activity" onClick={() => onDelete(activity.id)}><X size={16} /></button>}</div></div> })}</div></>;
+  return <><PageHeading eyebrow="PRODUCTIVITY" title="Activities" description="Keep track of meetings, calls, and follow-ups." action="New activity" onAction={onAdd} /><div className="panel"><div className="panel-heading"><div><h3>Schedule</h3><p>Your tasks, calls and follow-ups.</p></div></div><div className="filter-tabs" role="tablist" aria-label="Filter activities">{Object.keys(filters).map(name => <button key={name} type="button" className={`filter-tab ${tab === name ? 'active' : ''} ${name === 'Overdue' && counts.Overdue ? 'danger' : ''}`} onClick={() => setTab(name)}>{name} ({counts[name]})</button>)}</div>{list.length === 0 ? <div className="empty-state"><p>{activities.length === 0 ? 'No activities yet.' : `No ${tab.toLowerCase()} activities.`}</p>{activities.length === 0 && <button type="button" className="primary-btn" onClick={onAdd}>Create your first activity</button>}</div> : list.map(activity => { const canEdit = isAdmin || activity.created_by === currentUserId; const date = activity.activity_date ? new Date(activity.activity_date) : null; return <div className="activity-row large" key={activity.id}><div className="date-box"><strong>{date ? date.getDate() : '--'}</strong><span>{date ? date.toLocaleDateString('en-US', { month: 'short' }).toUpperCase() : '---'}</span></div><div className="activity-content"><strong>{activity.title} {isOverdue(activity) && <span className="status overdue">Overdue</span>}</strong><p>{activity.type || 'Task'} · {getCustomerName(activity.customer_id)}</p><div className="activity-meta-badges"><span className={`priority-pill priority-${String(activity.priority || 'Medium').toLowerCase()}`}>{activity.priority || 'Medium'} priority</span><span className="assignee-pill">Assigned: {(activity.assigned_to === currentUserId ? (ownerProfiles[currentUserId] || currentUserEmail || 'Me') : (ownerProfiles[activity.assigned_to] || (activity.assigned_to ? 'Team member' : 'Unassigned')))}</span></div><small>Due: {formatDateTime(activity.activity_date)}</small>{activity.notes && <p className="activity-notes">{activity.notes}</p>}</div><div className="activity-actions"><button type="button" className="secondary-btn" onClick={() => onView(activity)}>View</button>{canEdit && <button type="button" className="secondary-btn" onClick={() => onEdit(activity)}><Pencil size={14} /> Edit</button>}{canEdit && isOpenActivity(activity) && <button type="button" className="secondary-btn" onClick={() => onStatusChange(activity.id, 'Completed')}>Mark done</button>}<select value={activity.status || 'Scheduled'} onChange={e => onStatusChange(activity.id, e.target.value)} disabled={!canEdit}><option value="Scheduled">Scheduled</option><option value="In Progress">In Progress</option><option value="Completed">Completed</option><option value="Cancelled">Cancelled</option></select>{canEdit && <button type="button" className="icon-btn" title="Delete activity" onClick={() => onDelete(activity.id)}><X size={16} /></button>}</div></div> })}</div></>;
 }
-function ActivityDetail({ activity, customer, onClose, onEdit }) {
+
+function ActivityDetail({ activity, customer, ownerProfiles = {}, currentUserEmail, onClose, onEdit }) {
   return (
     <div className="modal-backdrop" onClick={onClose}>
       <div className="modal modal-wide" onClick={e => e.stopPropagation()}>
@@ -3050,8 +3206,12 @@ function ActivityDetail({ activity, customer, onClose, onEdit }) {
             <small>Type</small><p>{activity.type || 'Task'}</p>
           </div>
           <div>
-            <small>Date & time</small>
+            <small>Due date & time</small>
             <p>{formatDateTime(activity.activity_date)}</p>
+          </div>
+          <div><small>Priority</small><p><span className={`priority-pill priority-${String(activity.priority || 'Medium').toLowerCase()}`}>{activity.priority || 'Medium'}</span></p>
+          </div>
+          <div><small>Assigned to</small><p>{activity.assigned_to ? (ownerProfiles[activity.assigned_to] || (activity.assigned_to === activity.created_by ? (currentUserEmail || 'Me') : 'Team member')) : 'Unassigned'}</p>
           </div>
           <div>
             <small>Customer</small><p>{customer?.name || 'No customer linked'}</p>
@@ -3070,6 +3230,7 @@ function ActivityDetail({ activity, customer, onClose, onEdit }) {
     </div>
   );
 }
+
 function Tickets({ tickets, error, onAdd, onStatusChange, onDelete, onEdit, onView, currentUserId, isAdmin }) {
   const [query, setQuery] = useState(''); 
   const [status, setStatus] = useState('All'); 
@@ -3106,7 +3267,9 @@ function Tickets({ tickets, error, onAdd, onStatusChange, onDelete, onEdit, onVi
                   <button type="button" className="secondary-btn" onClick={onAdd}>Create your first ticket</button>
                   </div> : filtered.length === 0 ? <div className="empty-state"><p>No tickets match your filters.</p></div> : <div className="table-wrap"><table><thead><tr><th>Ticket</th><th>Customer</th><th>Priority</th><th>Status</th><th>Created</th><th>Actions</th></tr></thead><tbody>{filtered.map(ticket => { const canEdit = isAdmin || ticket.created_by === currentUserId; return <tr key={ticket.id}><td><button type="button" className="text-btn" onClick={() => onView(ticket)}><strong>{ticket.title}</strong></button><div className="deal-customer">{ticket.category || 'General'}</div></td><td>{ticket.customers?.name || 'Unassigned'}</td><td><span className={`status ${(ticket.priority || 'medium').toLowerCase()}`}>{ticket.priority || 'Medium'}</span></td><td><select className="ticket-status-select" value={ticket.status} onChange={e => onStatusChange(ticket.id, e.target.value)} disabled={!canEdit}><option value="Open">Open</option><option value="In Progress">In Progress</option><option value="Resolved">Resolved</option><option value="Closed">Closed</option></select></td><td>{formatDate(ticket.created_at)}</td><td><div className="toolbar-actions"><button type="button" className="secondary-btn" onClick={() => onView(ticket)}>View</button>{canEdit && <button type="button" className="secondary-btn" onClick={() => onEdit(ticket)}><Pencil size={14} /> Edit</button>}{canEdit && <button type="button" className="icon-btn" title="Delete ticket" onClick={() => onDelete(ticket.id)}><X size={16} /></button>}</div></td></tr> })}</tbody></table></div>}</div></>;
 }
+
 function TicketDetail({ ticket, onClose, onEdit }) { return <div className="modal-backdrop" onClick={onClose}><div className="modal modal-wide" onClick={e => e.stopPropagation()}><div className="modal-heading"><div><h2>{ticket.title}</h2><p>{ticket.category || 'General'} · {ticket.status || 'Open'}</p></div><div className="toolbar-actions"><button type="button" className="secondary-btn" onClick={() => onEdit(ticket)}><Pencil size={14} /> Edit</button><button type="button" className="icon-btn" onClick={onClose}><X size={18} /></button></div></div><div className="detail-grid"><div><small>Customer</small><p>{ticket.customers?.name || 'Unassigned'}</p></div><div><small>Company</small><p>{ticket.customers?.company || '—'}</p></div><div><small>Priority</small><p>{ticket.priority || 'Medium'}</p></div><div><small>Status</small><p>{ticket.status || 'Open'}</p></div><div><small>Category</small><p>{ticket.category || 'General'}</p></div><div><small>Created</small><p>{formatDate(ticket.created_at)}</p></div></div><h3 className="detail-title">Description</h3><p className="detail-empty" style={{ whiteSpace: 'pre-wrap' }}>{ticket.description || 'No description added.'}</p></div></div>; }
+
 function BarRow({ label, percent, display }) {
   return (
     <div className="report-row wide">
@@ -3116,6 +3279,7 @@ function BarRow({ label, percent, display }) {
     </div>
   );
 }
+
 function Reports({ customers, deals, activities, tickets, formatAmount }) {
   const won = deals.filter(d => d.stage === 'Won');
   const open = deals.filter(d => d.stage !== 'Won');
@@ -3213,8 +3377,10 @@ function Leads({ leads, customers, onAdd, onUpdate, onDelete, currentUserId, isA
   const save = async e => {
     e.preventDefault();
     try {
-      if (editing) await onUpdate(editing.id, form);
-      else await onAdd(form);
+      // The customer relationship is optional; never send an empty string to a UUID column.
+      const payload = { ...form, customer_id: form.customer_id || null };
+      if (editing) await onUpdate(editing.id, payload);
+      else await onAdd(payload);
       setShow(false);
       setEditing(null);
     } catch (err) { alert(err.message) }
@@ -3269,6 +3435,7 @@ function Leads({ leads, customers, onAdd, onUpdate, onDelete, currentUserId, isA
               )}
             </tbody></table></div>}</div>{show && <div className="modal-backdrop" onClick={() => setShow(false)}><form className="modal" onSubmit={save} onClick={e => e.stopPropagation()}><div className="modal-heading"><h2>{editing ? 'Edit lead' : 'New lead'}</h2><button type="button" className="icon-btn" onClick={() => setShow(false)}><X size={18} /></button></div>{[['name', 'Name'], ['email', 'Email'], ['phone', 'Phone'], ['company', 'Company']].map(([k, l]) => <label key={k}>{l}<input value={form[k]} onChange={e => setForm({ ...form, [k]: e.target.value })} required={k === 'name' || k === 'email'} /></label>)}<label>Source<select value={form.source} onChange={e => setForm({ ...form, source: e.target.value })}>{['Website', 'Referral', 'Social', 'Campaign', 'Cold outreach', 'Other'].map(x => <option key={x}>{x}</option>)}</select></label><label>Status<select value={form.status} onChange={e => setForm({ ...form, status: e.target.value })}>{['New', 'Contacted', 'Qualified', 'Unqualified', 'Converted'].map(x => <option key={x}>{x}</option>)}</select></label><label>Convert/link customer<select value={form.customer_id} onChange={e => setForm({ ...form, customer_id: e.target.value })}><option value="">None</option>{customers.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}</select></label><div className="modal-actions"><button type="button" className="secondary-btn" onClick={() => setShow(false)}>Cancel</button><button className="primary-btn">Save lead</button></div></form></div>}</>;
 }
+
 function EmailPage({ emailLogs, customers, integrations, loading, error, onConnect, onDisconnect, onAdd }) {
   const [showLog, setShowLog] = useState(false);
   useEffect(() => { const handler = () => setShowLog(true); window.addEventListener('orbit-open-email-log', handler); return () => window.removeEventListener('orbit-open-email-log', handler); }, []);
@@ -3285,6 +3452,7 @@ function EmailPage({ emailLogs, customers, integrations, loading, error, onConne
     <div className="panel"><div className="panel-heading"><div><h3>CRM Email Log</h3><p>Manual and synchronized communication history.</p></div><button className="secondary-btn" onClick={() => setShowLog(true)}>Log email</button></div><EmailLogs emailLogs={emailLogs} customers={customers} onAdd={async payload => { await onAdd(payload); setShowLog(false); }} openExternally={showLog} onCloseExternal={() => setShowLog(false)} /></div>
   </>;
 }
+
 function EmailLogs({ emailLogs, customers, onAdd, openExternally = false, onCloseExternal }) {
   const [show, setShow] = useState(openExternally);
   useEffect(() => { if (openExternally) setShow(true) }, [openExternally]);
@@ -3358,6 +3526,7 @@ function EmailLogs({ emailLogs, customers, onAdd, openExternally = false, onClos
     }
   </>
 }
+
 function CalendarPage({ events, customers, onAdd, onUpdate, onDelete }) {
   const [show, setShow] = useState(false); const [editing, setEditing] = useState(null);
   const blank = { title: '', description: '', start_at: '', end_at: '', event_type: 'Meeting', customer_id: '', location: '', status: 'Scheduled' };
@@ -3422,6 +3591,7 @@ function CalendarPage({ events, customers, onAdd, onUpdate, onDelete }) {
       <label>Title<input required value={form.title} onChange={e => setForm({ ...form, title: e.target.value })} /></label>
       <label>Customer<select value={form.customer_id} onChange={e => setForm({ ...form, customer_id: e.target.value })}><option value="">None</option>{customers.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}</select></label><label>Start<input type="datetime-local" required value={form.start_at || ''} onChange={e => setForm({ ...form, start_at: e.target.value })} /></label><label>End<input type="datetime-local" value={form.end_at || ''} onChange={e => setForm({ ...form, end_at: e.target.value })} /></label><label>Type<select value={form.event_type} onChange={e => setForm({ ...form, event_type: e.target.value })}>{['Meeting', 'Call', 'Demo', 'Task', 'Other'].map(x => <option key={x}>{x}</option>)}</select></label><label>Location<input value={form.location || ''} onChange={e => setForm({ ...form, location: e.target.value })} /></label><label>Description<textarea value={form.description || ''} onChange={e => setForm({ ...form, description: e.target.value })} /></label><div className="modal-actions"><button type="button" className="secondary-btn" onClick={() => setShow(false)}>Cancel</button><button className="primary-btn">Save event</button></div></form></div>}</>
 }
+
 function Quotes({ quotes, customers, onAdd, onUpdate, formatAmount, currentUserId, isAdmin }) { const [show, setShow] = useState(false); const [editing, setEditing] = useState(null); const blank = { title: '', quote_number: `Q-${Date.now().toString().slice(-6)}`, customer_id: '', amount: 0, status: 'Draft', valid_until: '', notes: '' }; const [form, setForm] = useState(blank); const save = async e => { e.preventDefault(); try { if (editing) await onUpdate(editing.id, form); else await onAdd(form); setShow(false); setEditing(null) } catch (err) { alert(err.message) } }; return <><PageHeading eyebrow="SALES OPERATIONS" title="Quotes" description="Create and track customer quotations." action="New quote" onAction={() => { setEditing(null); setForm({ ...blank, quote_number: `Q-${Date.now().toString().slice(-6)}` }); setShow(true) }} /><div className="panel"><div className="table-wrap"><table><thead><tr><th>Quote</th><th>Customer</th><th>Amount</th><th>Status</th><th>Valid until</th><th>Actions</th></tr></thead><tbody>{quotes.length === 0 ? <tr><td colSpan="6">No quotes yet.</td></tr> : quotes.map(q => <tr key={q.id}><td><strong>{q.quote_number}</strong><div className="deal-customer">{q.title}</div></td><td>{q.customers?.name || '—'}</td><td>{formatAmount(q.amount)}</td><td>{q.status}</td><td>{q.valid_until ? formatDate(q.valid_until) : '—'}</td><td>{(isAdmin || q.created_by === currentUserId) && <button className="secondary-btn" onClick={() => { setEditing(q); setForm(q); setShow(true) }}>Edit</button>}</td></tr>)}</tbody></table></div></div>{show && <div className="modal-backdrop" onClick={() => setShow(false)}><form className="modal" onSubmit={save} onClick={e => e.stopPropagation()}><div className="modal-heading"><h2>{editing ? 'Edit quote' : 'New quote'}</h2><button type="button" className="icon-btn" onClick={() => setShow(false)}><X size={18} /></button></div><label>Quote number<input required value={form.quote_number} onChange={e => setForm({ ...form, quote_number: e.target.value })} /></label><label>Title<input required value={form.title} onChange={e => setForm({ ...form, title: e.target.value })} /></label><label>Customer<select value={form.customer_id} onChange={e => setForm({ ...form, customer_id: e.target.value })}><option value="">None</option>{customers.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}</select></label><label>Amount<input type="number" min="0" value={form.amount} onChange={e => setForm({ ...form, amount: Number(e.target.value) })} /></label><label>Status<select value={form.status} onChange={e => setForm({ ...form, status: e.target.value })}>{['Draft', 'Sent', 'Accepted', 'Rejected', 'Expired'].map(x => <option key={x}>{x}</option>)}</select></label><label>Valid until<input type="date" value={form.valid_until || ''} onChange={e => setForm({ ...form, valid_until: e.target.value })} /></label><label>Notes<textarea value={form.notes || ''} onChange={e => setForm({ ...form, notes: e.target.value })} /></label><div className="modal-actions"><button type="button" className="secondary-btn" onClick={() => setShow(false)}>Cancel</button><button className="primary-btn">Save quote</button></div></form></div>}</> }
 
 function Invoices({ invoices, payments, customers, onAdd, onUpdate, onAddPayment, formatAmount, currentUserId, isAdmin }) { const [show, setShow] = useState(false); const [pay, setPay] = useState(null); const blank = { invoice_number: `INV-${Date.now().toString().slice(-6)}`, title: '', customer_id: '', amount: 0, due_date: '', status: 'Draft', notes: '' }; const [form, setForm] = useState(blank); const save = async e => { e.preventDefault(); try { await onAdd(form); setShow(false) } catch (err) { alert(err.message) } }; const paymentSave = async e => { e.preventDefault(); try { await onAddPayment({ ...pay, payment_method: pay.payment_method || 'Bank transfer' }); setPay(null) } catch (err) { alert(err.message) } }; return <><PageHeading eyebrow="BILLING" title="Invoices & payments" description="Track invoices, balances and payments." action="New invoice" onAction={() => { setForm({ ...blank, invoice_number: `INV-${Date.now().toString().slice(-6)}` }); setShow(true) }} /><div className="stats-grid"><StatCard label="Invoiced" value={formatAmount(invoices.reduce((s, x) => s + Number(x.amount || 0), 0))} hint={`${invoices.length} invoices`} tone="blue" icon="$" /><StatCard label="Paid" value={formatAmount(payments.reduce((s, x) => s + Number(x.amount || 0), 0))} hint={`${payments.length} payments`} tone="green" icon="✓" /><StatCard label="Outstanding" value={formatAmount(invoices.filter(x => !['Paid', 'Cancelled'].includes(x.status)).reduce((s, x) => s + Number(x.amount || 0), 0))} hint="Open balances" tone="orange" icon="!" /></div><div className="panel"><div className="table-wrap"><table><thead><tr><th>Invoice</th><th>Customer</th><th>Amount</th><th>Status</th><th>Due</th><th>Actions</th></tr></thead><tbody>{invoices.length === 0 ? <tr><td colSpan="6">No invoices yet.</td></tr> : invoices.map(i => <tr key={i.id}><td><strong>{i.invoice_number}</strong><div className="deal-customer">{i.title}</div></td><td>{i.customers?.name || '—'}</td><td>{formatAmount(i.amount)}</td><td>{i.status}</td><td>{i.due_date ? formatDate(i.due_date) : '—'}</td><td><div className="toolbar-actions">{(isAdmin || i.created_by === currentUserId) && <button className="secondary-btn" onClick={() => onUpdate(i.id, { status: i.status === 'Paid' ? 'Sent' : 'Paid' })}>{i.status === 'Paid' ? 'Reopen' : 'Mark paid'}</button>}{i.status !== 'Paid' && <button className="secondary-btn" onClick={() => setPay({ invoice_id: i.id, amount: i.amount, paid_at: new Date().toISOString().slice(0, 16), payment_method: 'Bank transfer' })}>Record payment</button>}</div></td></tr>)}</tbody></table></div></div>{show && <div className="modal-backdrop" onClick={() => setShow(false)}><form className="modal" onSubmit={save} onClick={e => e.stopPropagation()}><div className="modal-heading"><h2>New invoice</h2><button type="button" className="icon-btn" onClick={() => setShow(false)}><X size={18} /></button></div><label>Invoice number<input required value={form.invoice_number} onChange={e => setForm({ ...form, invoice_number: e.target.value })} /></label><label>Title<input required value={form.title} onChange={e => setForm({ ...form, title: e.target.value })} /></label><label>Customer<select value={form.customer_id} onChange={e => setForm({ ...form, customer_id: e.target.value })}><option value="">None</option>{customers.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}</select></label><label>Amount<input type="number" min="0" value={form.amount} onChange={e => setForm({ ...form, amount: Number(e.target.value) })} /></label><label>Due date<input type="date" value={form.due_date || ''} onChange={e => setForm({ ...form, due_date: e.target.value })} /></label><label>Status<select value={form.status} onChange={e => setForm({ ...form, status: e.target.value })}>{['Draft', 'Sent', 'Partially Paid', 'Paid', 'Overdue', 'Cancelled'].map(x => <option key={x}>{x}</option>)}</select></label><label>Notes<textarea value={form.notes || ''} onChange={e => setForm({ ...form, notes: e.target.value })} /></label><div className="modal-actions"><button type="button" className="secondary-btn" onClick={() => setShow(false)}>Cancel</button><button className="primary-btn">Create invoice</button></div></form></div>}{pay && <div className="modal-backdrop" onClick={() => setPay(null)}><form className="modal" onSubmit={paymentSave} onClick={e => e.stopPropagation()}><div className="modal-heading"><h2>Record payment</h2><button type="button" className="icon-btn" onClick={() => setPay(null)}><X size={18} /></button></div><label>Amount<input type="number" min="0" value={pay.amount} onChange={e => setPay({ ...pay, amount: Number(e.target.value) })} /></label><label>Method<select value={pay.payment_method} onChange={e => setPay({ ...pay, payment_method: e.target.value })}>{['Bank transfer', 'Card', 'Cash', 'Online', 'Other'].map(x => <option key={x}>{x}</option>)}</select></label><label>Date<input type="datetime-local" value={pay.paid_at} onChange={e => setPay({ ...pay, paid_at: e.target.value })} /></label><div className="modal-actions"><button type="button" className="secondary-btn" onClick={() => setPay(null)}>Cancel</button><button className="primary-btn">Save payment</button></div></form></div>}</> }
@@ -3458,7 +3628,7 @@ function Products({ products, onAdd, onDelete, currentUserId, isAdmin }) {
     <>
       <PageHeading
         eyebrow="PRODUCTS"
-        title="Tech Products"
+        title="Tech products"
         description="Manage the technology products your team can offer to customers."
         action="Add product"
         onAction={() => { setForm({ name: '', description: '' }); setShow(true); }}
@@ -3501,6 +3671,7 @@ function Products({ products, onAdd, onDelete, currentUserId, isAdmin }) {
     </>
   );
 }
+
 function SettingsPage({ currency, setCurrency }) {
   const [selectedCurrency, setSelectedCurrency] = useState(currency);
   const [saved, setSaved] = useState(false);
@@ -3529,6 +3700,7 @@ function SettingsPage({ currency, setCurrency }) {
     </>
   );
 }
+
 function Chat() {
   const [users, setUsers] = useState([]);
   const [selectedUser, setSelectedUser] = useState(null);

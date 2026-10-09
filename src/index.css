@@ -2640,3 +2640,37 @@ tbody tr:last-child td {
 @media (max-width: 620px) {
   .product-grid, .deal-date-grid { grid-template-columns: 1fr; }
 }
+
+/* Phase 1: profile, notification actions, and pipeline-created customers */
+.avatar-button {
+  border: 0;
+  cursor: pointer;
+  font: inherit;
+}
+.avatar-button:focus-visible {
+  outline: 2px solid #10B981;
+  outline-offset: 3px;
+}
+.notification-clear {
+  margin-top: 6px;
+  font-size: 11px;
+}
+.deal-new-customer-fields {
+  padding: 12px 14px;
+  border: 1px solid #e5e7eb;
+  border-radius: 10px;
+  background: #fafbfc;
+}
+.deal-new-customer-fields > .settings-hint {
+  margin-bottom: 6px;
+}
+
+
+/* Orbit CRM Phase 2: expanded Customer 360 history */
+.customer-360-modal { max-height: min(90vh, 900px); overflow-y: auto; }
+.customer-history-hint { margin: -4px 0 14px; color: #7c8495; font-size: 11px; line-height: 1.5; }
+.timeline-kind.quote { background: #eaf1ff; color: #3f6fd8; }
+.timeline-kind.invoice { background: #fff3e4; color: #b7791f; }
+.timeline-kind.payment { background: #e8f8ef; color: #16825a; }
+.timeline-kind.email { background: #efeafe; color: #10B981; }
+.timeline-kind.document { background: #f0f0f4; color: #5b6075; }
