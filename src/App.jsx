@@ -797,7 +797,13 @@ async function signUpWithEmail(event) {
       return;
     }
 
-    if (data?.status === 'active') {
+    // A customer-portal account must never be routed into the internal CRM,
+    // even if an older/stale authorized_users row marks the same user as a member.
+    // Portal account_type takes precedence over internal role/status.
+    if (
+      data?.status === 'active' &&
+      currentSession.user.user_metadata?.account_type !== 'customer_portal'
+    ) {
       setAuthorized(true);
       setAuthorizationProfile(data);
       setPortalAccount(null);
@@ -820,9 +826,15 @@ async function signUpWithEmail(event) {
           .maybeSingle();
         if (accountError) throw accountError;
 
-        if (!account && currentSession.user.email_confirmed_at) {
+        // Complete setup for both first-time accounts and existing pending
+        // self-registrations. A pending row may have been created before email
+        // verification, so checking only `!account` leaves it pending forever.
+        if (
+          currentSession.user.email_confirmed_at &&
+          (!account || (account.status === 'pending' && account.registration_source === 'signup'))
+        ) {
           const { error: completionError } = await supabase.rpc('complete_customer_portal_signup', {
-            p_full_name: currentSession.user.user_metadata?.full_name || portalSignUpName || null
+            p_full_name: currentSession.user.user_metadata?.full_name || account?.full_name || portalSignUpName || null
           });
           if (completionError) throw completionError;
           const refreshed = await supabase
