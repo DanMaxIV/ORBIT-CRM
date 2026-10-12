@@ -259,18 +259,21 @@ function AuthScreen({ onGoogleSignIn, onEmailSignIn, onEmailSignUp, onPortalSign
 function PortalStatusScreen({ account, email, onSignOut }) {
   const needsVerification = !account;
   const isActive = account?.status === 'active';
+  const isRejected = account?.status === 'revoked';
   return (
     <div className="auth-page">
       <div className="auth-card portal-status-card">
         <div className="auth-brand"><div className="brand-mark"><OrbitLogo /></div><span>orbit<span className="brand-accent">CRM</span></span></div>
-        <div className="portal-status-icon">{needsVerification ? '✉' : isActive ? 'O' : '✓'}</div>
+        <div className="portal-status-icon">{needsVerification ? '✉' : isActive ? 'O' : isRejected ? '×' : '✓'}</div>
         <div className="auth-heading">
-          <h1>{needsVerification ? 'Check your email' : isActive ? 'Finish setting up your portal' : 'Portal access pending'}</h1>
+          <h1>{needsVerification ? 'Check your email' : isActive ? 'Finish setting up your portal' : isRejected ? 'Portal access rejected' : 'Portal access pending'}</h1>
           <p>{needsVerification
             ? 'Please verify your email address using the link we sent. If you have already verified it, sign out and sign back in to finish portal setup.'
             : isActive
-              ? 'Your account is linked. Your customer dashboard is being prepared.'
-              : 'Your email is verified, but we could not safely match it to exactly one customer record. The Orbit CRM team must link your account before any customer data is shown.'}</p>
+              ? 'Your account is approved and linked. Your customer dashboard is being prepared.'
+              : isRejected
+                ? 'Your customer portal access request was rejected. Please contact the Orbit CRM team if you believe this is a mistake.'
+                : 'Your email is verified. Your request is waiting for an Orbit CRM admin to review it. Portal access will remain blocked until it is approved.'}</p>
         </div>
         <p className="portal-status-email">{email || account?.email || ''}</p>
         <button type="button" className="primary-btn" onClick={onSignOut}>Sign out</button>
@@ -410,6 +413,11 @@ function App() {
   const [authorizedUsers, setAuthorizedUsers] = useState([]);
   const [usersLoading, setUsersLoading] = useState(false);
   const [usersError, setUsersError] = useState('');
+  const [pendingPortalAccounts, setPendingPortalAccounts] = useState([]);
+  const [portalRequestsLoading, setPortalRequestsLoading] = useState(false);
+  const [portalRequestsError, setPortalRequestsError] = useState('');
+  const [portalRequestsNotice, setPortalRequestsNotice] = useState('');
+  const [portalRequestActionId, setPortalRequestActionId] = useState(null);
 
   const [page, setPage] = useState('Dashboard');
   const [sidebarOpen, setSidebarOpen] = useState(false);
@@ -733,7 +741,7 @@ async function signUpWithEmail(event) {
         }
       });
       if (error) throw error;
-      setAuthNotice('Customer account created. Check your email and open the verification link to continue. If your email does not match exactly one existing customer record, the Orbit CRM team will link your account before any customer data is shown.');
+      setAuthNotice('Registration submitted. Verify your email if prompted, then wait for an Orbit CRM admin to review your customer portal access request.');
       setPassword('');
       setPortalSignUpName(fullName.trim());
       return true;
@@ -826,12 +834,12 @@ async function signUpWithEmail(event) {
           .maybeSingle();
         if (accountError) throw accountError;
 
-        // Complete setup for both first-time accounts and existing pending
-        // self-registrations. A pending row may have been created before email
-        // verification, so checking only `!account` leaves it pending forever.
+        // Create/refresh the portal registration after email verification.
+        // The database function always leaves self-registrations pending; only
+        // an authorized CRM admin can approve access.
         if (
           currentSession.user.email_confirmed_at &&
-          (!account || (account.status === 'pending' && account.registration_source === 'signup'))
+          (!account || account.registration_source === 'signup')
         ) {
           const { error: completionError } = await supabase.rpc('complete_customer_portal_signup', {
             p_full_name: currentSession.user.user_metadata?.full_name || account?.full_name || portalSignUpName || null
@@ -849,7 +857,7 @@ async function signUpWithEmail(event) {
         setPortalAccount(account || null);
         setPortalSetupPending(!account);
         setAuthorizationLoading(false);
-        if (!account) setAuthNotice('Please verify your email address. If you have already verified it, sign out and sign back in to finish portal setup.');
+        if (!account) setAuthNotice('Please verify your email address. Once verified, your request will remain pending until an Orbit CRM admin approves it.');
         return;
       } catch (portalError) {
         console.error('Customer portal authorization check failed:', portalError);
@@ -1035,6 +1043,58 @@ async function signUpWithEmail(event) {
     await fetchAuthorizedUsers();
     return true;
   }
+  async function fetchPendingPortalAccounts() {
+    setPortalRequestsLoading(true);
+    setPortalRequestsError('');
+    setPortalRequestsNotice('');
+    const { data, error } = await supabase
+      .from('customer_portal_accounts')
+      .select('id, user_id, email, full_name, status, created_at, registration_source')
+      .eq('status', 'pending')
+      .eq('registration_source', 'signup')
+      .order('created_at', { ascending: true });
+    if (error) {
+      console.error('Failed to fetch pending customer portal requests:', error);
+      setPortalRequestsError('Unable to load pending customer access requests. Apply the customer portal approval SQL migration, then refresh.');
+      setPendingPortalAccounts([]);
+    } else {
+      setPendingPortalAccounts(data || []);
+    }
+    setPortalRequestsLoading(false);
+  }
+
+  async function reviewPortalRequest(userId, action) {
+    const request = pendingPortalAccounts.find((item) => item.user_id === userId);
+    if (!request || !['approve', 'reject'].includes(action)) return;
+    const confirmed = window.confirm(action === 'approve'
+      ? `Approve ${request.email} and create a customer record?`
+      : `Reject customer portal access for ${request.email}?`);
+    if (!confirmed) return;
+    setPortalRequestActionId(userId);
+    setPortalRequestsError('');
+    setPortalRequestsNotice('');
+    try {
+      const { error } = await supabase.rpc(action === 'approve'
+        ? 'approve_customer_portal_access'
+        : 'reject_customer_portal_access', { p_user_id: userId });
+      if (error) throw error;
+      await fetchPendingPortalAccounts();
+      setPortalRequestsNotice(action === 'approve'
+        ? `Approved ${request.email}; a customer record was created and linked.`
+        : `Rejected access for ${request.email}.`);
+    } catch (error) {
+      console.error(`Failed to ${action} customer portal request:`, error);
+      setPortalRequestsError(error.message || `Unable to ${action} customer portal access.`);
+    } finally {
+      setPortalRequestActionId(null);
+    }
+  }
+  useEffect(() => {
+    if (page === 'UserManagement' && authorizationProfile?.role === 'admin') {
+      fetchPendingPortalAccounts();
+    }
+  }, [page, authorizationProfile?.role]);
+
   const displayUserName = profileName.trim() || session?.user?.email || 'Signed-in user';
 
   async function fetchProfile() {
@@ -2021,7 +2081,7 @@ async function signUpWithEmail(event) {
         {page === 'Chat' && <Chat />}
         {page === 'Reports' && <AdvancedReports customers={customers} deals={deals} activities={activities} tickets={tickets} leads={leads} quotes={quotes} invoices={invoices} payments={payments} formatAmount={formatAmount} />}
         {page === 'Email Logs' && <EmailLogs emailLogs={emailLogs} customers={customers} onAdd={addEmailLog} />}
-        {page === 'UserManagement' && <UserManagement users={authorizedUsers} loading={usersLoading} error={usersError} onRefresh={fetchAuthorizedUsers} onUpdateUser={updateAuthorizedUser} currentUserId={session?.user?.id} />}
+        {page === 'UserManagement' && <UserManagement users={authorizedUsers} loading={usersLoading} error={usersError} onRefresh={fetchAuthorizedUsers} onUpdateUser={updateAuthorizedUser} currentUserId={session?.user?.id} pendingPortalAccounts={pendingPortalAccounts} portalRequestsLoading={portalRequestsLoading} portalRequestsError={portalRequestsError} portalRequestsNotice={portalRequestsNotice} onRefreshPortalRequests={fetchPendingPortalAccounts} onReviewPortalRequest={reviewPortalRequest} portalRequestActionId={portalRequestActionId} />}
         {page === 'Settings' && <SettingsPage currency={currency} setCurrency={setCurrency} />}
       </section>
     </main>
@@ -4452,123 +4512,68 @@ function Chat() {
     </div>
   );
 }
-function UserManagement({ users = [], loading = false, error = '', onRefresh, onUpdateUser, currentUserId }) {
+function UserManagement({
+  users = [], loading = false, error = '', onRefresh, onUpdateUser, currentUserId,
+  pendingPortalAccounts = [], portalRequestsLoading = false, portalRequestsError = '', portalRequestsNotice = '',
+  onRefreshPortalRequests, onReviewPortalRequest, portalRequestActionId
+}) {
   return (
     <>
-      <PageHeading
-        eyebrow="ADMIN"
-        title="User Management"
-        description="Manage user accounts and permissions."
-      />
+      <PageHeading eyebrow="ADMIN" title="User Management" description="Manage internal users and customer portal access separately." />
+
       <div className="panel user-management-panel">
         <div className="panel-header">
-          <div>
-            <h3>Authorized Users</h3>
-            <p>View users and their current access permissions.</p>
-          </div>
-          <button
-            type="button"
-            className="secondary-btn"
-            onClick={onRefresh}
-            disabled={loading}
-          >
-            {loading ? 'Refreshing...' : 'Refresh'}
-          </button>
+          <div><h3>Authorized Users</h3><p>Manage internal CRM users and their permissions.</p></div>
+          <button type="button" className="secondary-btn" onClick={onRefresh} disabled={loading}>{loading ? 'Refreshing...' : 'Refresh'}</button>
         </div>
-        {error && (
-          <div className="error-message">
-            {error}
-          </div>
+        {error && <div className="error-message">{error}</div>}
+        {loading ? <p>Loading users...</p> : users.length === 0 ? <p>No authorized users found.</p> : (
+          <div className="table-wrapper"><table className="data-table">
+            <thead><tr><th>Email</th><th>Role</th><th>Status</th><th>Created</th><th>Actions</th></tr></thead>
+            <tbody>{users.map((user) => {
+              const isCurrentUser = user.user_id === currentUserId;
+              return <tr key={user.id}>
+                <td>{user.email}</td>
+                <td><select value={user.role} disabled={isCurrentUser} onChange={(event) => onUpdateUser(user.id, { role: event.target.value })}>
+                  <option value="admin">Admin</option><option value="manager">Manager</option><option value="member">Member</option>
+                </select></td>
+                <td><select value={user.status} disabled={isCurrentUser} onChange={(event) => onUpdateUser(user.id, { status: event.target.value })}>
+                  <option value="pending">Pending</option><option value="active">Active</option><option value="inactive">Inactive</option>
+                </select></td>
+                <td>{user.created_at ? new Date(user.created_at).toLocaleDateString() : '—'}</td>
+                <td>{user.status === 'pending' ? <button type="button" className="primary-btn" onClick={() => onUpdateUser(user.id, { status: 'active' })}>Approve</button> : <span className="user-management-edit-label">{isCurrentUser ? 'Current account' : 'Editable'}</span>}</td>
+              </tr>;
+            })}</tbody>
+          </table></div>
         )}
-        {loading ? (
-          <p>Loading users...</p>
-        ) : users.length === 0 ? (
-          <p>No authorized users found.</p>
-        ) : (
-          <div className="table-wrapper">
-            <table className="data-table">
-              <thead>
-                <tr>
-                  <th>Email</th>
-                  <th>Role</th>
-                  <th>Status</th>
-                  <th>Created</th>
-                  <th>Actions</th>
-                </tr>
-              </thead>
+      </div>
 
-              <tbody>
-                {users.map((user) => {
-                  const isCurrentUser = user.user_id === currentUserId;
-                  return (
-                    <tr key={user.id}>
-                      <td>{user.email}</td>
-
-                      <td>
-                        <select
-                          value={user.role}
-                          disabled={isCurrentUser}
-                          onChange={(event) =>
-                            onUpdateUser(user.id, {
-                              role: event.target.value,
-                            })
-                          }
-                        >
-                          <option value="admin">Admin</option>
-                          <option value="manager">Manager</option>
-                          <option value="member">Member</option>
-                        </select>
-                      </td>
-                      <td>
-                        <select
-                          value={user.status}
-                          disabled={isCurrentUser}
-                          onChange={(event) =>
-                            onUpdateUser(user.id, {
-                              status: event.target.value,
-                            })
-                          }
-                        >
-                          <option value="pending">Pending</option>
-                          <option value="active">Active</option>
-                          <option value="inactive">Inactive</option>
-                        </select>
-                      </td>
-                      <td>
-                        {user.created_at
-                          ? new Date(user.created_at).toLocaleDateString()
-                          : '—'}
-                      </td>
-                      <td>
-                        {user.status === 'pending' ? (
-                          <button
-                            type="button"
-                            className="primary-btn"
-                            onClick={() =>
-                              onUpdateUser(user.id, {
-                                status: 'active',
-                              })
-                            }
-                          >
-                            Approve
-                          </button>
-                        ) : (
-                          <span className="user-management-edit-label">
-                            {isCurrentUser ? 'Current account' : 'Editable'}
-                          </span>
-                        )}
-                      </td>
-                    </tr>
-                  );
-                })}
-              </tbody>
-            </table>
-          </div>
+      <div className="panel user-management-panel pending-customer-access-panel">
+        <div className="panel-header">
+          <div><h3>Pending Customer Access</h3><p>Review portal registrations. Approving creates and links a new customer record; it does not assign an internal staff role.</p></div>
+          <button type="button" className="secondary-btn" onClick={onRefreshPortalRequests} disabled={portalRequestsLoading}>{portalRequestsLoading ? 'Refreshing...' : 'Refresh requests'}</button>
+        </div>
+        {portalRequestsError && <div className="error-message">{portalRequestsError}</div>}
+        {portalRequestsNotice && <div className="success-message">{portalRequestsNotice}</div>}
+        {portalRequestsLoading ? <p>Loading pending customer access...</p> : pendingPortalAccounts.length === 0 ? <p>No pending customer portal registrations.</p> : (
+          <div className="table-wrapper"><table className="data-table">
+            <thead><tr><th>Customer name</th><th>Email</th><th>Registered</th><th>Status</th><th>Actions</th></tr></thead>
+            <tbody>{pendingPortalAccounts.map((request) => <tr key={request.id}>
+              <td>{request.full_name || '—'}</td><td>{request.email}</td>
+              <td>{request.created_at ? new Date(request.created_at).toLocaleDateString() : '—'}</td>
+              <td><span className="portal-request-status">Pending</span></td>
+              <td className="portal-request-actions">
+                <button type="button" className="primary-btn" disabled={portalRequestActionId === request.user_id} onClick={() => onReviewPortalRequest(request.user_id, 'approve')}>{portalRequestActionId === request.user_id ? 'Processing...' : 'Approve & Create Customer'}</button>
+                <button type="button" className="secondary-btn" disabled={portalRequestActionId === request.user_id} onClick={() => onReviewPortalRequest(request.user_id, 'reject')}>Reject</button>
+              </td>
+            </tr>)}</tbody>
+          </table></div>
         )}
       </div>
     </>
   );
 }
+
 function OrbitLogo({ className = "w-8 h-8" }) {
   return (
     <svg

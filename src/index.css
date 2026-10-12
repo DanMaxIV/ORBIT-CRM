@@ -2546,62 +2546,6 @@ tbody tr:last-child td {
 }
 
 
-/* Phase 3: activity priority and assignment */
-.activity-form-grid {
-  display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 12px;
-}
-
-.activity-meta-badges {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 6px;
-  margin: 7px 0 5px;
-}
-
-.priority-pill,
-.assignee-pill {
-  display: inline-flex;
-  align-items: center;
-  width: fit-content;
-  padding: 4px 8px;
-  border-radius: 999px;
-  font-size: 10px;
-  font-weight: 700;
-}
-
-.priority-low {
-  background: #eef2f7;
-  color: #5b6473;
-}
-
-.priority-medium {
-  background: #eaf1ff;
-  color: #3f6fd8;
-}
-
-.priority-high {
-  background: #fff3e4;
-  color: #b7791f;
-}
-
-.priority-urgent {
-  background: #fff0f0;
-  color: #c24141;
-}
-
-.assignee-pill {
-  background: #f0edff;
-  color: #5b48bb;
-}
-
-@media (max-width: 620px) {
-  .activity-form-grid {
-    grid-template-columns: 1fr;
-  }
-}
-
 /* Orbit CRM additions: deal ownership, closure timer, and products */
 .deal-card-owned {
   border-top: 4px solid var(--owner-color, #98a2b3);
@@ -2842,4 +2786,106 @@ tbody tr:last-child td {
   .portal-record-grid { grid-template-columns: 1fr; }
   .portal-section-heading { align-items: flex-start; }
   .portal-signup-modal { max-width: calc(100vw - 28px); padding: 22px; }
+}
+
+/* Pending Customer Access section in admin User Management */
+.pending-customer-access-panel {
+  margin-top: 22px;
+}
+.pending-customer-access-panel .panel-header p {
+  max-width: 680px;
+}
+.portal-request-status {
+  display: inline-flex;
+  align-items: center;
+  padding: 4px 9px;
+  border-radius: 999px;
+  background: #fff7ed;
+  color: #9a3412;
+  font-size: 12px;
+  font-weight: 700;
+  white-space: nowrap;
+}
+.portal-request-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+.portal-request-actions .primary-btn,
+.portal-request-actions .secondary-btn {
+  white-space: nowrap;
+}
+@media (max-width: 720px) {
+  .portal-request-actions {
+    min-width: 190px;
+  }
+  .pending-customer-access-panel .panel-header {
+    align-items: flex-start;
+    gap: 12px;
+  }
+}
+.pending-customer-access-panel .success-message {
+  margin: 12px 0;
+  padding: 10px 12px;
+  border: 1px solid #a7f3d0;
+  border-radius: 8px;
+  background: #ecfdf5;
+  color: #065f46;
+  font-size: 13px;
+}
+
+.activity-form-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+}
+
+.activity-meta-badges {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin: 7px 0 5px;
+}
+
+.priority-pill,
+.assignee-pill {
+  display: inline-flex;
+  align-items: center;
+  width: fit-content;
+  padding: 4px 8px;
+  border-radius: 999px;
+  font-size: 10px;
+  font-weight: 700;
+}
+
+.priority-low {
+  background: #eef2f7;
+  color: #5b6473;
+}
+
+.priority-medium {
+  background: #eaf1ff;
+  color: #3f6fd8;
+}
+
+.priority-high {
+  background: #fff3e4;
+  color: #b7791f;
+}
+
+.priority-urgent {
+  background: #fff0f0;
+  color: #c24141;
+}
+
+.assignee-pill {
+  background: #f0edff;
+  color: #5b48bb;
+}
+
+@media (max-width: 620px) {
+  .activity-form-grid {
+    grid-template-columns: 1fr;
+  }
 }
