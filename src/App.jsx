@@ -2,13 +2,15 @@ import { useEffect, useMemo, useState, useRef } from 'react';
 import { supabase } from './lib/supabase';
 import { LayoutDashboard, Users, Kanban, CalendarCheck, BarChart3, Settings, Bell, Search, Plus, ArrowUpRight, MoreHorizontal, Menu, X, UserRound, Pencil, Receipt, LogOut, UserCog, MessageCircle, UserPlus, Mail, CalendarDays, FileText, Workflow, TrendingUp, Tags, DollarSign, CreditCard, Upload, Download, Play, Target, CheckCircle2 } from 'lucide-react';
 
-function AuthScreen({ onGoogleSignIn, onEmailSignIn, onEmailSignUp, authMode, setAuthMode, email, setEmail, password, setPassword,
+function AuthScreen({ onGoogleSignIn, onEmailSignIn, onEmailSignUp, onPortalSignUp, authMode, setAuthMode, email, setEmail, password, setPassword,
   error,
   notice,
   loading
 }) {
 
   const [showSignupModal, setShowSignupModal] = useState(false);
+  const [showPortalSignup, setShowPortalSignup] = useState(false);
+  const [portalFullName, setPortalFullName] = useState('');
 
   return (
     <div className="auth-page">
@@ -114,8 +116,14 @@ function AuthScreen({ onGoogleSignIn, onEmailSignIn, onEmailSignUp, authMode, se
           {loading ? 'Signing in...' : 'Continue with Google'}
         </button>
 
+        <div className="portal-auth-entry">
+          <span>Are you a customer?</span>
+          <button type="button" className="auth-toggle-btn" onClick={() => setShowPortalSignup(true)} disabled={loading}>
+            Create a customer portal account
+          </button>
+        </div>
         <p className="auth-footer">
-          Access is restricted to authorized Orbit CRM users.
+          Access to the internal CRM is restricted to authorized Orbit CRM users.
         </p>
       </div>
 
@@ -205,6 +213,163 @@ function AuthScreen({ onGoogleSignIn, onEmailSignIn, onEmailSignUp, authMode, se
           </form>
         </div>
       )}
+
+      {showPortalSignup && (
+        <div className="modal-backdrop signup-backdrop" onClick={() => setShowPortalSignup(false)}>
+          <form
+            className="modal signup-modal portal-signup-modal"
+            onSubmit={async (event) => {
+              event.preventDefault();
+              const succeeded = await onPortalSignUp(event, portalFullName);
+              if (succeeded) setShowPortalSignup(false);
+            }}
+            onClick={(event) => event.stopPropagation()}
+          >
+            <div className="modal-heading">
+              <div>
+                <h2>Customer portal</h2>
+                <p>Create an account to access information your company has shared with you.</p>
+              </div>
+              <button type="button" className="icon-btn" onClick={() => setShowPortalSignup(false)} aria-label="Close customer portal registration"><X size={18} /></button>
+            </div>
+            {error && <div className="auth-error" role="alert">{error}</div>}
+            {notice && <div className="auth-notice" role="status">{notice}</div>}
+            <label>
+              Full name
+              <input type="text" autoComplete="name" placeholder="Your full name" value={portalFullName} onChange={(event) => setPortalFullName(event.target.value)} required />
+            </label>
+            <label>
+              Email address
+              <input type="email" autoComplete="email" placeholder="you@company.com" value={email} onChange={(event) => setEmail(event.target.value)} required />
+            </label>
+            <label>
+              Password
+              <input type="password" autoComplete="new-password" placeholder="At least 6 characters" value={password} onChange={(event) => setPassword(event.target.value)} minLength={6} required />
+            </label>
+            <p className="portal-signup-help">We’ll email you a verification link. For your security, your portal will only show records linked to your verified customer account and shared by the Orbit CRM team.</p>
+            <button type="submit" className="primary-btn" disabled={loading}>{loading ? 'Creating account...' : 'Create customer account'}</button>
+            <p className="authSignUp">Already registered? <button type="button" className="auth-toggle-btn" onClick={() => setShowPortalSignup(false)} disabled={loading}>Return to sign in</button></p>
+          </form>
+        </div>
+      )}
+    </div>
+  );
+}
+
+function PortalStatusScreen({ account, email, onSignOut }) {
+  const needsVerification = !account;
+  const isActive = account?.status === 'active';
+  return (
+    <div className="auth-page">
+      <div className="auth-card portal-status-card">
+        <div className="auth-brand"><div className="brand-mark"><OrbitLogo /></div><span>orbit<span className="brand-accent">CRM</span></span></div>
+        <div className="portal-status-icon">{needsVerification ? '✉' : isActive ? 'O' : '✓'}</div>
+        <div className="auth-heading">
+          <h1>{needsVerification ? 'Check your email' : isActive ? 'Finish setting up your portal' : 'Portal access pending'}</h1>
+          <p>{needsVerification
+            ? 'Please verify your email address using the link we sent. If you have already verified it, sign out and sign back in to finish portal setup.'
+            : isActive
+              ? 'Your account is linked. Your customer dashboard is being prepared.'
+              : 'Your email is verified, but we could not safely match it to exactly one customer record. The Orbit CRM team must link your account before any customer data is shown.'}</p>
+        </div>
+        <p className="portal-status-email">{email || account?.email || ''}</p>
+        <button type="button" className="primary-btn" onClick={onSignOut}>Sign out</button>
+      </div>
+    </div>
+  );
+}
+
+function CustomerPortalHome({ user, account, onSignOut }) {
+  const [customer, setCustomer] = useState(null);
+  const [records, setRecords] = useState([]);
+  const [portalLoading, setPortalLoading] = useState(true);
+  const [portalError, setPortalError] = useState('');
+
+  useEffect(() => {
+    let cancelled = false;
+    async function loadPortalData() {
+      setPortalLoading(true);
+      setPortalError('');
+      try {
+        const { data: accountData, error: accountError } = await supabase
+          .from('customer_portal_accounts')
+          .select('customer_id, full_name, email, status')
+          .eq('user_id', user.id)
+          .maybeSingle();
+        if (accountError) throw accountError;
+        if (!accountData || accountData.status !== 'active' || !accountData.customer_id) {
+          throw new Error('Your portal account is not linked to an active customer record yet.');
+        }
+
+        const { data: customerData, error: customerError } = await supabase
+          .from('customers')
+          .select('id, name, company, email, status, created_at')
+          .eq('id', accountData.customer_id)
+          .maybeSingle();
+        if (customerError) throw customerError;
+        if (!customerData) throw new Error('Your linked customer record could not be found. Please contact your account manager.');
+
+        const { data: shared, error: sharedError } = await supabase
+          .from('customer_portal_shared_records')
+          .select('record_type, record_id, created_at')
+          .eq('customer_id', accountData.customer_id)
+          .order('created_at', { ascending: false });
+        if (sharedError) throw sharedError;
+
+        const grouped = { deal: [], quote: [], invoice: [], document: [] };
+        (shared || []).forEach((record) => {
+          if (grouped[record.record_type]) grouped[record.record_type].push(record.record_id);
+        });
+        const fetched = [];
+        const configs = [
+          ['deal', 'deals', 'id,title,stage,amount,created_at'],
+          ['quote', 'quotes', 'id,title,quote_number,status,amount,created_at'],
+          ['invoice', 'invoices', 'id,title,invoice_number,status,amount,created_at'],
+          ['document', 'documents', 'id,name,mime_type,created_at']
+        ];
+        for (const [type, table, columns] of configs) {
+          if (!grouped[type].length) continue;
+          const { data, error } = await supabase.from(table).select(columns).in('id', grouped[type]);
+          if (error) throw error;
+          (data || []).forEach((row) => fetched.push({ ...row, portalType: type }));
+        }
+        fetched.sort((a, b) => new Date(b.created_at || 0) - new Date(a.created_at || 0));
+        if (!cancelled) {
+          setCustomer(customerData);
+          setRecords(fetched);
+        }
+      } catch (error) {
+        if (!cancelled) setPortalError(error.message || 'Unable to load your customer portal.');
+      } finally {
+        if (!cancelled) setPortalLoading(false);
+      }
+    }
+    loadPortalData();
+    return () => { cancelled = true; };
+  }, [user.id]);
+
+  const money = (value) => new Intl.NumberFormat('en-NG', { style: 'currency', currency: 'NGN', maximumFractionDigits: 0 }).format(Number(value) || 0);
+  const date = (value) => value ? new Date(value).toLocaleDateString(undefined, { year: 'numeric', month: 'short', day: 'numeric' }) : '—';
+  const titleFor = (record) => record.portalType === 'deal' ? record.title : record.portalType === 'quote' ? (record.title || record.quote_number || 'Quote') : record.portalType === 'invoice' ? (record.title || record.invoice_number || 'Invoice') : (record.name || 'Document');
+  const metaFor = (record) => record.portalType === 'deal' ? `${record.stage || 'In progress'} · ${money(record.amount)}` : record.portalType === 'quote' ? `${record.quote_number || 'Quote'} · ${record.status || 'Shared'} · ${money(record.amount)}` : record.portalType === 'invoice' ? `${record.invoice_number || 'Invoice'} · ${record.status || 'Shared'} · ${money(record.amount)}` : (record.mime_type || 'Shared document');
+
+  return (
+    <div className="customer-portal-shell">
+      <header className="customer-portal-topbar">
+        <div className="auth-brand"><div className="brand-mark"><OrbitLogo /></div><span>orbit<span className="brand-accent">CRM</span></span></div>
+        <div className="customer-portal-top-actions"><span>{account?.full_name || user.email}</span><button type="button" className="secondary-btn" onClick={onSignOut}><LogOut size={15} /> Sign out</button></div>
+      </header>
+      <main className="customer-portal-content">
+        <div className="customer-portal-welcome"><div><span className="portal-eyebrow">CUSTOMER PORTAL</span><h1>Welcome{account?.full_name ? `, ${account.full_name.split(' ')[0]}` : ''}</h1><p>View the information your Orbit CRM team has shared with you.</p></div><div className="portal-customer-mark">{(customer?.name || account?.full_name || user.email || 'C').slice(0, 1).toUpperCase()}</div></div>
+        {portalError && <div className="auth-error" role="alert">{portalError}</div>}
+        {portalLoading ? <div className="panel portal-loading">Loading your customer information…</div> : customer && <>
+          <section className="portal-customer-card"><div><span>ACCOUNT</span><h2>{customer.company || customer.name}</h2><p>{customer.name}{customer.email ? ` · ${customer.email}` : ''}</p></div><div><span>STATUS</span><strong>{customer.status || 'Active'}</strong></div><div><span>CUSTOMER SINCE</span><strong>{date(customer.created_at)}</strong></div></section>
+          <section className="portal-records-section"><div className="portal-section-heading"><div><h2>Shared with you</h2><p>Only records your team has chosen to share appear here.</p></div><span className="portal-record-count">{records.length} records</span></div>
+            {records.length === 0 ? <div className="panel portal-empty-state"><div className="portal-empty-mark">O</div><h3>No shared records yet</h3><p>Your quotes, invoices, project updates and documents will appear here when your team shares them.</p></div> : <div className="portal-record-grid">{records.map((record) => <article className="portal-record-card" key={`${record.portalType}-${record.id}`}><div className="portal-record-type">{record.portalType}</div><h3>{titleFor(record)}</h3><p>{metaFor(record)}</p><time>{date(record.created_at)}</time></article>)}</div>}
+          </section>
+        </>}
+      </main>
+      <footer className="customer-portal-footer">Orbit CRM · Secure customer access</footer>
     </div>
   );
 }
@@ -239,6 +404,9 @@ function App() {
   const [authorized, setAuthorized] = useState(false);
   const [authorizationLoading, setAuthorizationLoading] = useState(true);
   const [authorizationProfile, setAuthorizationProfile] = useState(null);
+  const [portalAccount, setPortalAccount] = useState(null);
+  const [portalSetupPending, setPortalSetupPending] = useState(false);
+  const [portalSignUpName, setPortalSignUpName] = useState('');
   const [authorizedUsers, setAuthorizedUsers] = useState([]);
   const [usersLoading, setUsersLoading] = useState(false);
   const [usersError, setUsersError] = useState('');
@@ -442,55 +610,140 @@ function App() {
     }
   }
   async function signInWithEmail(event) {
-    event.preventDefault();
-    justSignedUp.current = false;
-    setAuthError('');
-    setAuthNotice('');
-    if (!email.trim() || !password) {
-      setAuthError('Please enter your email and password.');
-      return;
-    }
-    setEmailLoading(true);
-    const { error } = await supabase.auth.signInWithPassword({
-      email: email.trim(),
+  event.preventDefault();
+  justSignedUp.current = false;
+  setAuthError('');
+  setAuthNotice('');
+
+  const trimmedEmail = email.trim();
+  if (!trimmedEmail || !password) {
+    setAuthError('Please enter both your email address and password.');
+    return;
+  }
+
+  setEmailLoading(true);
+
+  try {
+    const { data, error } = await supabase.auth.signInWithPassword({
+      email: trimmedEmail,
       password
     });
 
     if (error) {
       console.error('Email sign-in error:', error);
       setAuthError(error.message);
+    } else if (data?.user) {
+      // Re-verify workspace authorization status
+      await checkAuthorization(data.session);
     }
+  } catch (err) {
+    console.error('Unexpected sign-in error:', err);
+    setAuthError('An unexpected error occurred during sign in.');
+  } finally {
     setEmailLoading(false);
   }
-  async function signUpWithEmail(event) {
-    event.preventDefault();
-    setAuthError('');
-    setAuthNotice('');
+}
 
-    if (!email.trim() || !password) {
-      setAuthError('Please enter your email and password.');
-      return;
-    }
+async function signUpWithEmail(event) {
+  event.preventDefault();
+  setAuthError('');
+  setAuthNotice('');
 
-    setEmailLoading(true);
+  const trimmedEmail = email.trim();
+  if (!trimmedEmail || !password) {
+    setAuthError('Please enter both an email address and a password.');
+    return;
+  }
 
-    const { error } = await supabase.auth.signUp({
-      email: email.trim(),
+  if (password.length < 6) {
+    setAuthError('Password must be at least 6 characters long.');
+    return;
+  }
+
+  setEmailLoading(true);
+
+  try {
+    // 1. Create Supabase Auth user
+    const { data: authData, error: signUpError } = await supabase.auth.signUp({
+      email: trimmedEmail,
       password
     });
 
-    if (error) {
-      console.error('Email signup error:', error);
-      setAuthError(error.message);
-    } else {
-      justSignedUp.current = true;
-      setAuthNotice(
-        'Account created. Check your email if confirmation is required. An administrator must approve your account before you can sign in.'
-      );
-      await supabase.auth.signOut();
+    if (signUpError) {
+      console.error('Email signup error:', signUpError);
+      setAuthError(signUpError.message);
+      return;
     }
 
+    const newUser = authData?.user;
+
+    if (newUser) {
+      // 2. Insert user into authorized_users as 'pending' for admin approval
+      const { error: insertError } = await supabase
+        .from('authorized_users')
+        .insert([
+          {
+            user_id: newUser.id,
+            email: trimmedEmail,
+            role: 'member',
+            status: 'pending'
+          }
+        ]);
+
+      if (insertError) {
+        console.warn('Could not provision authorized_users entry:', insertError.message);
+      }
+    }
+
+    justSignedUp.current = true;
+    setAuthNotice(
+      'Account created successfully! Check your inbox if email confirmation is required. An administrator must approve your account access before you can log in.'
+    );
+
+    // Sign out until approval is granted
+    await supabase.auth.signOut();
+    setPassword('');
+  } catch (err) {
+    console.error('Unexpected signup error:', err);
+    setAuthError('An unexpected error occurred while creating your account.');
+  } finally {
     setEmailLoading(false);
+  }
+}
+  async function signUpCustomerPortal(event, fullName) {
+    setAuthError('');
+    setAuthNotice('');
+    const trimmedEmail = email.trim().toLowerCase();
+    if (!trimmedEmail || !password || !fullName.trim()) {
+      setAuthError('Please enter your name, email address and password.');
+      return false;
+    }
+    if (password.length < 6) {
+      setAuthError('Password must be at least 6 characters long.');
+      return false;
+    }
+    setEmailLoading(true);
+    try {
+      const { error } = await supabase.auth.signUp({
+        email: trimmedEmail,
+        password,
+        options: {
+          emailRedirectTo: `${window.location.origin}/?portal=1`,
+          data: { account_type: 'customer_portal', full_name: fullName.trim() }
+        }
+      });
+      if (error) throw error;
+      setAuthNotice('Customer account created. Check your email and open the verification link to continue. If your email does not match exactly one existing customer record, the Orbit CRM team will link your account before any customer data is shown.');
+      setPassword('');
+      setPortalSignUpName(fullName.trim());
+      return true;
+    } catch (error) {
+      console.error('Customer portal sign-up error:', error);
+      setAuthError(error.message || 'Unable to create your customer portal account.');
+      return false;
+    } finally {
+      setEmailLoading(false);
+    }
   }
   const resetWorkspace = () => {
     setPage('Dashboard');
@@ -501,6 +754,8 @@ function App() {
     setNotifications([]);
     setUnreadNotificationCount(0);
     setAuthorizedUsers([]);
+    setPortalAccount(null);
+    setPortalSetupPending(false);
     setSelectedCustomer(null);
     setShowNotifications(false);
   };
@@ -517,39 +772,87 @@ function App() {
     if (!currentSession?.user) {
       setAuthorized(false);
       setAuthorizationProfile(null);
+      setPortalAccount(null);
+      setPortalSetupPending(false);
       setAuthorizationLoading(false);
       return;
     }
 
     if (!silent) setAuthorizationLoading(true);
+    setPortalAccount(null);
+    setPortalSetupPending(false);
 
     const { data, error } = await supabase
-      .from("authorized_users")
-      .select("role, status")
-      .eq("user_id", currentSession.user.id)
+      .from('authorized_users')
+      .select('role, status')
+      .eq('user_id', currentSession.user.id)
       .maybeSingle();
 
     if (error) {
-      console.error("Authorization check failed:", error);
-      setAuthError("Unable to verify your account access.");
+      console.error('Authorization check failed:', error);
+      setAuthError('Unable to verify your account access.');
       setAuthorized(false);
       setAuthorizationProfile(null);
       setAuthorizationLoading(false);
       return;
     }
 
-    const hasAccess = data?.status === "active";
-    setAuthorized(hasAccess);
-    setAuthorizationProfile(hasAccess ? data : null);
-    setAuthorizationLoading(false);
+    if (data?.status === 'active') {
+      setAuthorized(true);
+      setAuthorizationProfile(data);
+      setPortalAccount(null);
+      setPortalSetupPending(false);
+      setAuthorizationLoading(false);
+      return;
+    }
 
-    if (!hasAccess) {
-      await supabase.auth.signOut();
-      if (!justSignedUp.current) {
-        setAuthError(
-          "Your account has not been approved yet. Please contact your administrator."
-        );
+    setAuthorized(false);
+    setAuthorizationProfile(null);
+
+    // Only accounts explicitly created for the customer portal may use this path.
+    // Ordinary internal CRM sign-ups continue to require staff approval.
+    if (currentSession.user.user_metadata?.account_type === 'customer_portal') {
+      try {
+        let { data: account, error: accountError } = await supabase
+          .from('customer_portal_accounts')
+          .select('user_id, customer_id, email, full_name, status, registration_source')
+          .eq('user_id', currentSession.user.id)
+          .maybeSingle();
+        if (accountError) throw accountError;
+
+        if (!account && currentSession.user.email_confirmed_at) {
+          const { error: completionError } = await supabase.rpc('complete_customer_portal_signup', {
+            p_full_name: currentSession.user.user_metadata?.full_name || portalSignUpName || null
+          });
+          if (completionError) throw completionError;
+          const refreshed = await supabase
+            .from('customer_portal_accounts')
+            .select('user_id, customer_id, email, full_name, status, registration_source')
+            .eq('user_id', currentSession.user.id)
+            .maybeSingle();
+          if (refreshed.error) throw refreshed.error;
+          account = refreshed.data;
+        }
+
+        setPortalAccount(account || null);
+        setPortalSetupPending(!account);
+        setAuthorizationLoading(false);
+        if (!account) setAuthNotice('Please verify your email address. If you have already verified it, sign out and sign back in to finish portal setup.');
+        return;
+      } catch (portalError) {
+        console.error('Customer portal authorization check failed:', portalError);
+        setPortalAccount(null);
+        setPortalSetupPending(true);
+        setAuthError(portalError.message || 'Unable to finish customer portal setup.');
+        setAuthorizationLoading(false);
+        return;
       }
+    }
+
+    setAuthorizationLoading(false);
+    await supabase.auth.signOut();
+    if (!justSignedUp.current) {
+      setAuthError('Your internal CRM account has not been approved yet. Please contact your administrator.');
     }
   };
   const fetchCustomers = async () => {
@@ -1446,12 +1749,21 @@ function App() {
       </div>
     );
   }
+  if (session?.user && portalAccount?.status === 'active' && !authorized) {
+    return <CustomerPortalHome user={session.user} account={portalAccount} onSignOut={handleSignOut} />;
+  }
+
+  if (session?.user && !authorized && (portalAccount || portalSetupPending)) {
+    return <PortalStatusScreen account={portalAccount} email={session.user.email} onSignOut={handleSignOut} />;
+  }
+
   if (!session || !authorized) {
     return (
       <AuthScreen
         onGoogleSignIn={signInWithGoogle}
         onEmailSignIn={signInWithEmail}
         onEmailSignUp={signUpWithEmail}
+        onPortalSignUp={signUpCustomerPortal}
         authMode={authMode}
         setAuthMode={setAuthMode}
         email={email}
@@ -1465,7 +1777,7 @@ function App() {
     );
   }
 
-  // The rendering of the entire page is done here
+  // The rendering of the internal CRM workspace is done here
   return <div className="app-shell">
     <aside className={`sidebar ${sidebarOpen ? 'sidebar-open' : ''}`}>
       <div className="brand">
@@ -2625,11 +2937,16 @@ const closureTimerText = endAt => {
 };
 
 const ownerColor = userId => {
-  const palette = ['#7c3aed', '#2563eb', '#059669', '#dc2626', '#d97706', '#db2777', '#0891b2', '#4f46e5', '#65a30d', '#9333ea', '#ea580c', '#0f766e'];
   if (!userId) return '#98a2b3';
+  
   let hash = 0;
-  for (let i = 0; i < userId.length; i++) hash = ((hash << 5) - hash) + userId.charCodeAt(i);
-  return palette[Math.abs(hash) % palette.length];
+  for (let i = 0; i < userId.length; i++) {
+    hash = ((hash << 5) - hash) + userId.charCodeAt(i);
+  }
+  
+  const hue = Math.abs(hash) % 360;
+  
+  return `hsl(${hue}, 65%, 50%)`;
 };
 
 const trend = (current, previous) => {
@@ -3277,9 +3594,7 @@ function Tickets({ tickets, error, onAdd, onStatusChange, onDelete, onEdit, onVi
           <button type="button" className="secondary-btn" onClick={onAdd}>Create your first ticket</button>
         </div> : filtered.length === 0 ? <div className="empty-state"><p>No tickets match your filters.</p></div> : <div className="table-wrap"><table><thead><tr><th>Ticket</th><th>Customer</th><th>Priority</th><th>Status</th><th>Created</th><th>Actions</th></tr></thead><tbody>{filtered.map(ticket => { const canEdit = isAdmin || ticket.created_by === currentUserId; return <tr key={ticket.id}><td><button type="button" className="text-btn" onClick={() => onView(ticket)}><strong>{ticket.title}</strong></button><div className="deal-customer">{ticket.category || 'General'}</div></td><td>{ticket.customers?.name || 'Unassigned'}</td><td><span className={`status ${(ticket.priority || 'medium').toLowerCase()}`}>{ticket.priority || 'Medium'}</span></td><td><select className="ticket-status-select" value={ticket.status} onChange={e => onStatusChange(ticket.id, e.target.value)} disabled={!canEdit}><option value="Open">Open</option><option value="In Progress">In Progress</option><option value="Resolved">Resolved</option><option value="Closed">Closed</option></select></td><td>{formatDate(ticket.created_at)}</td><td><div className="toolbar-actions"><button type="button" className="secondary-btn" onClick={() => onView(ticket)}>View</button>{canEdit && <button type="button" className="secondary-btn" onClick={() => onEdit(ticket)}><Pencil size={14} /> Edit</button>}{canEdit && <button type="button" className="icon-btn" title="Delete ticket" onClick={() => onDelete(ticket.id)}><X size={16} /></button>}</div></td></tr> })}</tbody></table></div>}</div></>;
 }
-
 function TicketDetail({ ticket, onClose, onEdit }) { return <div className="modal-backdrop" onClick={onClose}><div className="modal modal-wide" onClick={e => e.stopPropagation()}><div className="modal-heading"><div><h2>{ticket.title}</h2><p>{ticket.category || 'General'} · {ticket.status || 'Open'}</p></div><div className="toolbar-actions"><button type="button" className="secondary-btn" onClick={() => onEdit(ticket)}><Pencil size={14} /> Edit</button><button type="button" className="icon-btn" onClick={onClose}><X size={18} /></button></div></div><div className="detail-grid"><div><small>Customer</small><p>{ticket.customers?.name || 'Unassigned'}</p></div><div><small>Company</small><p>{ticket.customers?.company || '—'}</p></div><div><small>Priority</small><p>{ticket.priority || 'Medium'}</p></div><div><small>Status</small><p>{ticket.status || 'Open'}</p></div><div><small>Category</small><p>{ticket.category || 'General'}</p></div><div><small>Created</small><p>{formatDate(ticket.created_at)}</p></div></div><h3 className="detail-title">Description</h3><p className="detail-empty" style={{ whiteSpace: 'pre-wrap' }}>{ticket.description || 'No description added.'}</p></div></div>; }
-
 function BarRow({ label, percent, display }) {
   return (
     <div className="report-row wide">
@@ -3445,7 +3760,6 @@ function Leads({ leads, customers, onAdd, onUpdate, onDelete, currentUserId, isA
               )}
             </tbody></table></div>}</div>{show && <div className="modal-backdrop" onClick={() => setShow(false)}><form className="modal" onSubmit={save} onClick={e => e.stopPropagation()}><div className="modal-heading"><h2>{editing ? 'Edit lead' : 'New lead'}</h2><button type="button" className="icon-btn" onClick={() => setShow(false)}><X size={18} /></button></div>{[['name', 'Name'], ['email', 'Email'], ['phone', 'Phone'], ['company', 'Company']].map(([k, l]) => <label key={k}>{l}<input value={form[k]} onChange={e => setForm({ ...form, [k]: e.target.value })} required={k === 'name' || k === 'email'} /></label>)}<label>Source<select value={form.source} onChange={e => setForm({ ...form, source: e.target.value })}>{['Website', 'Referral', 'Social', 'Campaign', 'Cold outreach', 'Other'].map(x => <option key={x}>{x}</option>)}</select></label><label>Status<select value={form.status} onChange={e => setForm({ ...form, status: e.target.value })}>{['New', 'Contacted', 'Qualified', 'Unqualified', 'Converted'].map(x => <option key={x}>{x}</option>)}</select></label><label>Convert/link customer<select value={form.customer_id} onChange={e => setForm({ ...form, customer_id: e.target.value })}><option value="">None</option>{customers.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}</select></label><div className="modal-actions"><button type="button" className="secondary-btn" onClick={() => setShow(false)}>Cancel</button><button className="primary-btn">Save lead</button></div></form></div>}</>;
 }
-
 function EmailPage({ emailLogs, customers, integrations, loading, error, onConnect, onDisconnect, onAdd }) {
   const [showLog, setShowLog] = useState(false);
   useEffect(() => { const handler = () => setShowLog(true); window.addEventListener('orbit-open-email-log', handler); return () => window.removeEventListener('orbit-open-email-log', handler); }, []);
@@ -3462,7 +3776,6 @@ function EmailPage({ emailLogs, customers, integrations, loading, error, onConne
     <div className="panel"><div className="panel-heading"><div><h3>CRM Email Log</h3><p>Manual and synchronized communication history.</p></div><button className="secondary-btn" onClick={() => setShowLog(true)}>Log email</button></div><EmailLogs emailLogs={emailLogs} customers={customers} onAdd={async payload => { await onAdd(payload); setShowLog(false); }} openExternally={showLog} onCloseExternal={() => setShowLog(false)} /></div>
   </>;
 }
-
 function EmailLogs({ emailLogs, customers, onAdd, openExternally = false, onCloseExternal }) {
   const [show, setShow] = useState(openExternally);
   useEffect(() => { if (openExternally) setShow(true) }, [openExternally]);
@@ -3536,7 +3849,6 @@ function EmailLogs({ emailLogs, customers, onAdd, openExternally = false, onClos
     }
   </>
 }
-
 function CalendarPage({ events, customers, onAdd, onUpdate, onDelete }) {
   const [show, setShow] = useState(false); const [editing, setEditing] = useState(null);
   const blank = { title: '', description: '', start_at: '', end_at: '', event_type: 'Meeting', customer_id: '', location: '', status: 'Scheduled' };
@@ -3601,7 +3913,6 @@ function CalendarPage({ events, customers, onAdd, onUpdate, onDelete }) {
       <label>Title<input required value={form.title} onChange={e => setForm({ ...form, title: e.target.value })} /></label>
       <label>Customer<select value={form.customer_id} onChange={e => setForm({ ...form, customer_id: e.target.value })}><option value="">None</option>{customers.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}</select></label><label>Start<input type="datetime-local" required value={form.start_at || ''} onChange={e => setForm({ ...form, start_at: e.target.value })} /></label><label>End<input type="datetime-local" value={form.end_at || ''} onChange={e => setForm({ ...form, end_at: e.target.value })} /></label><label>Type<select value={form.event_type} onChange={e => setForm({ ...form, event_type: e.target.value })}>{['Meeting', 'Call', 'Demo', 'Task', 'Other'].map(x => <option key={x}>{x}</option>)}</select></label><label>Location<input value={form.location || ''} onChange={e => setForm({ ...form, location: e.target.value })} /></label><label>Description<textarea value={form.description || ''} onChange={e => setForm({ ...form, description: e.target.value })} /></label><div className="modal-actions"><button type="button" className="secondary-btn" onClick={() => setShow(false)}>Cancel</button><button className="primary-btn">Save event</button></div></form></div>}</>
 }
-
 function Quotes({ quotes, customers, onAdd, onUpdate, formatAmount, currentUserId, isAdmin }) { const [show, setShow] = useState(false); const [editing, setEditing] = useState(null); const blank = { title: '', quote_number: `Q-${Date.now().toString().slice(-6)}`, customer_id: '', amount: 0, status: 'Draft', valid_until: '', notes: '' }; const [form, setForm] = useState(blank); const save = async e => { e.preventDefault(); try { if (editing) await onUpdate(editing.id, form); else await onAdd(form); setShow(false); setEditing(null) } catch (err) { alert(err.message) } }; return <><PageHeading eyebrow="SALES OPERATIONS" title="Quotes" description="Create and track customer quotations." action="New quote" onAction={() => { setEditing(null); setForm({ ...blank, quote_number: `Q-${Date.now().toString().slice(-6)}` }); setShow(true) }} /><div className="panel"><div className="table-wrap"><table><thead><tr><th>Quote</th><th>Customer</th><th>Amount</th><th>Status</th><th>Valid until</th><th>Actions</th></tr></thead><tbody>{quotes.length === 0 ? <tr><td colSpan="6">No quotes yet.</td></tr> : quotes.map(q => <tr key={q.id}><td><strong>{q.quote_number}</strong><div className="deal-customer">{q.title}</div></td><td>{q.customers?.name || '—'}</td><td>{formatAmount(q.amount)}</td><td>{q.status}</td><td>{q.valid_until ? formatDate(q.valid_until) : '—'}</td><td>{(isAdmin || q.created_by === currentUserId) && <button className="secondary-btn" onClick={() => { setEditing(q); setForm(q); setShow(true) }}>Edit</button>}</td></tr>)}</tbody></table></div></div>{show && <div className="modal-backdrop" onClick={() => setShow(false)}><form className="modal" onSubmit={save} onClick={e => e.stopPropagation()}><div className="modal-heading"><h2>{editing ? 'Edit quote' : 'New quote'}</h2><button type="button" className="icon-btn" onClick={() => setShow(false)}><X size={18} /></button></div><label>Quote number<input required value={form.quote_number} onChange={e => setForm({ ...form, quote_number: e.target.value })} /></label><label>Title<input required value={form.title} onChange={e => setForm({ ...form, title: e.target.value })} /></label><label>Customer<select value={form.customer_id} onChange={e => setForm({ ...form, customer_id: e.target.value })}><option value="">None</option>{customers.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}</select></label><label>Amount<input type="number" min="0" value={form.amount} onChange={e => setForm({ ...form, amount: Number(e.target.value) })} /></label><label>Status<select value={form.status} onChange={e => setForm({ ...form, status: e.target.value })}>{['Draft', 'Sent', 'Accepted', 'Rejected', 'Expired'].map(x => <option key={x}>{x}</option>)}</select></label><label>Valid until<input type="date" value={form.valid_until || ''} onChange={e => setForm({ ...form, valid_until: e.target.value })} /></label><label>Notes<textarea value={form.notes || ''} onChange={e => setForm({ ...form, notes: e.target.value })} /></label><div className="modal-actions"><button type="button" className="secondary-btn" onClick={() => setShow(false)}>Cancel</button><button className="primary-btn">Save quote</button></div></form></div>}</> }
 
 function Invoices({ invoices, payments, customers, onAdd, onUpdate, onAddPayment, formatAmount, currentUserId, isAdmin }) { const [show, setShow] = useState(false); const [pay, setPay] = useState(null); const blank = { invoice_number: `INV-${Date.now().toString().slice(-6)}`, title: '', customer_id: '', amount: 0, due_date: '', status: 'Draft', notes: '' }; const [form, setForm] = useState(blank); const save = async e => { e.preventDefault(); try { await onAdd(form); setShow(false) } catch (err) { alert(err.message) } }; const paymentSave = async e => { e.preventDefault(); try { await onAddPayment({ ...pay, payment_method: pay.payment_method || 'Bank transfer' }); setPay(null) } catch (err) { alert(err.message) } }; return <><PageHeading eyebrow="BILLING" title="Invoices & payments" description="Track invoices, balances and payments." action="New invoice" onAction={() => { setForm({ ...blank, invoice_number: `INV-${Date.now().toString().slice(-6)}` }); setShow(true) }} /><div className="stats-grid"><StatCard label="Invoiced" value={formatAmount(invoices.reduce((s, x) => s + Number(x.amount || 0), 0))} hint={`${invoices.length} invoices`} tone="blue" icon="$" /><StatCard label="Paid" value={formatAmount(payments.reduce((s, x) => s + Number(x.amount || 0), 0))} hint={`${payments.length} payments`} tone="green" icon="✓" /><StatCard label="Outstanding" value={formatAmount(invoices.filter(x => !['Paid', 'Cancelled'].includes(x.status)).reduce((s, x) => s + Number(x.amount || 0), 0))} hint="Open balances" tone="orange" icon="!" /></div><div className="panel"><div className="table-wrap"><table><thead><tr><th>Invoice</th><th>Customer</th><th>Amount</th><th>Status</th><th>Due</th><th>Actions</th></tr></thead><tbody>{invoices.length === 0 ? <tr><td colSpan="6">No invoices yet.</td></tr> : invoices.map(i => <tr key={i.id}><td><strong>{i.invoice_number}</strong><div className="deal-customer">{i.title}</div></td><td>{i.customers?.name || '—'}</td><td>{formatAmount(i.amount)}</td><td>{i.status}</td><td>{i.due_date ? formatDate(i.due_date) : '—'}</td><td><div className="toolbar-actions">{(isAdmin || i.created_by === currentUserId) && <button className="secondary-btn" onClick={() => onUpdate(i.id, { status: i.status === 'Paid' ? 'Sent' : 'Paid' })}>{i.status === 'Paid' ? 'Reopen' : 'Mark paid'}</button>}{i.status !== 'Paid' && <button className="secondary-btn" onClick={() => setPay({ invoice_id: i.id, amount: i.amount, paid_at: new Date().toISOString().slice(0, 16), payment_method: 'Bank transfer' })}>Record payment</button>}</div></td></tr>)}</tbody></table></div></div>{show && <div className="modal-backdrop" onClick={() => setShow(false)}><form className="modal" onSubmit={save} onClick={e => e.stopPropagation()}><div className="modal-heading"><h2>New invoice</h2><button type="button" className="icon-btn" onClick={() => setShow(false)}><X size={18} /></button></div><label>Invoice number<input required value={form.invoice_number} onChange={e => setForm({ ...form, invoice_number: e.target.value })} /></label><label>Title<input required value={form.title} onChange={e => setForm({ ...form, title: e.target.value })} /></label><label>Customer<select value={form.customer_id} onChange={e => setForm({ ...form, customer_id: e.target.value })}><option value="">None</option>{customers.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}</select></label><label>Amount<input type="number" min="0" value={form.amount} onChange={e => setForm({ ...form, amount: Number(e.target.value) })} /></label><label>Due date<input type="date" value={form.due_date || ''} onChange={e => setForm({ ...form, due_date: e.target.value })} /></label><label>Status<select value={form.status} onChange={e => setForm({ ...form, status: e.target.value })}>{['Draft', 'Sent', 'Partially Paid', 'Paid', 'Overdue', 'Cancelled'].map(x => <option key={x}>{x}</option>)}</select></label><label>Notes<textarea value={form.notes || ''} onChange={e => setForm({ ...form, notes: e.target.value })} /></label><div className="modal-actions"><button type="button" className="secondary-btn" onClick={() => setShow(false)}>Cancel</button><button className="primary-btn">Create invoice</button></div></form></div>}{pay && <div className="modal-backdrop" onClick={() => setPay(null)}><form className="modal" onSubmit={paymentSave} onClick={e => e.stopPropagation()}><div className="modal-heading"><h2>Record payment</h2><button type="button" className="icon-btn" onClick={() => setPay(null)}><X size={18} /></button></div><label>Amount<input type="number" min="0" value={pay.amount} onChange={e => setPay({ ...pay, amount: Number(e.target.value) })} /></label><label>Method<select value={pay.payment_method} onChange={e => setPay({ ...pay, payment_method: e.target.value })}>{['Bank transfer', 'Card', 'Cash', 'Online', 'Other'].map(x => <option key={x}>{x}</option>)}</select></label><label>Date<input type="datetime-local" value={pay.paid_at} onChange={e => setPay({ ...pay, paid_at: e.target.value })} /></label><div className="modal-actions"><button type="button" className="secondary-btn" onClick={() => setPay(null)}>Cancel</button><button className="primary-btn">Save payment</button></div></form></div>}</> }
@@ -3681,7 +3992,6 @@ function Products({ products, onAdd, onDelete, currentUserId, isAdmin }) {
     </>
   );
 }
-
 function SettingsPage({ currency, setCurrency }) {
   const [selectedCurrency, setSelectedCurrency] = useState(currency);
   const [saved, setSaved] = useState(false);
@@ -3710,7 +4020,6 @@ function SettingsPage({ currency, setCurrency }) {
     </>
   );
 }
-
 function Chat() {
   const [users, setUsers] = useState([]);
   const [selectedUser, setSelectedUser] = useState(null);
