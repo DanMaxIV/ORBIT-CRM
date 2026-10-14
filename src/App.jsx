@@ -1,6 +1,9 @@
-import { useEffect, useMemo, useState, useRef } from 'react';
+import { createContext, useContext, useEffect, useMemo, useState, useRef } from 'react';
 import { supabase } from './lib/supabase';
-import { LayoutDashboard, Users, Kanban, CalendarCheck, BarChart3, Settings, Bell, Search, Plus, ArrowUpRight, MoreHorizontal, Menu, X, UserRound, Pencil, Receipt, LogOut, UserCog, MessageCircle, UserPlus, Mail, CalendarDays, FileText, Workflow, TrendingUp, Tags, DollarSign, CreditCard, Upload, Download, Play, Target, CheckCircle2 } from 'lucide-react';
+import { LayoutDashboard, Users, Kanban, CalendarCheck, BarChart3, Settings, Bell, Search, Plus, ArrowUpRight, MoreHorizontal, Menu, X, UserRound, Pencil, Receipt, LogOut, UserCog, MessageCircle, UserPlus, Mail, CalendarDays, FileText, Workflow, TrendingUp, Tags, DollarSign, CreditCard, Upload, Download, Play, Target, CheckCircle2, ArrowLeft, ChevronRight, Building2, RefreshCw } from 'lucide-react';
+
+// Lets every page heading refresh the latest workspace data without prop-drilling.
+const RefreshContext = createContext(null);
 
 function AuthScreen({ onGoogleSignIn, onEmailSignIn, onEmailSignUp, onPortalSignUp, authMode, setAuthMode, email, setEmail, password, setPassword,
   error,
@@ -282,16 +285,285 @@ function PortalStatusScreen({ account, email, onSignOut }) {
   );
 }
 
+const PORTAL_TICKET_CATEGORIES = ['General', 'Technical', 'Billing', 'Account', 'Feature Request'];
+const PORTAL_TICKET_PRIORITIES = ['Low', 'Medium', 'High'];
+const PORTAL_RECORD_LABELS = { deal: 'Deal', quote: 'Quote', invoice: 'Invoice', document: 'Document' };
+
+const portalPillClass = value => `portal-pill pill-${String(value || 'neutral').toLowerCase().replace(/[^a-z]+/g, '-')}`;
+const portalDate = value => value ? new Date(value).toLocaleDateString(undefined, { year: 'numeric', month: 'short', day: 'numeric' }) : '—';
+const portalDateTime = value => value ? new Date(value).toLocaleString(undefined, { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' }) : '';
+
+function portalErrorMessage(error) {
+  if (!error) return '';
+  // PostgREST reports a missing function as PGRST202; Postgres uses 42883.
+  if (error.code === 'PGRST202' || error.code === '42883') {
+    return 'Support tickets are not set up yet. Please ask your Orbit CRM administrator to finish the portal support setup.';
+  }
+  return error.message || 'Something went wrong. Please try again.';
+}
+
+function PortalTicketThread({ ticket, onBack, onChanged }) {
+  const [messages, setMessages] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState('');
+  const [reply, setReply] = useState('');
+  const [sending, setSending] = useState(false);
+  const endRef = useRef(null);
+
+  async function loadThread({ silent = false } = {}) {
+    if (!silent) setLoading(true);
+    const { data, error: threadError } = await supabase.rpc('portal_get_ticket_thread', { p_ticket_id: ticket.id });
+    if (threadError) {
+      if (!silent) setError(portalErrorMessage(threadError));
+    } else {
+      setError('');
+      setMessages(data || []);
+    }
+    if (!silent) setLoading(false);
+  }
+
+  useEffect(() => {
+    loadThread();
+    const timer = window.setInterval(() => loadThread({ silent: true }), 15000);
+    return () => window.clearInterval(timer);
+  }, [ticket.id]);
+
+  useEffect(() => { endRef.current?.scrollIntoView({ behavior: 'smooth', block: 'nearest' }); }, [messages.length]);
+
+  async function sendReply(event) {
+    event.preventDefault();
+    const body = reply.trim();
+    if (!body || sending) return;
+    setSending(true);
+    setError('');
+    const { error: replyError } = await supabase.rpc('portal_add_ticket_reply', { p_ticket_id: ticket.id, p_body: body });
+    if (replyError) {
+      setError(portalErrorMessage(replyError));
+    } else {
+      setReply('');
+      await loadThread({ silent: true });
+      onChanged();
+    }
+    setSending(false);
+  }
+
+  const closed = ticket.status === 'Closed';
+  const handledBy = ticket.assignee_name || 'Support team';
+
+  return (
+    <div className="portal-thread">
+      <div className="portal-thread-toolbar"><button type="button" className="portal-back-btn" onClick={onBack}>← All tickets</button><button type="button" className="secondary-btn" onClick={() => { loadThread({ silent: true }); onChanged(); }}><RefreshCw size={14} /> Refresh</button></div>
+      <div className="portal-thread-header">
+        <div>
+          <span className="portal-record-type">Ticket #{ticket.ticket_number ?? '—'}</span>
+          <h2>{ticket.title}</h2>
+          <p>{ticket.category || 'General'} · Opened {portalDate(ticket.created_at)} · Handled by {handledBy}</p>
+        </div>
+        <div className="portal-thread-badges">
+          <span className={portalPillClass(ticket.status)}>{ticket.status}</span>
+          <span className={portalPillClass(ticket.priority)}>{ticket.priority} priority</span>
+        </div>
+      </div>
+
+      <div className="portal-messages" aria-live="polite">
+        <div className="portal-message mine">
+          <div className="portal-message-meta"><strong>You</strong><time>{portalDateTime(ticket.created_at)}</time></div>
+          <p>{ticket.description}</p>
+        </div>
+        {loading && <p className="portal-muted">Loading conversation…</p>}
+        {messages.map(message => (
+          <div key={message.id} className={`portal-message ${message.author_type === 'customer' ? 'mine' : 'theirs'}`}>
+            <div className="portal-message-meta"><strong>{message.author_name}</strong><time>{portalDateTime(message.created_at)}</time></div>
+            <p>{message.body}</p>
+          </div>
+        ))}
+        {!loading && messages.length === 0 && <p className="portal-muted">No replies yet. Our team has been notified and will respond here.</p>}
+        <div ref={endRef} />
+      </div>
+
+      {error && <div className="auth-error" role="alert">{error}</div>}
+      {closed ? (
+        <p className="portal-muted portal-closed-note">This ticket is closed. If you still need help, please open a new ticket.</p>
+      ) : (
+        <form className="portal-reply-form" onSubmit={sendReply}>
+          <textarea
+            rows="3"
+            value={reply}
+            onChange={event => setReply(event.target.value)}
+            placeholder={ticket.status === 'Resolved' ? 'Replying will reopen this ticket…' : 'Write a reply…'}
+            maxLength={5000}
+            disabled={sending}
+          />
+          <button type="submit" className="primary-btn" disabled={sending || !reply.trim()}>{sending ? 'Sending…' : 'Send reply'}</button>
+        </form>
+      )}
+    </div>
+  );
+}
+
+function PortalNewTicketModal({ onClose, onCreated }) {
+  const [form, setForm] = useState({ title: '', category: 'General', priority: 'Medium', description: '' });
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState('');
+
+  async function submit(event) {
+    event.preventDefault();
+    setError('');
+    const title = form.title.trim();
+    const description = form.description.trim();
+    if (title.length < 3) { setError('Please enter a short subject (at least 3 characters).'); return; }
+    if (description.length < 10) { setError('Please describe the issue in a little more detail (at least 10 characters).'); return; }
+    setSaving(true);
+    const { data, error: createError } = await supabase.rpc('portal_create_ticket', {
+      p_title: title,
+      p_description: description,
+      p_category: form.category,
+      p_priority: form.priority
+    });
+    setSaving(false);
+    if (createError) { setError(portalErrorMessage(createError)); return; }
+    onCreated(data);
+  }
+
+  return (
+    <div className="modal-backdrop signup-backdrop">
+      <form className="modal signup-modal portal-signup-modal" onSubmit={submit}>
+        <div className="modal-heading">
+          <div><h2>New support ticket</h2><p>Tell us what you need help with. A member of our team will reply here.</p></div>
+          <button type="button" className="icon-btn" onClick={onClose} disabled={saving} aria-label="Close new ticket form"><X size={18} /></button>
+        </div>
+        {error && <div className="auth-error" role="alert">{error}</div>}
+        <label>Subject
+          <input value={form.title} onChange={event => setForm({ ...form, title: event.target.value })} placeholder="e.g. I can't download my latest invoice" maxLength={200} required />
+        </label>
+        <div className="portal-form-row">
+          <label>Category
+            <select value={form.category} onChange={event => setForm({ ...form, category: event.target.value })}>
+              {PORTAL_TICKET_CATEGORIES.map(category => <option key={category}>{category}</option>)}
+            </select>
+          </label>
+          <label>Priority
+            <select value={form.priority} onChange={event => setForm({ ...form, priority: event.target.value })}>
+              {PORTAL_TICKET_PRIORITIES.map(priority => <option key={priority}>{priority}</option>)}
+            </select>
+          </label>
+        </div>
+        <label>Describe the issue
+          <textarea rows="6" value={form.description} onChange={event => setForm({ ...form, description: event.target.value })} maxLength={5000} placeholder="Include any details that will help us resolve this quickly." required />
+        </label>
+        <p className="portal-char-count">{form.description.length}/5000</p>
+        <button type="submit" className="primary-btn" disabled={saving}>{saving ? 'Submitting…' : 'Submit ticket'}</button>
+      </form>
+    </div>
+  );
+}
+
+function PortalSupport({ tickets, loading, error, onReload }) {
+  const [selectedId, setSelectedId] = useState(null);
+  const [showNew, setShowNew] = useState(false);
+  const [filter, setFilter] = useState('open');
+
+  const selected = tickets.find(ticket => ticket.id === selectedId) || null;
+  const isOpen = ticket => ticket.status !== 'Resolved' && ticket.status !== 'Closed';
+  const visible = tickets.filter(ticket => filter === 'all' ? true : filter === 'open' ? isOpen(ticket) : !isOpen(ticket));
+
+  if (selected) {
+    return <PortalTicketThread ticket={selected} onBack={() => setSelectedId(null)} onChanged={onReload} />;
+  }
+
+  return (
+    <section className="portal-records-section">
+      <div className="portal-section-heading">
+        <div><h2>Support</h2><p>Create a ticket and follow the conversation with our team.</p></div>
+        <div className="toolbar-actions"><button type="button" className="secondary-btn" onClick={onReload}><RefreshCw size={14} /> Refresh</button><button type="button" className="primary-btn" onClick={() => setShowNew(true)}><Plus size={15} /> New ticket</button></div>
+      </div>
+      {error && <div className="auth-error" role="alert">{error}</div>}
+      <div className="filter-tabs" role="tablist" aria-label="Filter tickets">
+        {[['open', 'Open'], ['done', 'Resolved'], ['all', 'All']].map(([key, label]) => (
+          <button key={key} type="button" className={`filter-tab ${filter === key ? 'active' : ''}`} onClick={() => setFilter(key)}>
+            {label} ({key === 'all' ? tickets.length : tickets.filter(ticket => key === 'open' ? isOpen(ticket) : !isOpen(ticket)).length})
+          </button>
+        ))}
+      </div>
+      {loading ? (
+        <div className="panel portal-loading">Loading your tickets…</div>
+      ) : visible.length === 0 ? (
+        <div className="panel portal-empty-state">
+          <div className="portal-empty-mark">?</div>
+          <h3>{tickets.length === 0 ? 'No tickets yet' : 'Nothing here'}</h3>
+          <p>{tickets.length === 0 ? 'Need help? Create a ticket and a member of our team will pick it up.' : 'No tickets match this filter.'}</p>
+        </div>
+      ) : (
+        <div className="portal-ticket-list">
+          {visible.map(ticket => (
+            <button type="button" key={ticket.id} className="portal-ticket-row" onClick={() => setSelectedId(ticket.id)}>
+              <div className="portal-ticket-main">
+                <span className="portal-ticket-number">#{ticket.ticket_number ?? '—'}</span>
+                <strong>{ticket.title}</strong>
+                <small>{ticket.category || 'General'} · Updated {portalDate(ticket.updated_at || ticket.created_at)} · {ticket.assignee_name ? `Handled by ${ticket.assignee_name}` : 'Support team'}</small>
+              </div>
+              <div className="portal-ticket-badges">
+                <span className={portalPillClass(ticket.priority)}>{ticket.priority}</span>
+                <span className={portalPillClass(ticket.status)}>{ticket.status}</span>
+              </div>
+            </button>
+          ))}
+        </div>
+      )}
+      {showNew && (
+        <PortalNewTicketModal
+          onClose={() => setShowNew(false)}
+          onCreated={newId => { setShowNew(false); onReload(); setSelectedId(newId); }}
+        />
+      )}
+    </section>
+  );
+}
+
+
+
+
 function CustomerPortalHome({ user, account, onSignOut }) {
+  const [tab, setTab] = useState('overview');
   const [customer, setCustomer] = useState(null);
   const [records, setRecords] = useState([]);
   const [portalLoading, setPortalLoading] = useState(true);
   const [portalError, setPortalError] = useState('');
+  const [recordFilter, setRecordFilter] = useState('all');
+  const [refreshTick, setRefreshTick] = useState(0);
+  const [tickets, setTickets] = useState([]);
+  const [ticketsLoading, setTicketsLoading] = useState(true);
+  const [ticketsError, setTicketsError] = useState('');
+  const [currency, setCurrency] = useState(() => {
+    try { return localStorage.getItem('orbit_portal_currency') || localStorage.getItem('orbit_currency') || 'NGN'; } catch { return 'NGN'; }
+  });
+
+  useEffect(() => {
+    try { localStorage.setItem('orbit_portal_currency', currency); } catch { /* storage unavailable */ }
+  }, [currency]);
+
+  async function loadTickets({ silent = false } = {}) {
+    if (!silent) setTicketsLoading(true);
+    const { data, error } = await supabase.rpc('portal_list_tickets');
+    if (error) {
+      if (!silent) setTicketsError(portalErrorMessage(error));
+    } else {
+      setTicketsError('');
+      setTickets(data || []);
+    }
+    if (!silent) setTicketsLoading(false);
+  }
+
+  useEffect(() => {
+    loadTickets();
+    const timer = window.setInterval(() => loadTickets({ silent: true }), 30000);
+    return () => window.clearInterval(timer);
+  }, [user.id]);
 
   useEffect(() => {
     let cancelled = false;
     async function loadPortalData() {
-      setPortalLoading(true);
+      if (!customer) setPortalLoading(true);
       setPortalError('');
       try {
         const { data: accountData, error: accountError } = await supabase
@@ -326,7 +598,7 @@ function CustomerPortalHome({ user, account, onSignOut }) {
         const fetched = [];
         const configs = [
           ['deal', 'deals', 'id,title,stage,amount,created_at'],
-          ['quote', 'quotes', 'id,title,quote_number,status,amount,created_at'],
+          ['quote', 'quotes', 'id,title,quote_number,status,total,created_at'],
           ['invoice', 'invoices', 'id,title,invoice_number,status,amount,created_at'],
           ['document', 'documents', 'id,name,mime_type,created_at']
         ];
@@ -349,27 +621,82 @@ function CustomerPortalHome({ user, account, onSignOut }) {
     }
     loadPortalData();
     return () => { cancelled = true; };
-  }, [user.id]);
+  }, [user.id, refreshTick]);
 
-  const money = (value) => new Intl.NumberFormat('en-NG', { style: 'currency', currency: 'NGN', maximumFractionDigits: 0 }).format(Number(value) || 0);
-  const date = (value) => value ? new Date(value).toLocaleDateString(undefined, { year: 'numeric', month: 'short', day: 'numeric' }) : '—';
+  useEffect(() => {
+    const timer = window.setInterval(() => setRefreshTick(tick => tick + 1), 30000);
+    return () => window.clearInterval(timer);
+  }, []);
+
+  // Amounts are stored in USD and converted for display, exactly like the internal CRM.
+  const money = (value) => {
+    const config = EXCHANGE_RATES[currency] || EXCHANGE_RATES.NGN;
+    return `${config.symbol}${((Number(value) || 0) * config.rate).toLocaleString(undefined, { minimumFractionDigits: 0, maximumFractionDigits: 2 })}`;
+  };
   const titleFor = (record) => record.portalType === 'deal' ? record.title : record.portalType === 'quote' ? (record.title || record.quote_number || 'Quote') : record.portalType === 'invoice' ? (record.title || record.invoice_number || 'Invoice') : (record.name || 'Document');
-  const metaFor = (record) => record.portalType === 'deal' ? `${record.stage || 'In progress'} · ${money(record.amount)}` : record.portalType === 'quote' ? `${record.quote_number || 'Quote'} · ${record.status || 'Shared'} · ${money(record.amount)}` : record.portalType === 'invoice' ? `${record.invoice_number || 'Invoice'} · ${record.status || 'Shared'} · ${money(record.amount)}` : (record.mime_type || 'Shared document');
+  const statusFor = (record) => record.portalType === 'deal' ? record.stage : record.portalType === 'document' ? '' : record.status;
+  const detailFor = (record) => record.portalType === 'deal' ? money(record.amount) : record.portalType === 'quote' ? `${record.quote_number || 'Quote'} · ${money(record.total ?? record.amount)}` : record.portalType === 'invoice' ? `${record.invoice_number || 'Invoice'} · ${money(record.amount)}` : (record.mime_type || 'Shared document');
+
+  const openTicketCount = tickets.filter(ticket => ticket.status !== 'Resolved' && ticket.status !== 'Closed').length;
+  const recordCounts = records.reduce((acc, record) => ({ ...acc, [record.portalType]: (acc[record.portalType] || 0) + 1 }), {});
+  const visibleRecords = recordFilter === 'all' ? records : records.filter(record => record.portalType === recordFilter);
 
   return (
     <div className="customer-portal-shell">
       <header className="customer-portal-topbar">
         <div className="auth-brand"><div className="brand-mark"><OrbitLogo /></div><span>orbit<span className="brand-accent">CRM</span></span></div>
-        <div className="customer-portal-top-actions"><span>{account?.full_name || user.email}</span><button type="button" className="secondary-btn" onClick={onSignOut}><LogOut size={15} /> Sign out</button></div>
+        <div className="customer-portal-top-actions">
+          <select className="portal-currency" value={currency} onChange={event => setCurrency(event.target.value)} aria-label="Display currency">
+            {Object.keys(EXCHANGE_RATES).map(code => <option key={code} value={code}>{code}</option>)}
+          </select>
+          <span>{account?.full_name || user.email}</span>
+          <button type="button" className="secondary-btn" onClick={onSignOut}><LogOut size={15} /> Sign out</button>
+        </div>
       </header>
       <main className="customer-portal-content">
-        <div className="customer-portal-welcome"><div><span className="portal-eyebrow">CUSTOMER PORTAL</span><h1>Welcome{account?.full_name ? `, ${account.full_name.split(' ')[0]}` : ''}</h1><p>View the information your Orbit CRM team has shared with you.</p></div><div className="portal-customer-mark">{(customer?.name || account?.full_name || user.email || 'C').slice(0, 1).toUpperCase()}</div></div>
+        <div className="customer-portal-welcome"><div><span className="portal-eyebrow">CUSTOMER PORTAL</span><h1>Welcome{account?.full_name ? `, ${account.full_name.split(' ')[0]}` : ''}</h1><p>View what your team has shared with you and get help when you need it.</p></div><div className="portal-customer-mark">{(customer?.name || account?.full_name || user.email || 'C').slice(0, 1).toUpperCase()}</div></div>
         {portalError && <div className="auth-error" role="alert">{portalError}</div>}
         {portalLoading ? <div className="panel portal-loading">Loading your customer information…</div> : customer && <>
-          <section className="portal-customer-card"><div><span>ACCOUNT</span><h2>{customer.company || customer.name}</h2><p>{customer.name}{customer.email ? ` · ${customer.email}` : ''}</p></div><div><span>STATUS</span><strong>{customer.status || 'Active'}</strong></div><div><span>CUSTOMER SINCE</span><strong>{date(customer.created_at)}</strong></div></section>
-          <section className="portal-records-section"><div className="portal-section-heading"><div><h2>Shared with you</h2><p>Only records your team has chosen to share appear here.</p></div><span className="portal-record-count">{records.length} records</span></div>
-            {records.length === 0 ? <div className="panel portal-empty-state"><div className="portal-empty-mark">O</div><h3>No shared records yet</h3><p>Your quotes, invoices, project updates and documents will appear here when your team shares them.</p></div> : <div className="portal-record-grid">{records.map((record) => <article className="portal-record-card" key={`${record.portalType}-${record.id}`}><div className="portal-record-type">{record.portalType}</div><h3>{titleFor(record)}</h3><p>{metaFor(record)}</p><time>{date(record.created_at)}</time></article>)}</div>}
-          </section>
+          <section className="portal-customer-card"><div><span>ACCOUNT</span><h2>{customer.company || customer.name}</h2><p>{customer.name}{customer.email ? ` · ${customer.email}` : ''}</p></div><div><span>STATUS</span><strong>{customer.status || 'Active'}</strong></div><div><span>CUSTOMER SINCE</span><strong>{portalDate(customer.created_at)}</strong></div></section>
+
+          <nav className="portal-tabs" role="tablist" aria-label="Portal sections">
+            <button type="button" role="tab" aria-selected={tab === 'overview'} className={`portal-tab ${tab === 'overview' ? 'active' : ''}`} onClick={() => setTab('overview')}>Overview <span className="portal-tab-count">{records.length}</span></button>
+            <button type="button" role="tab" aria-selected={tab === 'support'} className={`portal-tab ${tab === 'support' ? 'active' : ''}`} onClick={() => setTab('support')}>Support {openTicketCount > 0 && <span className="portal-tab-count highlight">{openTicketCount}</span>}</button>
+          </nav>
+
+          {tab === 'overview' && (
+            <section className="portal-records-section">
+              <div className="portal-section-heading"><div><h2>Shared with you</h2><p>Quotes and invoices your team sends you appear here, along with anything else they choose to share.</p></div><div className="toolbar-actions"><span className="portal-record-count">{records.length} records</span><button type="button" className="secondary-btn" onClick={() => { setRefreshTick(tick => tick + 1); loadTickets({ silent: true }); }}>Refresh</button></div></div>
+              {records.length > 0 && (
+                <div className="filter-tabs" role="tablist" aria-label="Filter records">
+                  {[['all', 'All', records.length], ...Object.entries(PORTAL_RECORD_LABELS).map(([key, label]) => [key, `${label}s`, recordCounts[key] || 0])].filter(([key, , count]) => key === 'all' || count > 0).map(([key, label, count]) => (
+                    <button key={key} type="button" className={`filter-tab ${recordFilter === key ? 'active' : ''}`} onClick={() => setRecordFilter(key)}>{label} ({count})</button>
+                  ))}
+                </div>
+              )}
+              {records.length === 0 ? (
+                <div className="panel portal-empty-state"><div className="portal-empty-mark">O</div><h3>No shared records yet</h3><p>Your quotes, invoices, project updates and documents will appear here when your team shares them. Need something? Open a support ticket.</p><button type="button" className="secondary-btn portal-empty-action" onClick={() => setTab('support')}>Go to Support</button></div>
+              ) : (
+                <div className="portal-record-grid">{visibleRecords.map((record) => (
+                  <article className="portal-record-card" key={`${record.portalType}-${record.id}`}>
+                    <div className="portal-record-top"><span className="portal-record-type">{PORTAL_RECORD_LABELS[record.portalType]}</span>{statusFor(record) && <span className={portalPillClass(statusFor(record))}>{statusFor(record)}</span>}</div>
+                    <h3>{titleFor(record)}</h3>
+                    <p>{detailFor(record)}</p>
+                    <time>{portalDate(record.created_at)}</time>
+                  </article>
+                ))}</div>
+              )}
+            </section>
+          )}
+
+          {tab === 'support' && (
+            <PortalSupport
+              tickets={tickets}
+              loading={ticketsLoading}
+              error={ticketsError}
+              onReload={() => { loadTickets({ silent: true }); }}
+            />
+          )}
         </>}
       </main>
       <footer className="customer-portal-footer">Orbit CRM · Secure customer access</footer>
@@ -380,7 +707,7 @@ function CustomerPortalHome({ user, account, onSignOut }) {
 const navSections = [
   { title: 'Overview', items: [['Dashboard', LayoutDashboard], ['Reports', BarChart3]] },
   { title: 'Customers & Sales', items: [['Customers', Users], ['Leads', UserPlus], ['Pipeline', Kanban], ['Products', FileText], ['Quotes', FileText], ['Invoices', CreditCard], ['Forecast', TrendingUp]] },
-  { title: 'Work & Support', items: [['Activities', CalendarCheck], ['Calendar', CalendarDays], ['Tickets', Receipt], ['Documents', FileText]] },
+  { title: 'Work & Support', items: [['Activities', CalendarCheck], ['Calendar', CalendarDays], ['Technical Support', UserCog], ['Tickets', Receipt], ['Documents', FileText]] },
   { title: 'Communication', items: [['Email', Mail], ['Chat', MessageCircle]] },
   { title: 'Automation & Insights', items: [['Automation', Workflow], ['Segments', Tags]] },
   { title: 'System', items: [['Settings', Settings]] }
@@ -425,6 +752,9 @@ function App() {
   const [loading, setLoading] = useState(true);
   const [deals, setDeals] = useState([]);
   const [products, setProducts] = useState([]);
+  const [supportEngineers, setSupportEngineers] = useState([]);
+  const [solutionSupport, setSolutionSupport] = useState([]);
+  const [dealSupport, setDealSupport] = useState([]);
   const [notifications, setNotifications] = useState([]);
   const [unreadNotificationCount, setUnreadNotificationCount] = useState(0);
   const [showNotifications, setShowNotifications] = useState(false);
@@ -434,7 +764,10 @@ function App() {
   const [profileSaving, setProfileSaving] = useState(false);
   const [ownerProfiles, setOwnerProfiles] = useState({});
   const [showDealForm, setShowDealForm] = useState(false);
-  const [newDeal, setNewDeal] = useState({ title: '', company: '', amount: '', stage: 'New Lead', customer_id: '', new_customer_name: '', new_customer_email: '', new_customer_company: '', closure_start_at: '', closure_end_at: '' });
+  const [newDeal, setNewDeal] = useState({ title: '', company: '', amount: '', stage: 'New Lead', customer_id: '', contact_name: '', contact_email: '', contact_phone: '', new_customer_name: '', new_customer_email: '', new_customer_phone: '', new_customer_company: '', closure_start_at: '', closure_end_at: '' });
+  const [dealProducts, setDealProducts] = useState([]);
+  const [expandedDealVendor, setExpandedDealVendor] = useState(null);
+  const [selectedDealProductIds, setSelectedDealProductIds] = useState([]);
   const [dealSaving, setDealSaving] = useState(false);
   const [dealError, setDealError] = useState('');
   const [editingDeal, setEditingDeal] = useState(null);
@@ -461,9 +794,11 @@ function App() {
   const [selectedActivity, setSelectedActivity] = useState(null);
   const [tickets, setTickets] = useState([]);
   const [leads, setLeads] = useState([]);
+  const [leadProducts, setLeadProducts] = useState([]);
   const [emailLogs, setEmailLogs] = useState([]);
   const [calendarEvents, setCalendarEvents] = useState([]);
   const [quotes, setQuotes] = useState([]);
+  const [quoteItems, setQuoteItems] = useState([]);
   const [invoices, setInvoices] = useState([]);
   const [payments, setPayments] = useState([]);
   const [documents, setDocuments] = useState([]);
@@ -483,9 +818,10 @@ function App() {
   const [editTicketSaving, setEditTicketSaving] = useState(false);
   const [editTicketError, setEditTicketError] = useState('');
   const [selectedTicket, setSelectedTicket] = useState(null);
+  const [staffUsers, setStaffUsers] = useState([]);
   const [newTicket, setNewTicket] = useState({
     title: '', description: '', customer_id: '', status: 'Open', priority: 'Medium',
-    category: 'General'
+    category: 'General', assigned_to: '', portal_visible: true
   });
   const [saving, setSaving] = useState(false);
   const [customerError, setCustomerError] = useState('');
@@ -493,6 +829,9 @@ function App() {
   const toastTimer = useRef(null);
   const justSignedUp = useRef(false);
   const searchInputRef = useRef(null);
+  const lastRefreshRef = useRef(Date.now());
+  const refreshingRef = useRef(false);
+  const [refreshing, setRefreshing] = useState(false);
   const [toast, setToast] = useState('');
 
   const [currency, setCurrency] = useState(() => {
@@ -590,7 +929,7 @@ function App() {
     });
 
     leads.forEach(lead => { const text = `${lead.name || ''} ${lead.email || ''} ${lead.company || ''} ${lead.source || ''}`.toLowerCase(); if (text.includes(query)) results.push({ type: 'Lead', title: lead.name || lead.email, subtitle: lead.company || lead.source || 'Lead', page: 'Leads', lead }); });
-    quotes.forEach(q => { const text = `${q.quote_number || ''} ${q.title || ''} ${q.customers?.name || ''}`.toLowerCase(); if (text.includes(query)) results.push({ type: 'Quote', title: q.quote_number || q.title, subtitle: q.customers?.name || 'Quote', page: 'Quotes', quote: q }); });
+    quotes.forEach(q => { const text = `${q.quote_number || ''} ${q.title || ''} ${q.customer_name || ''} ${q.company || ''} ${q.email || ''}`.toLowerCase(); if (text.includes(query)) results.push({ type: 'Quote', title: q.quote_number || q.title, subtitle: q.customer_name || q.company || 'Quote', page: 'Quotes', quote: q }); });
     invoices.forEach(i => { const text = `${i.invoice_number || ''} ${i.title || ''} ${i.customers?.name || ''}`.toLowerCase(); if (text.includes(query)) results.push({ type: 'Invoice', title: i.invoice_number || i.title, subtitle: i.customers?.name || 'Invoice', page: 'Invoices', invoice: i }); });
     return results.slice(0, 12);
   }, [globalSearch, customers, deals, activities, tickets, leads, quotes, invoices]);
@@ -757,9 +1096,15 @@ async function signUpWithEmail(event) {
     setPage('Dashboard');
     setCustomers([]);
     setDeals([]);
+    setDealProducts([]);
+    setSupportEngineers([]);
+    setSolutionSupport([]);
+    setDealSupport([]);
+    setStaffUsers([]);
     setActivities([]);
-    setTickets([]); setLeads([]); setEmailLogs([]); setCalendarEvents([]); setQuotes([]); setInvoices([]); setPayments([]); setDocuments([]); setWorkflows([]); setSegments([]);
+    setTickets([]); setLeads([]); setLeadProducts([]); setEmailLogs([]); setCalendarEvents([]); setQuotes([]); setInvoices([]); setPayments([]); setDocuments([]); setWorkflows([]); setSegments([]);
     setNotifications([]);
+     setQuoteItems([]);
     setUnreadNotificationCount(0);
     setAuthorizedUsers([]);
     setPortalAccount(null);
@@ -969,25 +1314,372 @@ async function signUpWithEmail(event) {
       return;
     } setLeads(data || []);
   }
+  async function fetchLeadProducts() {
+    const { data, error } = await supabase
+      .from('lead_products')
+      .select('lead_id, product_id');
+    if (error) {
+      console.error('Error fetching lead solutions:', error);
+      return;
+    }
+    setLeadProducts(data || []);
+  }
+  async function fetchDealProducts() {
+    const { data, error } = await supabase
+      .from('deal_products')
+      .select('deal_id, product_id');
+    if (error) {
+      console.error('Error fetching deal solutions:', error);
+      return;
+    }
+    setDealProducts(data || []);
+  }
   async function fetchEmailLogs() { const { data, error } = await supabase.from('email_logs').select('*, customers(name,company)').order('sent_at', { ascending: false }); if (error) { console.error('Error fetching email logs:', error); return; } setEmailLogs(data || []); }
   async function fetchCalendarEvents() { const { data, error } = await supabase.from('calendar_events').select('*, customers(name,company)').order('start_at', { ascending: true }); if (error) { console.error('Error fetching calendar events:', error); return; } setCalendarEvents(data || []); }
-  async function fetchQuotes() { const { data, error } = await supabase.from('quotes').select('*, customers(name,company)').order('created_at', { ascending: false }); if (error) { console.error('Error fetching quotes:', error); return; } setQuotes(data || []); }
+  async function fetchQuotes() {
+    const { data, error } = await supabase
+      .from('quotes')
+      .select('*')
+      .order('created_at', { ascending: false });
+    if (error) { console.error('Error fetching quotes:', error); return; }
+    setQuotes(data || []);
+  }
+
+  async function fetchQuoteItems() {
+    const { data, error } = await supabase
+      .from('quote_items')
+      .select('*')
+      .order('created_at', { ascending: true });
+    if (error) { console.error('Error fetching quote items:', error); return; }
+    setQuoteItems(data || []);
+  }
+
+  async function resolvePersistedQuote(quote) {
+    if (!quote?.id?.toString().startsWith('local-')) return quote;
+
+    // Older optimistic quotes can remain in local state when the background
+    // sync happened before a schema fix or while the request was still running.
+    // Never send a temporary `local-*` id to Supabase, because quote ids are UUIDs.
+    for (let attempt = 0; attempt < 12; attempt += 1) {
+      const { data, error } = await supabase
+        .from('quotes')
+        .select('*')
+        .eq('quote_number', quote.quote_number)
+        .order('created_at', { ascending: false })
+        .limit(1);
+
+      if (error) throw error;
+      if (data?.[0]) {
+        const persisted = data[0];
+        setQuotes(prev => prev.map(item => item.id === quote.id ? persisted : item));
+        return persisted;
+      }
+
+      await new Promise(resolve => setTimeout(resolve, 250));
+    }
+
+    throw new Error('This quote is still being saved. Please wait a moment and try Edit again.');
+  }
+
+  async function loadQuoteItems(quoteOrId) {
+    const quote = typeof quoteOrId === 'object' ? quoteOrId : { id: quoteOrId };
+    const persistedQuote = await resolvePersistedQuote(quote);
+    const quoteId = persistedQuote.id;
+
+    const { data, error } = await supabase
+      .from('quote_items')
+      .select('*')
+      .eq('quote_id', quoteId)
+      .order('created_at', { ascending: true });
+
+    if (error) throw error;
+
+    // Keep the shared quote-items state in sync as well, so the edit form
+    // and the rest of the Quotes page always see the same data.
+    setQuoteItems(prev => [
+      ...prev.filter(item => item.quote_id !== quoteId),
+      ...(data || [])
+    ]);
+
+    return data || [];
+  }
   async function fetchInvoices() { const { data, error } = await supabase.from('invoices').select('*, customers(name,company)').order('created_at', { ascending: false }); if (error) { console.error('Error fetching invoices:', error); return; } setInvoices(data || []); }
   async function fetchPayments() { const { data, error } = await supabase.from('payments').select('*').order('paid_at', { ascending: false }); if (error) { console.error('Error fetching payments:', error); return; } setPayments(data || []); }
   async function fetchDocuments() { const { data, error } = await supabase.from('documents').select('*, customers(name,company)').order('created_at', { ascending: false }); if (error) { console.error('Error fetching documents:', error); return; } setDocuments(data || []); }
   async function fetchWorkflows() { const { data, error } = await supabase.from('workflows').select('*').order('created_at', { ascending: false }); if (error) { console.error('Error fetching workflows:', error); return; } setWorkflows(data || []); }
   async function fetchSegments() { const { data, error } = await supabase.from('customer_segments').select('*').order('created_at', { ascending: false }); if (error) { console.error('Error fetching segments:', error); return; } setSegments(data || []); }
   async function fetchProducts() { const { data, error } = await supabase.from('products').select('*').order('created_at', { ascending: false }); if (error) { console.error('Error fetching products:', error); return; } setProducts(data || []); }
+  async function fetchSupportEngineers() {
+    const { data, error } = await supabase.from('support_engineers').select('*').order('name', { ascending: true });
+    if (error) { console.error('Error fetching support engineers:', error); return; }
+    setSupportEngineers(data || []);
+  }
+  async function fetchSolutionSupport() {
+    const { data, error } = await supabase.from('solution_support_engineers').select('*, support_engineers(id,name,email,role,status)').order('created_at', { ascending: true });
+    if (error) { console.error('Error fetching solution support:', error); return; }
+    setSolutionSupport(data || []);
+  }
+  async function fetchDealSupport() {
+    const { data, error } = await supabase.from('deal_support_engineers').select('*, support_engineers(id,name,email,role,status)').order('created_at', { ascending: true });
+    if (error) { console.error('Error fetching deal support:', error); return; }
+    setDealSupport(data || []);
+  }
 
-  async function addLead(payload) { const { data, error } = await supabase.from('leads').insert([{ ...payload, created_by: session.user.id }]).select('*, customers(name,company)').single(); if (error) throw error; setLeads(prev => [data, ...prev]); return data; }
-  async function updateLead(id, payload) { const { data, error } = await supabase.from('leads').update(payload).eq('id', id).select('*, customers(name,company)').single(); if (error) throw error; setLeads(prev => prev.map(x => x.id === id ? data : x)); return data; }
+  async function addLead(payload, productIds = []) {
+    const uniqueProductIds = [...new Set(productIds || [])];
+
+    const { data: result, error: rpcError } = await supabase.rpc('create_lead_with_pipeline', {
+      p_name: payload.name,
+      p_email: payload.email,
+      p_phone: payload.phone,
+      p_company: payload.company,
+      p_source: payload.source,
+      p_status: payload.status,
+      p_customer_id: payload.customer_id || null,
+      p_product_ids: uniqueProductIds
+    });
+
+    if (rpcError) throw rpcError;
+
+    if (!result?.lead_id || !result?.deal_id) {
+      throw new Error('Lead was created, but the Pipeline record could not be confirmed.');
+    }
+
+    const { data: lead, error: leadError } = await supabase
+      .from('leads')
+      .select('*, customers(name,company)')
+      .eq('id', result.lead_id)
+      .single();
+
+    if (leadError) throw leadError;
+
+    const { data: deal, error: dealError } = await supabase
+      .from('deals')
+      .select('*')
+      .eq('id', result.deal_id)
+      .single();
+
+    if (dealError) throw dealError;
+
+    setLeads(prev => [lead, ...prev]);
+    setDeals(prev => [deal, ...prev]);
+
+    // The database function already created the lead_products rows.
+    // Keep local state in sync immediately without another insert.
+    setLeadProducts(prev => [
+      ...prev.filter(row => row.lead_id !== lead.id),
+      ...uniqueProductIds.map(productId => ({
+        lead_id: lead.id,
+        product_id: productId
+      }))
+    ]);
+
+    return lead;
+  }
+
+  async function updateLead(id, payload) {
+    const { data, error } = await supabase
+      .from('leads')
+      .update(payload)
+      .eq('id', id)
+      .select('*, customers(name,company)')
+      .single();
+
+    if (error) throw error;
+
+    setLeads(prev => prev.map(x => x.id === id ? data : x));
+
+    return data;
+  }
+  async function syncLeadProducts(leadId, productIds) {
+    const { error: deleteError } = await supabase
+      .from('lead_products')
+      .delete()
+      .eq('lead_id', leadId);
+    if (deleteError) throw deleteError;
+
+    const uniqueProductIds = [...new Set(productIds || [])];
+    if (uniqueProductIds.length > 0) {
+      const rows = uniqueProductIds.map(productId => ({
+        lead_id: leadId,
+        product_id: productId
+      }));
+      const { error: insertError } = await supabase
+        .from('lead_products')
+        .insert(rows);
+      if (insertError) throw insertError;
+    }
+
+    setLeadProducts(prev => [
+      ...prev.filter(row => row.lead_id !== leadId),
+      ...uniqueProductIds.map(productId => ({ lead_id: leadId, product_id: productId }))
+    ]);
+  }
   async function deleteLead(id) { if (!window.confirm('Delete this lead?')) return; const { error } = await supabase.from('leads').delete().eq('id', id); if (error) { alert(error.message); return; } setLeads(prev => prev.filter(x => x.id !== id)); }
   async function addEmailLog(payload) { const { data, error } = await supabase.from('email_logs').insert([{ ...payload, created_by: session.user.id }]).select('*, customers(name,company)').single(); if (error) throw error; setEmailLogs(prev => [data, ...prev]); return data; }
   async function addCalendarEvent(payload) { const { data, error } = await supabase.from('calendar_events').insert([{ ...payload, created_by: session.user.id }]).select('*, customers(name,company)').single(); if (error) throw error; setCalendarEvents(prev => [...prev, data].sort((a, b) => new Date(a.start_at) - new Date(b.start_at))); return data; }
   async function updateCalendarEvent(id, payload) { const { data, error } = await supabase.from('calendar_events').update(payload).eq('id', id).select('*, customers(name,company)').single(); if (error) throw error; setCalendarEvents(prev => prev.map(x => x.id === id ? data : x)); return data; }
   async function deleteCalendarEvent(id) { const { error } = await supabase.from('calendar_events').delete().eq('id', id); if (error) throw error; setCalendarEvents(prev => prev.filter(x => x.id !== id)); }
-  async function addQuote(payload) { const { data, error } = await supabase.from('quotes').insert([{ ...payload, created_by: session.user.id }]).select('*, customers(name,company)').single(); if (error) throw error; setQuotes(prev => [data, ...prev]); return data; }
-  async function updateQuote(id, payload) { const { data, error } = await supabase.from('quotes').update(payload).eq('id', id).select('*, customers(name,company)').single(); if (error) throw error; setQuotes(prev => prev.map(x => x.id === id ? data : x)); return data; }
+  async function addQuote(payload, items = []) {
+    // Generate the UUID on the client so the quote and its line items can be
+    // saved with the same real UUID without relying on an INSERT ... RETURNING
+    // SELECT permission. The human-facing quote number is separate and stays
+    // immutable after creation.
+    const quoteId = crypto.randomUUID();
+    const quoteToInsert = {
+      id: quoteId,
+      ...payload,
+      created_by: session.user.id
+    };
+
+    // Save the quote itself first. We intentionally do not chain .select()
+    // here, so a missing SELECT policy cannot make a successful INSERT look
+    // like a failed save.
+    const { error: quoteError } = await supabase
+      .from('quotes')
+      .insert([quoteToInsert]);
+
+    if (quoteError) throw quoteError;
+
+    // Show the saved quote immediately and close the form. The line items are
+    // persisted immediately afterwards using the same real UUID.
+    setQuotes(prev => [quoteToInsert, ...prev.filter(quote => quote.id !== quoteId)]);
+
+    const rows = (items || []).map(item => ({
+      quote_id: quoteId,
+      product_id: item.product_id || null,
+      product_name: item.product_name,
+      description: item.description || null,
+      quantity: Number(item.quantity) || 1,
+      unit_price: Number(item.unit_price) || 0,
+      discount: Number(item.discount) || 0,
+      tax: Number(item.tax) || 0,
+      total: Number(item.total) || 0
+    }));
+
+    if (rows.length) {
+      // Do not require SELECT permission on quote_items just to save them.
+      // The database INSERT is the important operation here.
+      const { error: itemError } = await supabase
+        .from('quote_items')
+        .insert(rows);
+
+      if (itemError) {
+        console.error('Quote saved, but quote items could not be saved:', itemError);
+        // Keep the quote visible. The error can be diagnosed without losing
+        // the quote itself.
+      } else {
+        setQuoteItems(prev => [
+          ...prev.filter(item => item.quote_id !== quoteId),
+          ...rows.map((item, index) => ({
+            ...item,
+            id: `local-item-${quoteId}-${index}`,
+            created_at: new Date().toISOString()
+          }))
+        ]);
+      }
+    }
+
+    return quoteToInsert;
+  }
+
+  async function updateQuote(id, payload, items = []) {
+    const currentQuote = quotes.find(quote => quote.id === id);
+    const persistedQuote = currentQuote?.id?.toString().startsWith('local-')
+      ? await resolvePersistedQuote(currentQuote)
+      : currentQuote || { id };
+    const realId = persistedQuote.id;
+
+    // Quote number is immutable after creation.
+    const { quote_number: _ignoredQuoteNumber, ...editablePayload } = payload || {};
+
+    // Do not require SELECT permission just to perform the update. We already
+    // know the real UUID and can build the updated local row ourselves.
+    const { error: quoteError } = await supabase
+      .from('quotes')
+      .update(editablePayload)
+      .eq('id', realId);
+    if (quoteError) throw quoteError;
+
+    const finalQuote = {
+      ...persistedQuote,
+      ...editablePayload,
+      id: realId,
+      quote_number: persistedQuote.quote_number
+    };
+
+    // Insert the replacement items first. If this fails, the old items remain
+    // intact, so editing a quote cannot accidentally wipe its products.
+    const rows = (items || []).map(item => ({
+      id: crypto.randomUUID(),
+      quote_id: realId,
+      product_id: item.product_id || null,
+      product_name: item.product_name,
+      description: item.description || null,
+      quantity: Number(item.quantity) || 1,
+      unit_price: Number(item.unit_price) || 0,
+      discount: Number(item.discount) || 0,
+      tax: Number(item.tax) || 0,
+      total: Number(item.total) || 0
+    }));
+
+    if (rows.length) {
+      const { error: itemInsertError } = await supabase
+        .from('quote_items')
+        .insert(rows);
+      if (itemInsertError) {
+        throw new Error(`Quote details were saved, but the quoted items could not be updated: ${itemInsertError.message}`);
+      }
+    }
+
+    // New items are safely stored, so remove the previous set.
+    if (rows.length) {
+      const keepIds = rows.map(row => row.id).join(',');
+      const { error: itemDeleteError } = await supabase
+        .from('quote_items')
+        .delete()
+        .eq('quote_id', realId)
+        .not('id', 'in', `(${keepIds})`);
+      if (itemDeleteError) throw itemDeleteError;
+    } else {
+      const { error: clearError } = await supabase
+        .from('quote_items')
+        .delete()
+        .eq('quote_id', realId);
+      if (clearError) throw clearError;
+    }
+
+    setQuotes(prev => prev.map(x => (x.id === id || x.id === realId) ? finalQuote : x));
+    setQuoteItems(prev => [
+      ...prev.filter(item => item.quote_id !== realId && item.quote_id !== id),
+      ...rows
+    ]);
+    return finalQuote;
+  }
+
+  async function deleteQuote(id) {
+    const currentQuote = quotes.find(quote => quote.id === id);
+    const persistedQuote = currentQuote?.id?.toString().startsWith('local-')
+      ? await resolvePersistedQuote(currentQuote)
+      : currentQuote || { id };
+    const realId = persistedQuote.id;
+
+    const { error: itemError } = await supabase
+      .from('quote_items')
+      .delete()
+      .eq('quote_id', realId);
+    if (itemError) throw itemError;
+
+    const { error } = await supabase
+      .from('quotes')
+      .delete()
+      .eq('id', realId);
+    if (error) throw error;
+
+    setQuotes(prev => prev.filter(quote => quote.id !== id && quote.id !== realId));
+    setQuoteItems(prev => prev.filter(item => item.quote_id !== id && item.quote_id !== realId));
+  }
+
   async function addInvoice(payload) { const { data, error } = await supabase.from('invoices').insert([{ ...payload, created_by: session.user.id }]).select('*, customers(name,company)').single(); if (error) throw error; setInvoices(prev => [data, ...prev]); return data; }
   async function updateInvoice(id, payload) { const { data, error } = await supabase.from('invoices').update(payload).eq('id', id).select('*, customers(name,company)').single(); if (error) throw error; setInvoices(prev => prev.map(x => x.id === id ? data : x)); return data; }
   async function addPayment(payload) { const { data, error } = await supabase.from('payments').insert([{ ...payload, created_by: session.user.id }]).select('*').single(); if (error) throw error; setPayments(prev => [data, ...prev]); await fetchInvoices(); return data; }
@@ -1001,11 +1693,57 @@ async function signUpWithEmail(event) {
     setProducts(prev => [data, ...prev]);
     return data;
   }
+  async function updateProduct(id, payload) {
+    const { data, error } = await supabase.from('products').update(payload).eq('id', id).select('*').single();
+    if (error) throw error;
+    setProducts(prev => prev.map(product => product.id === id ? data : product));
+    return data;
+  }
   async function deleteProduct(id) {
     if (!window.confirm('Delete this product?')) return;
     const { error } = await supabase.from('products').delete().eq('id', id);
     if (error) { alert(error.message); return; }
     setProducts(prev => prev.filter(product => product.id !== id));
+  }
+  async function addSupportEngineer(payload, solutionFamilies = []) {
+    const { data, error } = await supabase.from('support_engineers').insert([{ ...payload, created_by: session.user.id }]).select('*').single();
+    if (error) throw error;
+    if (solutionFamilies.length) {
+      const { error: linkError } = await supabase.from('solution_support_engineers').insert(solutionFamilies.map(solution_family => ({ solution_family, support_engineer_id: data.id })));
+      if (linkError) throw linkError;
+    }
+    setSupportEngineers(prev => [...prev, data].sort((a, b) => (a.name || '').localeCompare(b.name || '')));
+    await fetchSolutionSupport();
+    return data;
+  }
+  async function updateSupportEngineer(id, payload, solutionFamilies = []) {
+    const { data, error } = await supabase.from('support_engineers').update(payload).eq('id', id).select('*').single();
+    if (error) throw error;
+    const { error: clearError } = await supabase.from('solution_support_engineers').delete().eq('support_engineer_id', id);
+    if (clearError) throw clearError;
+    if (solutionFamilies.length) {
+      const { error: linkError } = await supabase.from('solution_support_engineers').insert(solutionFamilies.map(solution_family => ({ solution_family, support_engineer_id: id })));
+      if (linkError) throw linkError;
+    }
+    setSupportEngineers(prev => prev.map(item => item.id === id ? data : item).sort((a, b) => (a.name || '').localeCompare(b.name || '')));
+    await fetchSolutionSupport();
+    return data;
+  }
+  async function deactivateSupportEngineer(id) {
+    const { error } = await supabase.from('support_engineers').update({ status: 'Inactive' }).eq('id', id);
+    if (error) throw error;
+    setSupportEngineers(prev => prev.map(item => item.id === id ? { ...item, status: 'Inactive' } : item));
+  }
+  async function syncSolutionSupport(solutionFamily, engineerIds = []) {
+    if (authorizationProfile?.role !== 'admin') throw new Error('Only an admin can manage solution support assignments.');
+    const { error: deleteError } = await supabase.from('solution_support_engineers').delete().eq('solution_family', solutionFamily);
+    if (deleteError) throw deleteError;
+    const uniqueIds = [...new Set(engineerIds || [])];
+    if (uniqueIds.length) {
+      const { error: insertError } = await supabase.from('solution_support_engineers').insert(uniqueIds.map(support_engineer_id => ({ solution_family: solutionFamily, support_engineer_id })));
+      if (insertError) throw insertError;
+    }
+    await fetchSolutionSupport();
   }
   async function uploadDocument(file, customerId = '') { if (!file) return; const safeName = file.name.replace(/[^a-zA-Z0-9._-]/g, '_'); const path = `${session.user.id}/${Date.now()}_${safeName}`; const { error: uploadError } = await supabase.storage.from('crm-documents').upload(path, file, { upsert: false }); if (uploadError) throw uploadError; const { data, error } = await supabase.from('documents').insert([{ name: file.name, storage_path: path, mime_type: file.type || 'application/octet-stream', size_bytes: file.size, customer_id: customerId || null, created_by: session.user.id }]).select('*, customers(name,company)').single(); if (error) throw error; setDocuments(prev => [data, ...prev]); return data; }
   async function deleteDocument(doc) { if (!window.confirm('Delete this document?')) return; const { error: storageError } = await supabase.storage.from('crm-documents').remove([doc.storage_path]); if (storageError) { console.error(storageError); } const { error } = await supabase.from('documents').delete().eq('id', doc.id); if (error) { alert(error.message); return; } setDocuments(prev => prev.filter(x => x.id !== doc.id)); }
@@ -1097,6 +1835,34 @@ async function signUpWithEmail(event) {
 
   const displayUserName = profileName.trim() || session?.user?.email || 'Signed-in user';
 
+  async function fetchStaffUsers() {
+    const { data, error } = await supabase
+      .from('authorized_users')
+      .select('user_id, email, role')
+      .eq('status', 'active')
+      .not('user_id', 'is', null)
+      .order('email', { ascending: true });
+    if (error) { console.warn('Could not load staff list:', error.message); return; }
+    setStaffUsers(data || []);
+  }
+
+  const staffName = userId => {
+    if (!userId) return 'Unassigned';
+    if (userId === session?.user?.id) return `${displayUserName} (you)`;
+    const staff = staffUsers.find(u => u.user_id === userId);
+    return ownerProfiles[userId] || staff?.email || 'Team member';
+  };
+  const getStaffOptions = () => {
+    const list = [...staffUsers];
+    if (session?.user?.id && !list.some(u => u.user_id === session.user.id)) list.unshift({ user_id: session.user.id, email: session.user.email });
+    return list;
+  };
+  const canManageTicket = ticket =>
+    authorizationProfile?.role === 'admin' ||
+    ticket.created_by === session?.user?.id ||
+    ticket.assigned_to === session?.user?.id ||
+    (ticket.source === 'portal' && !ticket.assigned_to);
+
   async function fetchProfile() {
     if (!session?.user?.id) return;
     const { data, error } = await supabase.from('user_profiles').select('full_name').eq('user_id', session.user.id).maybeSingle();
@@ -1127,6 +1893,39 @@ async function signUpWithEmail(event) {
     const { data, error } = await supabase.from('user_profiles').select('user_id, full_name');
     if (error) { console.warn('Could not load user names:', error.message); return; }
     setOwnerProfiles(Object.fromEntries((data || []).map(x => [x.user_id, x.full_name || ''])));
+  }
+
+  // Reload the workspace data in one pass so the page does not need a browser refresh.
+  async function refreshAll({ silent = false } = {}) {
+    if (refreshingRef.current || !session || !authorized) return;
+
+    refreshingRef.current = true;
+    setRefreshing(true);
+
+    try {
+      const jobs = [
+        fetchCustomers(), fetchDeals(), fetchActivities(), fetchTickets(), fetchStaffUsers(),
+        fetchLeads(), fetchLeadProducts(), fetchDealProducts(), fetchEmailLogs(), fetchCalendarEvents(),
+        fetchQuotes(), fetchQuoteItems(), fetchInvoices(), fetchPayments(), fetchDocuments(),
+        fetchWorkflows(), fetchSegments(), fetchProducts(), fetchSupportEngineers(),
+        fetchSolutionSupport(), fetchDealSupport(), fetchNotifications(), fetchOwnerProfiles(),
+        fetchEmailIntegrations()
+      ];
+
+      if (authorizationProfile?.role === 'admin') {
+        jobs.push(fetchAuthorizedUsers(), fetchPendingPortalAccounts());
+      }
+
+      await Promise.all(jobs);
+      lastRefreshRef.current = Date.now();
+      if (!silent) showToast('Up to date.');
+    } catch (error) {
+      console.error('Refresh failed:', error);
+      if (!silent) showToast('Could not refresh. Please try again.');
+    } finally {
+      refreshingRef.current = false;
+      setRefreshing(false);
+    }
   }
 
   async function clearNotification(id) {
@@ -1277,7 +2076,22 @@ async function signUpWithEmail(event) {
     fetchDeals();
     fetchActivities();
     fetchTickets();
-    fetchEmailIntegrations(); fetchLeads(); fetchEmailLogs(); fetchCalendarEvents(); fetchQuotes(); fetchInvoices(); fetchPayments(); fetchDocuments(); fetchWorkflows(); fetchSegments(); fetchProducts();
+    fetchStaffUsers();
+    fetchEmailIntegrations(); fetchLeads(); fetchLeadProducts(); fetchDealProducts(); fetchDealSupport(); fetchSolutionSupport(); fetchSupportEngineers(); fetchEmailLogs(); fetchCalendarEvents(); fetchQuotes(); fetchQuoteItems(); fetchInvoices(); fetchPayments(); fetchDocuments(); fetchWorkflows(); fetchSegments(); fetchProducts();
+  }, [session, authorized]);
+
+  // Quietly refresh when the user returns to the CRM tab after it has been idle.
+  useEffect(() => {
+    if (!session || !authorized) return;
+
+    const onVisible = () => {
+      if (document.visibilityState === 'visible' && Date.now() - lastRefreshRef.current > 60000) {
+        refreshAll({ silent: true });
+      }
+    };
+
+    document.addEventListener('visibilitychange', onVisible);
+    return () => document.removeEventListener('visibilitychange', onVisible);
   }, [session, authorized]);
 
 
@@ -1491,6 +2305,7 @@ async function signUpWithEmail(event) {
         const { data: customerData, error: customerError } = await supabase.from('customers').insert({
           name: newDeal.new_customer_name.trim(),
           email: newDeal.new_customer_email.trim(),
+          phone: newDeal.new_customer_phone.trim() || null,
           company: newDeal.new_customer_company.trim() || newDeal.company.trim() || null,
           status: 'Active'
         }).select().single();
@@ -1506,6 +2321,9 @@ async function signUpWithEmail(event) {
           {
             title: newDeal.title.trim(),
             company: customerCompany,
+            contact_name: newDeal.contact_name.trim() || (newDeal.customer_id === '__new__' ? newDeal.new_customer_name.trim() : null) || null,
+            contact_email: newDeal.contact_email.trim() || (newDeal.customer_id === '__new__' ? newDeal.new_customer_email.trim() : null) || null,
+            contact_phone: newDeal.contact_phone.trim() || (newDeal.customer_id === '__new__' ? newDeal.new_customer_phone.trim() : null) || null,
             amount: Number(newDeal.amount),
             stage: newDeal.stage,
             customer_id: customerId,
@@ -1526,19 +2344,53 @@ async function signUpWithEmail(event) {
 
       setDeals(prev => [data, ...prev]);
 
+      const uniqueProductIds = [...new Set(selectedDealProductIds || [])];
+      if (uniqueProductIds.length > 0) {
+        const rows = uniqueProductIds.map(productId => ({
+          deal_id: data.id,
+          product_id: productId
+        }));
+        const { error: productError } = await supabase
+          .from('deal_products')
+          .insert(rows);
+        if (productError) throw productError;
+      }
+
+      setDealProducts(prev => [
+        ...prev,
+        ...uniqueProductIds.map(productId => ({ deal_id: data.id, product_id: productId }))
+      ]);
+      const uniqueSupportIds = [...new Set(newDeal.support_engineer_ids || [])];
+      if (uniqueSupportIds.length > 0) {
+        const { error: supportError } = await supabase
+          .from('deal_support_engineers')
+          .insert(uniqueSupportIds.map(support_engineer_id => ({ deal_id: data.id, support_engineer_id })));
+        if (supportError) throw supportError;
+      }
+      setDealSupport(prev => [
+        ...prev,
+        ...uniqueSupportIds.map(support_engineer_id => ({ deal_id: data.id, support_engineer_id }))
+      ]);
+
       setNewDeal({
         title: '',
         company: '',
         amount: '',
         stage: 'New Lead',
         customer_id: '',
+        contact_name: '',
+        contact_email: '',
+        contact_phone: '',
         new_customer_name: '',
         new_customer_email: '',
+        new_customer_phone: '',
         new_customer_company: '',
         closure_start_at: '',
-        closure_end_at: ''
+        closure_end_at: '',
+        support_engineer_ids: []
       });
-
+      setSelectedDealProductIds([]);
+      setExpandedDealVendor(null);
       setShowDealForm(false);
 
     } catch (error) {
@@ -1551,17 +2403,179 @@ async function signUpWithEmail(event) {
     }
   }
   async function moveDeal(id, stage) {
-    const previousStage = deals.find(d => d.id === id)?.stage;
-    if (previousStage === stage) return;
+    const previousDeal = deals.find(d => d.id === id);
+    const previousStage = previousDeal?.stage;
+    if (!previousDeal || previousStage === stage) return;
 
-    // Update the interface immediately
+    // A deal entering Won must be converted/linked to a Customer.
+    // Lead-created deals have the information needed to create the customer.
+    if (stage === 'Won' && previousStage !== 'Won') {
+      try {
+        let deal = previousDeal;
+        let lead = null;
+
+        if (deal.lead_id) {
+          const { data: leadData, error: leadError } = await supabase
+            .from('leads')
+            .select('*')
+            .eq('id', deal.lead_id)
+            .single();
+
+          if (leadError) throw leadError;
+          lead = leadData;
+        }
+
+        // If the deal/lead is already linked to a customer, simply keep that link.
+        let customerId = deal.customer_id || lead?.customer_id || null;
+        let customer = null;
+
+        if (customerId) {
+          const { data: existingCustomer, error: customerError } = await supabase
+            .from('customers')
+            .select('*')
+            .eq('id', customerId)
+            .single();
+
+          if (customerError) throw customerError;
+          customer = existingCustomer;
+        } else if (lead?.email?.trim()) {
+          // Avoid creating duplicate customers when the lead email already exists.
+          const email = lead.email.trim();
+          const { data: existingCustomer, error: lookupError } = await supabase
+            .from('customers')
+            .select('*')
+            .ilike('email', email)
+            .maybeSingle();
+
+          if (lookupError) throw lookupError;
+
+          if (existingCustomer) {
+            customer = existingCustomer;
+            customerId = existingCustomer.id;
+          } else {
+            const { data: newCustomer, error: createCustomerError } = await supabase
+              .from('customers')
+              .insert({
+                name: lead.name?.trim() || lead.email.trim(),
+                email,
+                phone: lead.phone?.trim() || null,
+                company: lead.company?.trim() || deal.company?.trim() || null,
+                status: 'Active'
+              })
+              .select()
+              .single();
+
+            if (createCustomerError) throw createCustomerError;
+
+            customer = newCustomer;
+            customerId = newCustomer.id;
+          }
+        }
+
+        // Direct Pipeline deals can also become Customers. Use the contact
+        // details captured on the deal to find or create the Customer.
+        if (!customerId && !lead && deal.contact_email?.trim()) {
+          const email = deal.contact_email.trim();
+          const { data: existingCustomer, error: lookupError } = await supabase
+            .from('customers')
+            .select('*')
+            .ilike('email', email)
+            .maybeSingle();
+
+          if (lookupError) throw lookupError;
+
+          if (existingCustomer) {
+            customer = existingCustomer;
+            customerId = existingCustomer.id;
+          } else {
+            const { data: newCustomer, error: createCustomerError } = await supabase
+              .from('customers')
+              .insert({
+                name: deal.contact_name?.trim() || deal.title?.trim() || email,
+                email,
+                phone: deal.contact_phone?.trim() || null,
+                company: deal.company?.trim() || null,
+                status: 'Active'
+              })
+              .select()
+              .single();
+
+            if (createCustomerError) throw createCustomerError;
+            customer = newCustomer;
+            customerId = newCustomer.id;
+          }
+        }
+
+        if (!customerId && !lead) {
+          alert('Add a contact email to this deal, or link it to a customer, before marking it Won.');
+          return;
+        }
+
+        const { data: updatedDeal, error: dealError } = await supabase
+          .from('deals')
+          .update({
+            stage: 'Won',
+            customer_id: customerId
+          })
+          .eq('id', id)
+          .select()
+          .single();
+
+        if (dealError) throw dealError;
+
+        // Keep the originating lead as historical data, but mark it converted
+        // and link it to the customer that now owns the won deal.
+        let updatedLead = lead;
+        if (lead) {
+          const { data: leadData, error: leadUpdateError } = await supabase
+            .from('leads')
+            .update({
+              status: 'Converted',
+              customer_id: customerId
+            })
+            .eq('id', lead.id)
+            .select('*, customers(name,company)')
+            .single();
+
+          if (leadUpdateError) throw leadUpdateError;
+          updatedLead = leadData;
+        }
+
+        // Refresh local state so Customers, Leads and Pipeline immediately
+        // reflect the conversion without requiring a page reload.
+        if (customer) {
+          setCustomers(prev => {
+            const exists = prev.some(item => item.id === customer.id);
+            return exists
+              ? prev.map(item => item.id === customer.id ? customer : item)
+              : [customer, ...prev];
+          });
+        }
+
+        setDeals(prev => prev.map(item => item.id === updatedDeal.id ? updatedDeal : item));
+
+        if (updatedLead) {
+          setLeads(prev => prev.map(item => item.id === updatedLead.id ? updatedLead : item));
+        }
+
+        showToast(customer
+          ? `${customer.name} is now a customer. Deal marked Won.`
+          : 'Deal marked Won.');
+      } catch (error) {
+        console.error('Error converting won deal:', error);
+        alert(`Could not mark deal as Won: ${error.message}`);
+      }
+
+      return;
+    }
+
+    // Normal stage movement for the other Pipeline stages.
     setDeals(prev =>
       prev.map(d =>
         d.id === id ? { ...d, stage } : d
       )
     );
 
-    // Save the stage in Supabase
     const { error } = await supabase
       .from('deals')
       .update({ stage })
@@ -1569,10 +2583,7 @@ async function signUpWithEmail(event) {
 
     if (error) {
       console.error('Error updating deal stage:', error);
-
-      // Restore the previous stage if the database update fails
       setDeals(prev => prev.map(d => (d.id === id ? { ...d, stage: previousStage } : d)));
-
       alert(`Could not update deal stage: ${error.message}`);
     }
   }
@@ -1622,6 +2633,9 @@ async function signUpWithEmail(event) {
         .update({
           title: editingDeal.title.trim(),
           company: editingDeal.company?.trim() || null,
+          contact_name: editingDeal.contact_name?.trim() || null,
+          contact_email: editingDeal.contact_email?.trim() || null,
+          contact_phone: editingDeal.contact_phone?.trim() || null,
           amount: Number(editingDeal.amount),
           stage: editingDeal.stage,
           customer_id: editingDeal.customer_id || null,
@@ -1637,6 +2651,42 @@ async function signUpWithEmail(event) {
         setEditDealError(error.message);
         return;
       }
+      const selectedProductIds = [...new Set(editingDeal.product_ids || [])];
+      const { error: deleteProductError } = await supabase
+        .from('deal_products')
+        .delete()
+        .eq('deal_id', data.id);
+      if (deleteProductError) throw deleteProductError;
+
+      if (selectedProductIds.length > 0) {
+        const { error: insertProductError } = await supabase
+          .from('deal_products')
+          .insert(selectedProductIds.map(productId => ({ deal_id: data.id, product_id: productId })));
+        if (insertProductError) throw insertProductError;
+      }
+
+      setDealProducts(prev => [
+        ...prev.filter(row => row.deal_id !== data.id),
+        ...selectedProductIds.map(productId => ({ deal_id: data.id, product_id: productId }))
+      ]);
+
+      const selectedSupportIds = [...new Set(editingDeal.support_engineer_ids || [])];
+      const { error: deleteSupportError } = await supabase
+        .from('deal_support_engineers')
+        .delete()
+        .eq('deal_id', data.id);
+      if (deleteSupportError) throw deleteSupportError;
+      if (selectedSupportIds.length > 0) {
+        const { error: insertSupportError } = await supabase
+          .from('deal_support_engineers')
+          .insert(selectedSupportIds.map(support_engineer_id => ({ deal_id: data.id, support_engineer_id })));
+        if (insertSupportError) throw insertSupportError;
+      }
+      setDealSupport(prev => [
+        ...prev.filter(row => row.deal_id !== data.id),
+        ...selectedSupportIds.map(support_engineer_id => ({ deal_id: data.id, support_engineer_id }))
+      ]);
+
       setDeals(prev =>
         prev.map(deal =>
           deal.id === data.id ? data : deal
@@ -1756,11 +2806,11 @@ async function signUpWithEmail(event) {
       const { data, error } = await supabase.from('tickets').insert([{
         title: newTicket.title.trim(), description: newTicket.description.trim() || null,
         customer_id: newTicket.customer_id || null, status: newTicket.status,
-        priority: newTicket.priority, category: newTicket.category, created_by: session.user.id
+        priority: newTicket.priority, category: newTicket.category, assigned_to: newTicket.assigned_to || session.user.id, portal_visible: newTicket.portal_visible !== false, created_by: session.user.id
       }]).select(`*, customers (name, company)`).single();
       if (error) { console.error('Error adding ticket:', error); setTicketError(error.message); return; }
       setTickets(prev => [data, ...prev]);
-      setNewTicket({ title: '', description: '', customer_id: '', status: 'Open', priority: 'Medium', category: 'General' });
+      setNewTicket({ title: '', description: '', customer_id: '', status: 'Open', priority: 'Medium', category: 'General', assigned_to: '', portal_visible: true });
       setShowTicketForm(false);
     } catch (error) { console.error('Unexpected error:', error); setTicketError('Something went wrong. Please try again.'); }
     finally { setTicketSaving(false); }
@@ -1775,7 +2825,7 @@ async function signUpWithEmail(event) {
       const { data, error } = await supabase.from('tickets').update({
         title: editingTicket.title.trim(), description: editingTicket.description?.trim() || null,
         customer_id: editingTicket.customer_id || null, status: editingTicket.status,
-        priority: editingTicket.priority, category: editingTicket.category, updated_at: new Date().toISOString()
+        priority: editingTicket.priority, category: editingTicket.category, assigned_to: editingTicket.assigned_to || null, portal_visible: editingTicket.source === 'portal' ? true : !!editingTicket.portal_visible, updated_at: new Date().toISOString()
       }).eq('id', editingTicket.id).select(`*, customers (name, company)`).single();
       if (error) { console.error('Error updating ticket:', error); setEditTicketError(error.message); return; }
       setTickets(prev => prev.map(ticket => ticket.id === data.id ? data : ticket));
@@ -1790,6 +2840,31 @@ async function signUpWithEmail(event) {
     if (error) { console.error('Error updating ticket status:', error); setTicketError(error.message); return; }
     setTickets(prev => prev.map(ticket => ticket.id === id ? data : ticket));
     if (selectedTicket?.id === id) setSelectedTicket(data);
+  }
+
+  async function assignTicket(id, userId) {
+    const { data, error } = await supabase.from('tickets')
+      .update({ assigned_to: userId || null, updated_at: new Date().toISOString() })
+      .eq('id', id)
+      .select(`*, customers (name, company)`)
+      .single();
+    if (error) {
+      console.error('Error assigning ticket:', error);
+      showToast(`Could not assign ticket: ${error.message}`);
+      return;
+    }
+    setTickets(prev => prev.map(ticket => ticket.id === id ? data : ticket));
+    if (selectedTicket?.id === id) setSelectedTicket(data);
+    if (userId && userId !== session.user.id) {
+      const { error: notifyError } = await supabase.from('notifications').insert({
+        user_id: userId,
+        type: 'ticket_assigned',
+        title: 'Ticket assigned to you',
+        message: data.title,
+        link: 'Tickets'
+      });
+      if (notifyError) console.error('Could not notify assignee:', notifyError);
+    }
   }
 
   async function deleteTicket(id) {
@@ -2008,6 +3083,7 @@ async function signUpWithEmail(event) {
           <button type="button" className="avatar avatar-button" title="Edit profile" onClick={() => { setProfileDraft(profileName); setProfileModalOpen(true); }}>{(displayUserName[0] || 'U').toUpperCase()}</button>
         </div>
       </header>
+      <RefreshContext.Provider value={{ refreshAll, refreshing }}>
       <section className="page-content">
         {page === 'Dashboard' && (
           <Dashboard revenue={revenue} customers={customers} deals={deals} activities={activities} tickets={tickets} setPage={setPage} formatAmount={formatAmount} onSelectCustomer={setSelectedCustomer} onEditCustomer={setEditingCustomer} onDeleteCustomer={deleteCustomer} />
@@ -2028,11 +3104,12 @@ async function signUpWithEmail(event) {
             onEditCustomer={setEditingCustomer}
           />
         )}
-        {page === 'Products' && <Products products={products} onAdd={addProduct} onDelete={deleteProduct} currentUserId={session.user.id} isAdmin={authorizationProfile?.role === 'admin'} />}
-        {page === 'Leads' && <Leads leads={leads} customers={customers} onAdd={addLead} onUpdate={updateLead} onDelete={deleteLead} currentUserId={session.user.id} isAdmin={authorizationProfile?.role === 'admin'} />}
+        {page === 'Products' && <Products products={products} supportEngineers={supportEngineers} solutionSupport={solutionSupport} onAdd={addProduct} onUpdate={updateProduct} onDelete={deleteProduct} onUpdateFamilySupport={syncSolutionSupport} currentUserId={session.user.id} isAdmin={authorizationProfile?.role === 'admin'} />}
+        {page === 'Technical Support' && <SupportEngineers supportEngineers={supportEngineers} solutionSupport={solutionSupport} onAdd={addSupportEngineer} onUpdate={updateSupportEngineer} onDeactivate={deactivateSupportEngineer} isAdmin={authorizationProfile?.role === 'admin'} />}
+        {page === 'Leads' && <Leads leads={leads} customers={customers} products={products} leadProducts={leadProducts} onAdd={addLead} onUpdate={updateLead} onSyncProducts={syncLeadProducts} onDelete={deleteLead} currentUserId={session.user.id} isAdmin={authorizationProfile?.role === 'admin'} />}
         {page === 'Email' && <EmailPage emailLogs={emailLogs} customers={customers} integrations={emailIntegrations} loading={emailIntegrationLoading} error={emailIntegrationError} onConnect={connectEmailProvider} onDisconnect={disconnectEmailProvider} onAdd={async payload => { try { await addEmailLog(payload); showToast('Email logged.'); } catch (e) { alert(e.message); } }} />}
         {page === 'Calendar' && <CalendarPage events={calendarEvents} customers={customers} onAdd={addCalendarEvent} onUpdate={updateCalendarEvent} onDelete={deleteCalendarEvent} />}
-        {page === 'Quotes' && <Quotes quotes={quotes} customers={customers} onAdd={addQuote} onUpdate={updateQuote} formatAmount={formatAmount} currentUserId={session.user.id} isAdmin={authorizationProfile?.role === 'admin'} />}
+        {page === 'Quotes' && <Quotes quotes={quotes} products={products} quoteItems={quoteItems} onLoadQuoteItems={loadQuoteItems} onAdd={addQuote} onUpdate={updateQuote} onDelete={deleteQuote} formatAmount={formatAmount} currentUserId={session.user.id} isAdmin={authorizationProfile?.role === 'admin'} />}
         {page === 'Invoices' && <Invoices invoices={invoices} payments={payments} customers={customers} onAdd={addInvoice} onUpdate={updateInvoice} onAddPayment={addPayment} formatAmount={formatAmount} currentUserId={session.user.id} isAdmin={authorizationProfile?.role === 'admin'} />}
         {page === 'Documents' && <Documents documents={documents} customers={customers} onUpload={uploadDocument} onDownload={downloadDocument} onDelete={deleteDocument} />}
         {page === 'Automation' && <Automation workflows={workflows} onAdd={addWorkflow} onUpdate={updateWorkflow} />}
@@ -2042,6 +3119,8 @@ async function signUpWithEmail(event) {
           <Pipeline
             deals={deals}
             customers={customers}
+            dealSupport={dealSupport}
+            supportEngineers={supportEngineers}
             moveDeal={moveDeal}
             deleteDeal={deleteDeal}
             formatAmount={formatAmount}
@@ -2052,12 +3131,16 @@ async function signUpWithEmail(event) {
               setEditDealError('');
               setEditingDeal({
                 ...deal,
-                amount: String(deal.amount ?? '')
+                amount: String(deal.amount ?? ''),
+                product_ids: dealProducts.filter(row => row.deal_id === deal.id).map(row => row.product_id),
+                support_engineer_ids: dealSupport.filter(row => row.deal_id === deal.id).map(row => row.support_engineer_id)
               });
             }}
             onAdd={() => {
               setDealError('');
-              setNewDeal({ title: '', company: '', amount: '', stage: 'New Lead', customer_id: '', new_customer_name: '', new_customer_email: '', new_customer_company: '', closure_start_at: '', closure_end_at: '' });
+              setNewDeal({ title: '', company: '', amount: '', stage: 'New Lead', customer_id: '', contact_name: '', contact_email: '', contact_phone: '', new_customer_name: '', new_customer_email: '', new_customer_phone: '', new_customer_company: '', closure_start_at: '', closure_end_at: '', support_engineer_ids: [] });
+              setSelectedDealProductIds([]);
+              setExpandedDealVendor(null);
               setShowDealForm(true);
             }}
           />
@@ -2076,6 +3159,10 @@ async function signUpWithEmail(event) {
             onView={setSelectedTicket}
             currentUserId={session.user.id}
             isAdmin={authorizationProfile?.role === 'admin'}
+            canManage={canManageTicket}
+            staffName={staffName}
+            staffOptions={getStaffOptions()}
+            onAssign={assignTicket}
           />
         )}
         {page === 'Chat' && <Chat />}
@@ -2084,6 +3171,7 @@ async function signUpWithEmail(event) {
         {page === 'UserManagement' && <UserManagement users={authorizedUsers} loading={usersLoading} error={usersError} onRefresh={fetchAuthorizedUsers} onUpdateUser={updateAuthorizedUser} currentUserId={session?.user?.id} pendingPortalAccounts={pendingPortalAccounts} portalRequestsLoading={portalRequestsLoading} portalRequestsError={portalRequestsError} portalRequestsNotice={portalRequestsNotice} onRefreshPortalRequests={fetchPendingPortalAccounts} onReviewPortalRequest={reviewPortalRequest} portalRequestActionId={portalRequestActionId} />}
         {page === 'Settings' && <SettingsPage currency={currency} setCurrency={setCurrency} />}
       </section>
+      </RefreshContext.Provider>
     </main>
     {showCustomerForm && (
       <div className="modal-backdrop">
@@ -2127,6 +3215,7 @@ async function signUpWithEmail(event) {
     )}
     {selectedCustomer && (
       <CustomerDetail
+        currentUserId={session.user.id}
         customer={selectedCustomer}
         deals={deals}
         activities={activities}
@@ -2139,7 +3228,7 @@ async function signUpWithEmail(event) {
         formatAmount={formatAmount}
         onClose={() => setSelectedCustomer(null)}
         onEdit={c => { setSelectedCustomer(null); setEditingCustomer(c); }}
-        onAddDeal={c => { setSelectedCustomer(null); setDealError(''); setNewDeal(d => ({ ...d, customer_id: c.id, company: c.company || '' })); setShowDealForm(true); }}
+        onAddDeal={c => { setSelectedCustomer(null); setDealError(''); setNewDeal(d => ({ ...d, customer_id: c.id, company: c.company || '' })); setSelectedDealProductIds([]); setExpandedDealVendor(null); setShowDealForm(true); }}
         onAddActivity={c => { setSelectedCustomer(null); setActivityError(''); setNewActivity(a => ({ ...a, customer_id: c.id })); setShowActivityForm(true); }}
         onAddTicket={c => { setSelectedCustomer(null); setTicketError(''); setNewTicket(t => ({ ...t, customer_id: c.id })); setShowTicketForm(true); }}
       />
@@ -2228,7 +3317,7 @@ async function signUpWithEmail(event) {
     )}
     {showDealForm && (
       <div className="modal-backdrop">
-        <form className="modal" onSubmit={addDeal}>
+        <form className="modal deal-modal" onSubmit={addDeal}>
           <div className="modal-heading">
             <h2>New deal</h2>
 
@@ -2277,6 +3366,34 @@ async function signUpWithEmail(event) {
             />
           </label>
           <label>
+            Contact name
+            <input
+              value={newDeal.contact_name}
+              onChange={e => setNewDeal({ ...newDeal, contact_name: e.target.value })}
+              placeholder="e.g. Lola Farges"
+            />
+          </label>
+
+          <label>
+            Contact email
+            <input
+              type="email"
+              value={newDeal.contact_email}
+              onChange={e => setNewDeal({ ...newDeal, contact_email: e.target.value })}
+              placeholder="name@company.com"
+            />
+          </label>
+
+          <label>
+            Contact phone
+            <input
+              value={newDeal.contact_phone}
+              onChange={e => setNewDeal({ ...newDeal, contact_phone: e.target.value })}
+              placeholder="+234..."
+            />
+          </label>
+
+          <label>
             Customer
 
             <select
@@ -2292,6 +3409,9 @@ async function signUpWithEmail(event) {
                   ...newDeal,
                   customer_id: customerId,
                   company: selectedCustomer?.company || newDeal.company,
+                  contact_name: selectedCustomer?.name || (customerId === '__new__' ? newDeal.contact_name : ''),
+                  contact_email: selectedCustomer?.email || (customerId === '__new__' ? newDeal.contact_email : ''),
+                  contact_phone: selectedCustomer?.phone || (customerId === '__new__' ? newDeal.contact_phone : ''),
                   new_customer_name: customerId === '__new__' ? newDeal.new_customer_name : '',
                   new_customer_email: customerId === '__new__' ? newDeal.new_customer_email : '',
                   new_customer_company: customerId === '__new__' ? newDeal.new_customer_company : ''
@@ -2314,9 +3434,76 @@ async function signUpWithEmail(event) {
               <p className="settings-hint">This customer will be created and linked to the deal when you save.</p>
               <label>Customer/contact name<input required value={newDeal.new_customer_name} onChange={e => setNewDeal({ ...newDeal, new_customer_name: e.target.value })} placeholder="Contact or customer name" /></label>
               <label>Customer email<input required type="email" value={newDeal.new_customer_email} onChange={e => setNewDeal({ ...newDeal, new_customer_email: e.target.value })} placeholder="name@company.com" /></label>
+              <label>Customer phone<input value={newDeal.new_customer_phone} onChange={e => setNewDeal({ ...newDeal, new_customer_phone: e.target.value })} placeholder="+234..." /></label>
               <label>Company name<input value={newDeal.new_customer_company} onChange={e => setNewDeal({ ...newDeal, new_customer_company: e.target.value, company: e.target.value || newDeal.company })} placeholder="Company (optional)" /></label>
             </div>
           )}
+          <div className="product-selector">
+            <div className="product-selector-heading">
+              <div>
+                <strong>Solutions</strong>
+                <span>{selectedDealProductIds.length} selected</span>
+              </div>
+            </div>
+            <div className="product-vendor-list">
+              {['F5', 'Kong', 'IRONSCALES', 'SolarWinds', 'Utimaco'].map(vendor => {
+                const vendorProducts = products.filter(product =>
+                  (product.vendor || '').trim().toLowerCase() === vendor.trim().toLowerCase() && product.status !== 'Inactive'
+                );
+                if (!vendorProducts.length) return null;
+                const expanded = expandedDealVendor === vendor;
+                return (
+                  <div key={vendor} className="product-vendor-group">
+                    <button type="button" className="product-vendor-button" onClick={() => setExpandedDealVendor(expanded ? null : vendor)}>
+                      <span>{vendor}</span>
+                      <span>{vendorProducts.filter(p => selectedDealProductIds.includes(p.id)).length} selected</span>
+                    </button>
+                    {expanded && (
+                      <div className="product-vendor-children">
+                        {vendorProducts.map(product => {
+                          const selected = selectedDealProductIds.includes(product.id);
+                          return (
+                            <label key={product.id} className={`product-option ${selected ? 'selected' : ''}`}>
+                              <input
+                                type="checkbox"
+                                checked={selected}
+                                onChange={() => setSelectedDealProductIds(prev => selected ? prev.filter(id => id !== product.id) : [...prev, product.id])}
+                              />
+                              <span>{product.name}</span>
+                            </label>
+                          );
+                        })}
+                      </div>
+                    )}
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+
+          <div className="product-selector">
+            <div className="product-selector-heading">
+              <div>
+                <strong>Technical Support</strong>
+                <span>{(newDeal.support_engineer_ids || []).length} selected</span>
+              </div>
+            </div>
+            <div className="product-vendor-children">
+              {supportEngineers.filter(engineer => engineer.status === 'Active').length === 0 ? (
+                <p className="settings-hint">No active support engineers have been added yet.</p>
+              ) : supportEngineers.filter(engineer => engineer.status === 'Active').map(engineer => {
+                const selected = (newDeal.support_engineer_ids || []).includes(engineer.id);
+                return (
+                  <label key={engineer.id} className={`product-option ${selected ? 'selected' : ''}`}>
+                    <input type="checkbox" checked={selected} onChange={() => setNewDeal(prev => ({ ...prev, support_engineer_ids: selected ? prev.support_engineer_ids.filter(id => id !== engineer.id) : [...prev.support_engineer_ids, engineer.id] }))} />
+                    <span>{engineer.name}{engineer.role ? ` — ${engineer.role}` : ''}</span>
+                  </label>
+                );
+              })}
+            </div>
+          </div>
+
+
           <label>
             Deal amount (USD)
 
@@ -2372,7 +3559,7 @@ async function signUpWithEmail(event) {
     )}
     {editingDeal && (
       <div className="modal-backdrop">
-        <form className="modal" onSubmit={updateDeal}>
+        <form className="modal deal-modal" onSubmit={updateDeal}>
           <div className="modal-heading">
             <h2>Edit deal</h2>
 
@@ -2422,6 +3609,34 @@ async function signUpWithEmail(event) {
             />
           </label>
           <label>
+            Contact name
+            <input
+              value={editingDeal.contact_name || ''}
+              onChange={e => setEditingDeal({ ...editingDeal, contact_name: e.target.value })}
+              placeholder="e.g. Lola Farges"
+            />
+          </label>
+
+          <label>
+            Contact email
+            <input
+              type="email"
+              value={editingDeal.contact_email || ''}
+              onChange={e => setEditingDeal({ ...editingDeal, contact_email: e.target.value })}
+              placeholder="name@company.com"
+            />
+          </label>
+
+          <label>
+            Contact phone
+            <input
+              value={editingDeal.contact_phone || ''}
+              onChange={e => setEditingDeal({ ...editingDeal, contact_phone: e.target.value })}
+              placeholder="+234..."
+            />
+          </label>
+
+          <label>
             Customer
 
             <select
@@ -2450,6 +3665,70 @@ async function signUpWithEmail(event) {
               ))}
             </select>
           </label>
+
+          <div className="product-selector">
+            <div className="product-selector-heading">
+              <div>
+                <strong>Solutions</strong>
+                <span>{(editingDeal.product_ids || []).length} selected</span>
+              </div>
+            </div>
+            <div className="product-vendor-list">
+              {['F5', 'Kong', 'IRONSCALES', 'SolarWinds', 'Utimaco'].map(vendor => {
+                const vendorProducts = products.filter(product =>
+                  (product.vendor || '').trim().toLowerCase() === vendor.trim().toLowerCase() && product.status !== 'Inactive'
+                );
+                if (!vendorProducts.length) return null;
+                const selectedIds = editingDeal.product_ids || [];
+                const expanded = expandedDealVendor === `edit-${vendor}`;
+                return (
+                  <div key={vendor} className="product-vendor-group">
+                    <button type="button" className="product-vendor-button" onClick={() => setExpandedDealVendor(expanded ? null : `edit-${vendor}`)}>
+                      <span>{vendor}</span>
+                      <span>{vendorProducts.filter(p => selectedIds.includes(p.id)).length} selected</span>
+                    </button>
+                    {expanded && (
+                      <div className="product-vendor-children">
+                        {vendorProducts.map(product => {
+                          const selected = selectedIds.includes(product.id);
+                          return (
+                            <label key={product.id} className={`product-option ${selected ? 'selected' : ''}`}>
+                              <input
+                                type="checkbox"
+                                checked={selected}
+                                onChange={() => setEditingDeal(prev => ({ ...prev, product_ids: selected ? selectedIds.filter(id => id !== product.id) : [...selectedIds, product.id] }))}
+                              />
+                              <span>{product.name}</span>
+                            </label>
+                          );
+                        })}
+                      </div>
+                    )}
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+
+          <div className="product-selector">
+            <div className="product-selector-heading">
+              <div>
+                <strong>Technical Support</strong>
+                <span>{(editingDeal.support_engineer_ids || []).length} selected</span>
+              </div>
+            </div>
+            <div className="product-vendor-children">
+              {supportEngineers.filter(engineer => engineer.status === 'Active').map(engineer => {
+                const selected = (editingDeal.support_engineer_ids || []).includes(engineer.id);
+                return (
+                  <label key={engineer.id} className={`product-option ${selected ? 'selected' : ''}`}>
+                    <input type="checkbox" checked={selected} onChange={() => setEditingDeal(prev => ({ ...prev, support_engineer_ids: selected ? prev.support_engineer_ids.filter(id => id !== engineer.id) : [...prev.support_engineer_ids, engineer.id] }))} />
+                    <span>{engineer.name}{engineer.role ? ` — ${engineer.role}` : ''}</span>
+                  </label>
+                );
+              })}
+            </div>
+          </div>
 
           <label>
             Deal amount (USD)
@@ -2674,8 +3953,8 @@ async function signUpWithEmail(event) {
     )}
     {selectedActivity && <ActivityDetail activity={selectedActivity} customer={customers.find(c => c.id === selectedActivity.customer_id)} ownerProfiles={ownerProfiles} currentUserEmail={session?.user?.email} onClose={() => setSelectedActivity(null)} onEdit={activity => { setSelectedActivity(null); setEditActivityError(''); setEditingActivity({ ...activity, activity_date: formatDateTimeLocal(activity.activity_date) }); }} />}
     {editingActivity && <div className="modal-backdrop" onClick={() => setEditingActivity(null)}><form className="modal" onSubmit={updateActivity} onClick={e => e.stopPropagation()}><div className="modal-heading"><h2>Edit Activity</h2><button type="button" className="icon-btn" onClick={() => setEditingActivity(null)}><X size={18} /></button></div>{editActivityError && <p className="form-error">{editActivityError}</p>}<label>Activity title<input type="text" value={editingActivity.title || ''} onChange={e => setEditingActivity({ ...editingActivity, title: e.target.value })} required /></label><label>Activity type<select value={editingActivity.type || 'Task'} onChange={e => setEditingActivity({ ...editingActivity, type: e.target.value })}><option value="Task">Task</option><option value="Call">Call</option><option value="Meeting">Meeting</option><option value="Email">Email</option><option value="Follow-up">Follow-up</option></select></label><label>Due date and time<input type="datetime-local" value={editingActivity.activity_date || ''} onChange={e => setEditingActivity({ ...editingActivity, activity_date: e.target.value })} /></label><div className="activity-form-grid"><label>Priority<select value={editingActivity.priority || 'Medium'} onChange={e => setEditingActivity({ ...editingActivity, priority: e.target.value })}><option value="Low">Low</option><option value="Medium">Medium</option><option value="High">High</option><option value="Urgent">Urgent</option></select></label><label>Assign to<select value={editingActivity.assigned_to || session.user.id} onChange={e => setEditingActivity({ ...editingActivity, assigned_to: e.target.value })}><option value={session.user.id}>{profileName.trim() || session.user.email || 'Me'} (me)</option>{Object.entries(ownerProfiles).filter(([id, name]) => id !== session.user.id).map(([id, name]) => <option key={id} value={id}>{name || 'Team member'}</option>)}</select></label></div><label>Customer<select value={editingActivity.customer_id || ''} onChange={e => setEditingActivity({ ...editingActivity, customer_id: e.target.value })}><option value="">No customer selected</option>{customers.map(customer => <option key={customer.id} value={customer.id}>{customer.name}{customer.company ? ` — ${customer.company}` : ''}</option>)}</select></label><label>Notes<textarea value={editingActivity.notes || ''} onChange={e => setEditingActivity({ ...editingActivity, notes: e.target.value })} rows="4" /></label><label>Status<select value={editingActivity.status || 'Scheduled'} onChange={e => setEditingActivity({ ...editingActivity, status: e.target.value })}><option value="Scheduled">Scheduled</option><option value="In Progress">In Progress</option><option value="Completed">Completed</option><option value="Cancelled">Cancelled</option></select></label><div className="modal-actions"><button type="button" className="secondary-btn" onClick={() => setEditingActivity(null)}>Cancel</button><button type="submit" className="primary-btn" disabled={editActivitySaving}>{editActivitySaving ? 'Saving...' : 'Save changes'}</button></div></form></div>}
-    {selectedTicket && <TicketDetail ticket={selectedTicket} onClose={() => setSelectedTicket(null)} onEdit={ticket => { setSelectedTicket(null); setEditTicketError(''); setEditingTicket(ticket); }} />}
-    {editingTicket && <div className="modal-backdrop" onClick={() => setEditingTicket(null)}><form className="modal" onSubmit={updateTicket} onClick={e => e.stopPropagation()}><div className="modal-heading"><h2>Edit Ticket</h2><button type="button" className="icon-btn" onClick={() => setEditingTicket(null)}><X size={18} /></button></div>{editTicketError && <p className="form-error">{editTicketError}</p>}<label>Ticket title<input type="text" value={editingTicket.title || ''} onChange={e => setEditingTicket({ ...editingTicket, title: e.target.value })} required /></label><label>Description<textarea value={editingTicket.description || ''} onChange={e => setEditingTicket({ ...editingTicket, description: e.target.value })} rows="4" /></label><label>Customer<select value={editingTicket.customer_id || ''} onChange={e => setEditingTicket({ ...editingTicket, customer_id: e.target.value })}><option value="">No customer selected</option>{customers.map(customer => <option key={customer.id} value={customer.id}>{customer.name}{customer.company ? ` — ${customer.company}` : ''}</option>)}</select></label><label>Category<select value={editingTicket.category || 'General'} onChange={e => setEditingTicket({ ...editingTicket, category: e.target.value })}><option value="General">General</option><option value="Technical">Technical</option><option value="Billing">Billing</option><option value="Account">Account</option><option value="Feature Request">Feature Request</option></select></label><label>Priority<select value={editingTicket.priority || 'Medium'} onChange={e => setEditingTicket({ ...editingTicket, priority: e.target.value })}><option value="Low">Low</option><option value="Medium">Medium</option><option value="High">High</option><option value="Urgent">Urgent</option></select></label><label>Status<select value={editingTicket.status || 'Open'} onChange={e => setEditingTicket({ ...editingTicket, status: e.target.value })}><option value="Open">Open</option><option value="In Progress">In Progress</option><option value="Resolved">Resolved</option><option value="Closed">Closed</option></select></label><div className="modal-actions"><button type="button" className="secondary-btn" onClick={() => setEditingTicket(null)}>Cancel</button><button type="submit" className="primary-btn" disabled={editTicketSaving}>{editTicketSaving ? 'Saving...' : 'Save changes'}</button></div></form></div>}
+    {selectedTicket && <TicketDetail ticket={tickets.find(t => t.id === selectedTicket.id) || selectedTicket} onRefresh={fetchTickets} staffName={staffName} staffOptions={getStaffOptions()} currentUserId={session.user.id} canManage={canManageTicket} onStatusChange={updateTicketStatus} onAssign={assignTicket} onClose={() => setSelectedTicket(null)} onEdit={ticket => { setSelectedTicket(null); setEditTicketError(''); setEditingTicket(ticket); }} />}
+    {editingTicket && <div className="modal-backdrop" onClick={() => setEditingTicket(null)}><form className="modal" onSubmit={updateTicket} onClick={e => e.stopPropagation()}><div className="modal-heading"><h2>Edit Ticket</h2><button type="button" className="icon-btn" onClick={() => setEditingTicket(null)}><X size={18} /></button></div>{editTicketError && <p className="form-error">{editTicketError}</p>}<label>Ticket title<input type="text" value={editingTicket.title || ''} onChange={e => setEditingTicket({ ...editingTicket, title: e.target.value })} required /></label><label>Description<textarea value={editingTicket.description || ''} onChange={e => setEditingTicket({ ...editingTicket, description: e.target.value })} rows="4" /></label><label>Customer<select value={editingTicket.customer_id || ''} onChange={e => setEditingTicket({ ...editingTicket, customer_id: e.target.value })}><option value="">No customer selected</option>{customers.map(customer => <option key={customer.id} value={customer.id}>{customer.name}{customer.company ? ` — ${customer.company}` : ''}</option>)}</select></label><label>Assign to<select value={editingTicket.assigned_to || ''} onChange={e => setEditingTicket({ ...editingTicket, assigned_to: e.target.value })}><option value="">Unassigned</option>{getStaffOptions().map(u => <option key={u.user_id} value={u.user_id}>{staffName(u.user_id)}</option>)}</select></label>{editingTicket.source !== 'portal' && <label className="portal-check-row"><input type="checkbox" checked={!!editingTicket.portal_visible} onChange={e => setEditingTicket({ ...editingTicket, portal_visible: e.target.checked })} />Show this ticket in the customer's portal (needs a linked customer)</label>}<label>Category<select value={editingTicket.category || 'General'} onChange={e => setEditingTicket({ ...editingTicket, category: e.target.value })}><option value="General">General</option><option value="Technical">Technical</option><option value="Billing">Billing</option><option value="Account">Account</option><option value="Feature Request">Feature Request</option></select></label><label>Priority<select value={editingTicket.priority || 'Medium'} onChange={e => setEditingTicket({ ...editingTicket, priority: e.target.value })}><option value="Low">Low</option><option value="Medium">Medium</option><option value="High">High</option><option value="Urgent">Urgent</option></select></label><label>Status<select value={editingTicket.status || 'Open'} onChange={e => setEditingTicket({ ...editingTicket, status: e.target.value })}><option value="Open">Open</option><option value="In Progress">In Progress</option><option value="Resolved">Resolved</option><option value="Closed">Closed</option></select></label><div className="modal-actions"><button type="button" className="secondary-btn" onClick={() => setEditingTicket(null)}>Cancel</button><button type="submit" className="primary-btn" disabled={editTicketSaving}>{editTicketSaving ? 'Saving...' : 'Save changes'}</button></div></form></div>}
     {showTicketForm && (
       <div className="modal-backdrop">
         <form className="modal" onSubmit={addTicket}>
@@ -2744,6 +4023,16 @@ async function signUpWithEmail(event) {
                 </option>
               ))}
             </select>
+          </label>
+          <label>
+            Assign to
+            <select value={newTicket.assigned_to || session.user.id} onChange={e => setNewTicket({ ...newTicket, assigned_to: e.target.value })}>
+              {getStaffOptions().map(u => <option key={u.user_id} value={u.user_id}>{staffName(u.user_id)}</option>)}
+            </select>
+          </label>
+          <label className="portal-check-row">
+            <input type="checkbox" checked={newTicket.portal_visible !== false} onChange={e => setNewTicket({ ...newTicket, portal_visible: e.target.checked })} />
+            Show this ticket in the customer's portal (needs a linked customer)
           </label>
           <label>
             Category
@@ -2941,15 +4230,26 @@ async function signUpWithEmail(event) {
   </div>
 }
 
-function PageHeading({ eyebrow, title, description, action, onAction }) {
+function PageHeading({ eyebrow, title, description, action, onAction, refresh = true }) {
+  const refreshCtx = useContext(RefreshContext);
+
   return <div className="page-heading">
     <div>
       <div className="eyebrow">{eyebrow}</div>
       <h1>{title}</h1>
       <p>{description}</p>
     </div>
-    {action && <button className="primary-btn" onClick={onAction}>
-      <Plus size={17} />{action}</button>}
+    <div className="page-heading-actions">
+      {refresh && refreshCtx && (
+        <button type="button" className="secondary-btn refresh-btn" onClick={() => refreshCtx.refreshAll()} disabled={refreshCtx.refreshing} title="Reload the latest data">
+          <RefreshCw size={15} className={refreshCtx.refreshing ? 'spin' : ''} />
+          {refreshCtx.refreshing ? 'Refreshing…' : 'Refresh'}
+        </button>
+      )}
+      {action && <button className="primary-btn" onClick={onAction}>
+        <Plus size={17} />{action}
+      </button>}
+    </div>
   </div>
 }
 const PIPELINE_STAGES = ['New Lead', 'Qualified', 'Proposal', 'Won'];
@@ -3244,15 +4544,21 @@ function CustomerTable({ customers, deals = [], formatAmount, onSelectCustomer, 
             <th>Customer</th>
             <th>Company</th>
             <th>Status</th>
-            <th>Value</th>
+            <th>Mail / Contact</th>
             <th>Open deals</th>
+            <th>Value</th>
+            <th>Start date</th>
+            <th>End date</th>
             <th></th>
           </tr>
         </thead>
         <tbody>
           {customers.map(c => {
             const status = c.status || 'Active';
-            const openDeals = deals.filter(d => d.customer_id === c.id && d.stage !== 'Won').length;
+            const customerDeals = deals.filter(d => d.customer_id === c.id);
+            const openDeals = customerDeals.filter(d => !['Won', 'Lost'].includes(d.stage));
+            const allStarts = customerDeals.map(d => d.closure_start_at).filter(Boolean).sort((a, b) => new Date(a) - new Date(b));
+            const allEnds = customerDeals.map(d => d.closure_end_at).filter(Boolean).sort((a, b) => new Date(b) - new Date(a));
             return (
               <tr key={c.id}>
                 <td onClick={() => onSelectCustomer?.(c)} style={{ cursor: onSelectCustomer ? 'pointer' : 'default' }}>
@@ -3260,14 +4566,21 @@ function CustomerTable({ customers, deals = [], formatAmount, onSelectCustomer, 
                     <div className="avatar small">{(c.name || '?').split(' ').map(x => x[0]).join('').slice(0, 2).toUpperCase()}</div>
                     <div>
                       <strong>{c.name}</strong>
-                      <span>{c.email}</span>
                     </div>
                   </div>
                 </td>
                 <td>{c.company || '—'}</td>
                 <td><span className={`status ${status.toLowerCase()}`}>{status}</span></td>
-                <td>{formatAmount(lifetimeValue(c, deals))}</td>
-                <td>{openDeals}</td>
+                <td>
+                  <div className="customer-contact-cell">
+                    <span>{c.email || '—'}</span>
+                    <span>{c.phone || '—'}</span>
+                  </div>
+                </td>
+                <td>{openDeals.length}</td>
+                <td>{formatAmount(sumAmount(customerDeals))}</td>
+                <td>{allStarts.length ? formatDate(allStarts[0]) : '—'}</td>
+                <td>{allEnds.length ? formatDate(allEnds[0]) : '—'}</td>
                 <td>
                   <div style={{ position: 'relative' }}>
                     <button
@@ -3375,11 +4688,91 @@ function Customers({ customers, allCustomers, deals, search, setSearch, statusFi
   );
 }
 
-function CustomerDetail({ customer, deals, activities, tickets, quotes = [], invoices = [], payments = [], emailLogs = [], documents = [], formatAmount, onClose, onEdit, onAddDeal, onAddActivity, onAddTicket }) {
+function PortalSharingPanel({ customer, deals, quotes, invoices, documents, currentUserId, formatAmount }) {
+  const [shared, setShared] = useState({});
+  const [loading, setLoading] = useState(true);
+  const [busyKey, setBusyKey] = useState('');
+  const [error, setError] = useState('');
+
+  useEffect(() => {
+    let cancelled = false;
+    async function load() {
+      setLoading(true);
+      const { data, error: loadError } = await supabase
+        .from('customer_portal_shared_records')
+        .select('id, record_type, record_id')
+        .eq('customer_id', customer.id);
+      if (cancelled) return;
+      if (loadError) setError(loadError.message);
+      else setShared(Object.fromEntries((data || []).map(r => [`${r.record_type}:${r.record_id}`, r.id])));
+      setLoading(false);
+    }
+    load();
+    return () => { cancelled = true; };
+  }, [customer.id]);
+
+  async function toggle(type, id) {
+    const key = `${type}:${id}`;
+    setBusyKey(key);
+    setError('');
+    if (shared[key]) {
+      const { error: deleteError } = await supabase.from('customer_portal_shared_records').delete().eq('id', shared[key]);
+      if (deleteError) setError(deleteError.message);
+      else setShared(prev => { const next = { ...prev }; delete next[key]; return next; });
+    } else {
+      const { data, error: insertError } = await supabase
+        .from('customer_portal_shared_records')
+        .insert({ customer_id: customer.id, record_type: type, record_id: id, shared_by: currentUserId })
+        .select('id')
+        .single();
+      if (insertError) setError(insertError.message);
+      else setShared(prev => ({ ...prev, [key]: data.id }));
+    }
+    setBusyKey('');
+  }
+
+  const customerEmail = (customer.email || '').trim().toLowerCase();
+  const myQuotes = quotes.filter(q => customerEmail && (q.email || '').trim().toLowerCase() === customerEmail);
+  const groups = [
+    ['deal', 'Deals', deals.filter(d => d.customer_id === customer.id).map(d => ({ id: d.id, title: d.title, meta: `${d.stage} · ${formatAmount(d.amount)}` }))],
+    ['quote', 'Quotes', myQuotes.map(q => ({ id: q.id, title: q.title || q.quote_number, meta: `${q.quote_number || 'Quote'} · ${q.status || 'Draft'} · ${formatAmount(q.total ?? q.amount)}` }))],
+    ['invoice', 'Invoices', invoices.filter(i => i.customer_id === customer.id).map(i => ({ id: i.id, title: i.title || i.invoice_number, meta: `${i.invoice_number || 'Invoice'} · ${i.status} · ${formatAmount(i.amount)}` }))],
+    ['document', 'Documents', documents.filter(d => d.customer_id === customer.id).map(d => ({ id: d.id, title: d.name, meta: d.mime_type || 'File' }))]
+  ];
+  const total = groups.reduce((sum, g) => sum + g[2].length, 0);
+  const sharedCount = Object.keys(shared).length;
+
+  return (
+    <div className="portal-share-panel">
+      <h3 className="detail-title">Customer portal sharing <span className="count-badge">{sharedCount} shared</span></h3>
+      <p className="customer-history-hint">Customers only see the records you switch on here. Support tickets they raise from the portal appear in their Support tab automatically.</p>
+      {error && <p className="form-error">{error}</p>}
+      {loading ? <p className="detail-empty">Loading…</p> : total === 0 ? (
+        <p className="detail-empty">This customer has no deals, quotes, invoices or documents to share yet.</p>
+      ) : groups.filter(g => g[2].length > 0).map(([type, label, items]) => (
+        <div key={type} className="portal-share-group">
+          <strong>{label}</strong>
+          {items.map(item => {
+            const key = `${type}:${item.id}`;
+            return (
+              <label key={key} className="portal-share-row">
+                <input type="checkbox" checked={!!shared[key]} disabled={busyKey === key} onChange={() => toggle(type, item.id)} />
+                <span><b>{item.title}</b><small>{item.meta}</small></span>
+                <em>{shared[key] ? 'Shared' : 'Private'}</em>
+              </label>
+            );
+          })}
+        </div>
+      ))}
+    </div>
+  );
+}
+
+function CustomerDetail({ currentUserId, customer, deals, activities, tickets, quotes = [], invoices = [], payments = [], emailLogs = [], documents = [], formatAmount, onClose, onEdit, onAddDeal, onAddActivity, onAddTicket }) {
   const myDeals = deals.filter(d => d.customer_id === customer.id);
   const myActivities = activities.filter(a => a.customer_id === customer.id);
   const myTickets = tickets.filter(t => t.customer_id === customer.id);
-  const myQuotes = quotes.filter(q => q.customer_id === customer.id);
+  const myQuotes = []; // Quotes V1 are standalone/manual and are not linked to customers yet.
   const myInvoices = invoices.filter(i => i.customer_id === customer.id);
   const invoiceIds = new Set(myInvoices.map(i => i.id));
   const myPayments = payments.filter(p => invoiceIds.has(p.invoice_id));
@@ -3393,7 +4786,6 @@ function CustomerDetail({ customer, deals, activities, tickets, quotes = [], inv
     ...myDeals.map(d => ({ key: `d-${d.id}`, kind: 'Deal', title: d.title, meta: `${d.stage} · ${formatAmount(d.amount)}`, date: d.created_at })),
     ...myActivities.map(a => ({ key: `a-${a.id}`, kind: 'Activity', title: a.title, meta: `${a.type || 'Task'} · ${a.status || 'Scheduled'}`, date: a.activity_date || a.created_at })),
     ...myTickets.map(t => ({ key: `t-${t.id}`, kind: 'Ticket', title: t.title, meta: `${t.priority || 'Medium'} · ${t.status}`, date: t.created_at })),
-    ...myQuotes.map(q => ({ key: `q-${q.id}`, kind: 'Quote', title: q.title || q.quote_number || 'Quote', meta: `${q.quote_number || 'Quote'} · ${q.status || 'Draft'} · ${formatAmount(q.amount)}`, date: q.created_at })),
     ...myInvoices.map(i => ({ key: `i-${i.id}`, kind: 'Invoice', title: i.title || i.invoice_number || 'Invoice', meta: `${i.invoice_number || 'Invoice'} · ${i.status || 'Draft'} · ${formatAmount(i.amount)}`, date: i.created_at })),
     ...myPayments.map(p => ({ key: `p-${p.id}`, kind: 'Payment', title: `Payment received · ${formatAmount(p.amount)}`, meta: `${p.payment_method || 'Payment'}${p.reference ? ` · Ref ${p.reference}` : ''}`, date: p.paid_at || p.created_at })),
     ...myEmailLogs.map(e => ({ key: `e-${e.id}`, kind: 'Email', title: e.subject || 'Email logged', meta: `${e.direction || 'Email'} · ${e.to_email || ''}`.trim(), date: e.sent_at || e.created_at })),
@@ -3453,11 +4845,13 @@ function CustomerDetail({ customer, deals, activities, tickets, quotes = [], inv
             ))}
           </ul>
         )}
+
+        <PortalSharingPanel customer={customer} deals={deals} quotes={quotes} invoices={invoices} documents={documents} currentUserId={currentUserId} formatAmount={formatAmount} />
       </div>
     </div>
   );
 }
-function Pipeline({ deals, customers, moveDeal, deleteDeal, onEdit, onAdd, formatAmount, currentUserId, ownerProfiles = {}, isAdmin }) {
+function Pipeline({ deals, customers, dealSupport = [], supportEngineers = [], moveDeal, deleteDeal, onEdit, onAdd, formatAmount, currentUserId, ownerProfiles = {}, isAdmin }) {
   const [query, setQuery] = useState('');
   const [mineOnly, setMineOnly] = useState(false);
   const [dragOver, setDragOver] = useState(null);
@@ -3550,6 +4944,16 @@ function Pipeline({ deals, customers, moveDeal, deleteDeal, onEdit, onAdd, forma
                       </small>
                     )}
                     <strong>{formatAmount(deal.amount)}</strong>
+                    {dealSupport.filter(row => row.deal_id === deal.id && row.support_engineers?.status === 'Active').length > 0 && (
+                      <div className="deal-customer" style={{ marginTop: 8 }}>
+                        <strong style={{ display: 'block', marginBottom: 4 }}>Technical Support</strong>
+                        <div style={{ display: 'flex', flexWrap: 'wrap', gap: 5 }}>
+                          {dealSupport.filter(row => row.deal_id === deal.id && row.support_engineers?.status === 'Active').map(row => (
+                            <span key={row.support_engineer_id} className="status active">{row.support_engineers?.name}</span>
+                          ))}
+                        </div>
+                      </div>
+                    )}
                     <small className="deal-customer">
                       Closure: {deal.closure_start_at ? formatDateTime(deal.closure_start_at) : 'Not set'} → {deal.closure_end_at ? formatDateTime(deal.closure_end_at) : 'Not set'}
                     </small>
@@ -3630,20 +5034,26 @@ function ActivityDetail({ activity, customer, ownerProfiles = {}, currentUserEma
   );
 }
 
-function Tickets({ tickets, error, onAdd, onStatusChange, onDelete, onEdit, onView, currentUserId, isAdmin }) {
+function Tickets({ tickets, error, onAdd, onStatusChange, onDelete, onEdit, onView, currentUserId, isAdmin, canManage, staffName, staffOptions, onAssign }) {
   const [query, setQuery] = useState('');
   const [status, setStatus] = useState('All');
   const [priority, setPriority] = useState('All');
+  const [queue, setQueue] = useState('All tickets');
   const q = query.trim().toLowerCase();
-  const filtered = tickets.filter(t => (status === 'All' || t.status === status) && (priority === 'All' || t.priority === priority) && (!q || `${t.title} ${t.description || ''} ${t.customers?.name || ''} ${t.category || ''}`.toLowerCase().includes(q)));
+  const matchesQueue = t => queue === 'All tickets'
+    || (queue === 'Assigned to me' && t.assigned_to === currentUserId)
+    || (queue === 'Unassigned' && !t.assigned_to)
+    || (queue === 'Customer portal' && t.source === 'portal');
+  const filtered = tickets.filter(t => (status === 'All' || t.status === status) && (priority === 'All' || t.priority === priority) && matchesQueue(t) && (!q || `${t.title} ${t.description || ''} ${t.customers?.name || ''} ${t.category || ''} ${t.ticket_number || ''}`.toLowerCase().includes(q)));
   const count = s => tickets.filter(t => t.status === s).length;
+  const portalOpen = tickets.filter(t => t.source === 'portal' && (t.status === 'Open' || t.status === 'In Progress')).length;
   return <>
-    <PageHeading eyebrow="SUPPORT" title="Tickets" description="Manage customer issues and support requests." action="Create Ticket" onAction={onAdd} />
+    <PageHeading eyebrow="SUPPORT" title="Tickets" description="Manage customer issues and support requests, including tickets raised from the customer portal." action="Create Ticket" onAction={onAdd} />
     <div className="stats-grid">
       <StatCard label="Open" value={count('Open')} hint="Waiting for a response" tone="orange" icon="!" />
       <StatCard label="In progress" value={count('In Progress')} hint="Being worked on" tone="blue" icon="◷" />
       <StatCard label="Resolved" value={count('Resolved') + count('Closed')} hint="Resolved or closed" tone="green" icon="✓" />
-      <StatCard label="Urgent open" value={tickets.filter(t => t.priority === 'Urgent' && (t.status === 'Open' || t.status === 'In Progress')).length} hint="Highest priority" tone="purple" icon="↑" />
+      <StatCard label="From customer portal" value={portalOpen} hint="Open portal tickets" tone="purple" icon="✉" />
     </div>
     <div className="panel">
       <div className="panel-heading">
@@ -3656,6 +5066,7 @@ function Tickets({ tickets, error, onAdd, onStatusChange, onDelete, onEdit, onVi
       <div className="toolbar">
         <div className="toolbar-search"><Search size={15} /><input type="search" placeholder="Search tickets or customers" value={query} onChange={e => setQuery(e.target.value)} />
         </div>
+        <select value={queue} onChange={e => setQueue(e.target.value)} aria-label="Ticket queue">{['All tickets', 'Assigned to me', 'Unassigned', 'Customer portal'].map(x => <option key={x} value={x}>{x}</option>)}</select>
         <select value={status} onChange={e => setStatus(e.target.value)}>{['All', 'Open', 'In Progress', 'Resolved', 'Closed'].map(x => <option key={x} value={x}>{x === 'All' ? 'All statuses' : x}</option>)}</select>
         <select value={priority} onChange={e => setPriority(e.target.value)}>
           {['All', 'Low', 'Medium', 'High', 'Urgent'].map(x => <option key={x} value={x}>{x === 'All' ? 'All priorities' : x}</option>)}</select>
@@ -3664,9 +5075,149 @@ function Tickets({ tickets, error, onAdd, onStatusChange, onDelete, onEdit, onVi
         <div className="empty-state">
           <p>No tickets yet.</p>
           <button type="button" className="secondary-btn" onClick={onAdd}>Create your first ticket</button>
-        </div> : filtered.length === 0 ? <div className="empty-state"><p>No tickets match your filters.</p></div> : <div className="table-wrap"><table><thead><tr><th>Ticket</th><th>Customer</th><th>Priority</th><th>Status</th><th>Created</th><th>Actions</th></tr></thead><tbody>{filtered.map(ticket => { const canEdit = isAdmin || ticket.created_by === currentUserId; return <tr key={ticket.id}><td><button type="button" className="text-btn" onClick={() => onView(ticket)}><strong>{ticket.title}</strong></button><div className="deal-customer">{ticket.category || 'General'}</div></td><td>{ticket.customers?.name || 'Unassigned'}</td><td><span className={`status ${(ticket.priority || 'medium').toLowerCase()}`}>{ticket.priority || 'Medium'}</span></td><td><select className="ticket-status-select" value={ticket.status} onChange={e => onStatusChange(ticket.id, e.target.value)} disabled={!canEdit}><option value="Open">Open</option><option value="In Progress">In Progress</option><option value="Resolved">Resolved</option><option value="Closed">Closed</option></select></td><td>{formatDate(ticket.created_at)}</td><td><div className="toolbar-actions"><button type="button" className="secondary-btn" onClick={() => onView(ticket)}>View</button>{canEdit && <button type="button" className="secondary-btn" onClick={() => onEdit(ticket)}><Pencil size={14} /> Edit</button>}{canEdit && <button type="button" className="icon-btn" title="Delete ticket" onClick={() => onDelete(ticket.id)}><X size={16} /></button>}</div></td></tr> })}</tbody></table></div>}</div></>;
+        </div> : filtered.length === 0 ? <div className="empty-state"><p>No tickets match your filters.</p></div> : <div className="table-wrap"><table><thead><tr><th>Ticket</th><th>Customer</th><th>Assigned to</th><th>Priority</th><th>Status</th><th>Created</th><th>Actions</th></tr></thead><tbody>{filtered.map(ticket => {
+          const editable = canManage(ticket);
+          return <tr key={ticket.id}>
+            <td>
+              <button type="button" className="text-btn" onClick={() => onView(ticket)}><strong>{ticket.ticket_number ? `#${ticket.ticket_number} · ` : ''}{ticket.title}</strong></button>
+              <div className="deal-customer">{ticket.category || 'General'}{ticket.source === 'portal' && <span className="ticket-source-badge">Portal</span>}</div>
+            </td>
+            <td>{ticket.customers?.name || 'Unassigned'}</td>
+            <td>{editable
+              ? <select className="ticket-status-select" value={ticket.assigned_to || ''} onChange={e => onAssign(ticket.id, e.target.value || null)} aria-label="Assign ticket"><option value="">Unassigned</option>{staffOptions.map(u => <option key={u.user_id} value={u.user_id}>{staffName(u.user_id)}</option>)}</select>
+              : staffName(ticket.assigned_to)}</td>
+            <td><span className={`status ${(ticket.priority || 'medium').toLowerCase()}`}>{ticket.priority || 'Medium'}</span></td>
+            <td><select className="ticket-status-select" value={ticket.status} onChange={e => onStatusChange(ticket.id, e.target.value)} disabled={!editable}><option value="Open">Open</option><option value="In Progress">In Progress</option><option value="Resolved">Resolved</option><option value="Closed">Closed</option></select></td>
+            <td>{formatDate(ticket.created_at)}</td>
+            <td><div className="toolbar-actions"><button type="button" className="secondary-btn" onClick={() => onView(ticket)}>View</button>{editable && <button type="button" className="secondary-btn" onClick={() => onEdit(ticket)}><Pencil size={14} /> Edit</button>}{(isAdmin || ticket.created_by === currentUserId) && <button type="button" className="icon-btn" title="Delete ticket" onClick={() => onDelete(ticket.id)}><X size={16} /></button>}</div></td>
+          </tr>;
+        })}</tbody></table></div>}</div></>;
 }
-function TicketDetail({ ticket, onClose, onEdit }) { return <div className="modal-backdrop" onClick={onClose}><div className="modal modal-wide" onClick={e => e.stopPropagation()}><div className="modal-heading"><div><h2>{ticket.title}</h2><p>{ticket.category || 'General'} · {ticket.status || 'Open'}</p></div><div className="toolbar-actions"><button type="button" className="secondary-btn" onClick={() => onEdit(ticket)}><Pencil size={14} /> Edit</button><button type="button" className="icon-btn" onClick={onClose}><X size={18} /></button></div></div><div className="detail-grid"><div><small>Customer</small><p>{ticket.customers?.name || 'Unassigned'}</p></div><div><small>Company</small><p>{ticket.customers?.company || '—'}</p></div><div><small>Priority</small><p>{ticket.priority || 'Medium'}</p></div><div><small>Status</small><p>{ticket.status || 'Open'}</p></div><div><small>Category</small><p>{ticket.category || 'General'}</p></div><div><small>Created</small><p>{formatDate(ticket.created_at)}</p></div></div><h3 className="detail-title">Description</h3><p className="detail-empty" style={{ whiteSpace: 'pre-wrap' }}>{ticket.description || 'No description added.'}</p></div></div>; }
+function TicketDetail({ onRefresh, ticket, staffName, staffOptions, currentUserId, canManage, onClose, onEdit, onStatusChange, onAssign }) {
+  const [comments, setComments] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState('');
+  const [reply, setReply] = useState('');
+  const [internal, setInternal] = useState(false);
+  const [sending, setSending] = useState(false);
+  const endRef = useRef(null);
+  const isPortal = ticket.source === 'portal';
+  const editable = canManage(ticket);
+
+  async function loadComments({ silent = false } = {}) {
+    if (!silent) setLoading(true);
+    const { data, error: loadError } = await supabase
+      .from('ticket_comments')
+      .select('*')
+      .eq('ticket_id', ticket.id)
+      .order('created_at', { ascending: true });
+    if (loadError) {
+      if (!silent) setError(loadError.code === '42P01' || loadError.code === 'PGRST205'
+        ? 'Conversations are not set up yet. Run the portal support SQL migration to enable them.'
+        : loadError.message);
+    } else {
+      setError('');
+      setComments(data || []);
+    }
+    if (!silent) setLoading(false);
+  }
+
+  useEffect(() => {
+    loadComments();
+    const timer = window.setInterval(() => loadComments({ silent: true }), 15000);
+    return () => window.clearInterval(timer);
+  }, [ticket.id]);
+
+  useEffect(() => { endRef.current?.scrollIntoView({ behavior: 'smooth', block: 'nearest' }); }, [comments.length]);
+
+  async function sendReply(event) {
+    event.preventDefault();
+    const body = reply.trim();
+    if (!body || sending) return;
+    setSending(true);
+    setError('');
+    const { data, error: sendError } = await supabase
+      .from('ticket_comments')
+      .insert({ ticket_id: ticket.id, author_id: currentUserId, author_type: 'staff', body, is_internal: internal })
+      .select()
+      .single();
+    if (sendError) {
+      setError(sendError.message);
+      setSending(false);
+      return;
+    }
+    setComments(prev => [...prev, data]);
+    setReply('');
+    if (!internal) {
+      // A public reply claims an unassigned portal ticket and moves a new ticket into progress.
+      if (isPortal && !ticket.assigned_to) onAssign(ticket.id, currentUserId);
+      if (ticket.status === 'Open') onStatusChange(ticket.id, 'In Progress');
+    }
+    setSending(false);
+  }
+
+  return <div className="modal-backdrop" onClick={onClose}>
+    <div className="modal modal-wide" onClick={e => e.stopPropagation()}>
+      <div className="modal-heading">
+        <div>
+          <h2>{ticket.ticket_number ? `#${ticket.ticket_number} · ` : ''}{ticket.title}</h2>
+          <p>{ticket.category || 'General'} · {ticket.status || 'Open'}{isPortal && <span className="ticket-source-badge">Customer portal</span>}</p>
+        </div>
+        <div className="toolbar-actions">
+          <button type="button" className="secondary-btn" onClick={() => { loadComments({ silent: true }); onRefresh?.(); }}><RefreshCw size={14} /> Refresh</button>
+          {editable && <button type="button" className="secondary-btn" onClick={() => onEdit(ticket)}><Pencil size={14} /> Edit</button>}
+          <button type="button" className="icon-btn" onClick={onClose}><X size={18} /></button>
+        </div>
+      </div>
+      <div className="detail-grid">
+        <div><small>Customer</small><p>{ticket.customers?.name || 'Unassigned'}</p></div>
+        <div><small>Company</small><p>{ticket.customers?.company || '—'}</p></div>
+        <div><small>Priority</small><p>{ticket.priority || 'Medium'}</p></div>
+        <div><small>Status</small><p>{editable
+          ? <select className="ticket-status-select" value={ticket.status || 'Open'} onChange={e => onStatusChange(ticket.id, e.target.value)}><option value="Open">Open</option><option value="In Progress">In Progress</option><option value="Resolved">Resolved</option><option value="Closed">Closed</option></select>
+          : ticket.status || 'Open'}</p></div>
+        <div><small>Assigned to</small><p>{editable
+          ? <select className="ticket-status-select" value={ticket.assigned_to || ''} onChange={e => onAssign(ticket.id, e.target.value || null)}><option value="">Unassigned</option>{staffOptions.map(u => <option key={u.user_id} value={u.user_id}>{staffName(u.user_id)}</option>)}</select>
+          : staffName(ticket.assigned_to)}</p></div>
+        <div><small>Created</small><p>{formatDate(ticket.created_at)}</p></div>
+        <div><small>Customer portal</small><p>{isPortal || ticket.portal_visible ? (ticket.customer_id ? 'Visible to customer' : 'Needs a linked customer') : 'Hidden'}</p></div>
+      </div>
+
+      <h3 className="detail-title">Conversation</h3>
+      <div className="ticket-thread">
+        <div className="ticket-message customer">
+          <div className="ticket-message-meta"><strong>{ticket.customers?.name || 'Customer'}</strong><time>{formatDateTime(ticket.created_at)}</time></div>
+          <p>{ticket.description || 'No description added.'}</p>
+        </div>
+        {loading && <p className="detail-empty">Loading conversation…</p>}
+        {comments.map(comment => {
+          const fromCustomer = comment.author_type === 'customer';
+          return <div key={comment.id} className={`ticket-message ${fromCustomer ? 'customer' : 'staff'} ${comment.is_internal ? 'internal' : ''}`}>
+            <div className="ticket-message-meta">
+              <strong>{fromCustomer ? (ticket.customers?.name || 'Customer') : staffName(comment.author_id)}</strong>
+              {comment.is_internal && <span className="ticket-internal-tag">Internal note · hidden from customer</span>}
+              <time>{formatDateTime(comment.created_at)}</time>
+            </div>
+            <p>{comment.body}</p>
+          </div>;
+        })}
+        <div ref={endRef} />
+      </div>
+
+      {error && <p className="form-error">{error}</p>}
+      <form className="ticket-reply-form" onSubmit={sendReply}>
+        <div className="filter-tabs" role="tablist" aria-label="Reply type">
+          <button type="button" className={`filter-tab ${!internal ? 'active' : ''}`} onClick={() => setInternal(false)}>{isPortal ? 'Reply to customer' : 'Add comment'}</button>
+          <button type="button" className={`filter-tab ${internal ? 'active' : ''}`} onClick={() => setInternal(true)}>Internal note</button>
+        </div>
+        <textarea rows="3" value={reply} onChange={e => setReply(e.target.value)} maxLength={5000} placeholder={internal ? 'Write a note for your team only…' : isPortal ? 'Write a reply the customer will see in their portal…' : 'Write a comment…'} disabled={sending} />
+        <div className="modal-actions">
+          <button type="submit" className="primary-btn" disabled={sending || !reply.trim()}>{sending ? 'Sending…' : internal ? 'Save note' : isPortal ? 'Send reply' : 'Add comment'}</button>
+        </div>
+      </form>
+    </div>
+  </div>;
+}
 function BarRow({ label, percent, display }) {
   return (
     <div className="report-row wide">
@@ -3765,33 +5316,99 @@ function Reports({ customers, deals, activities, tickets, formatAmount }) {
   );
 }
 
-function Leads({ leads, customers, onAdd, onUpdate, onDelete, currentUserId, isAdmin }) {
+function Leads({ leads, customers, products, leadProducts, onAdd, onUpdate, onSyncProducts, onDelete, currentUserId, isAdmin }) {
   const [show, setShow] = useState(false);
   const [editing, setEditing] = useState(null);
+  const [expandedVendor, setExpandedVendor] = useState(null);
+  const [selectedProductIds, setSelectedProductIds] = useState([]);
   const [form, setForm] = useState({ name: '', email: '', phone: '', company: '', source: 'Website', status: 'New', customer_id: '' });
   const [q, setQ] = useState('');
+
+  const primaryVendors = ['F5', 'Kong', 'IRONSCALES', 'SolarWinds', 'Utimaco'];
+  const normalizeVendor = vendor => (vendor || '').trim().toLowerCase();
   const visible = leads.filter(x => `${x.name || ''} ${x.email || ''} ${x.company || ''} ${x.source || ''}`.toLowerCase().includes(q.toLowerCase()));
+
+  const productsForVendor = vendor => products.filter(product =>
+    normalizeVendor(product.vendor) === normalizeVendor(vendor) && product.status !== 'Inactive'
+  );
+
+  const productById = productId => products.find(product => product.id === productId);
+  const productIdsForLead = leadId => leadProducts.filter(row => row.lead_id === leadId).map(row => row.product_id);
+
+  const resetForm = () => {
+    setForm({ name: '', email: '', phone: '', company: '', source: 'Website', status: 'New', customer_id: '' });
+    setSelectedProductIds([]);
+    setExpandedVendor(null);
+    setEditing(null);
+  };
+
+  const openAdd = () => {
+    resetForm();
+    setShow(true);
+  };
+
+  const openEdit = x => {
+    setEditing(x);
+    setForm({
+      name: x.name || '',
+      email: x.email || '',
+      phone: x.phone || '',
+      company: x.company || '',
+      source: x.source || 'Website',
+      status: x.status || 'New',
+      customer_id: x.customer_id || ''
+    });
+    setSelectedProductIds(productIdsForLead(x.id));
+    setExpandedVendor(null);
+    setShow(true);
+  };
+
+  const closeModal = () => {
+    setShow(false);
+    resetForm();
+  };
+
+  const toggleProduct = productId => {
+    setSelectedProductIds(prev => prev.includes(productId)
+      ? prev.filter(id => id !== productId)
+      : [...prev, productId]
+    );
+  };
+
   const save = async e => {
     e.preventDefault();
     try {
-      // The customer relationship is optional; never send an empty string to a UUID column.
       const payload = { ...form, customer_id: form.customer_id || null };
-      if (editing) await onUpdate(editing.id, payload);
-      else await onAdd(payload);
-      setShow(false);
-      setEditing(null);
-    } catch (err) { alert(err.message) }
+
+      const savedLead = editing
+        ? await onUpdate(editing.id, payload)
+        : await onAdd(payload, selectedProductIds);
+
+      // New leads are synced inside the database transaction that also
+      // creates their Pipeline record. Existing leads still use the
+      // normal solution-sync path when their solutions are edited.
+      if (editing) {
+        await onSyncProducts(savedLead.id, selectedProductIds);
+      }
+
+      closeModal();
+    } catch (err) {
+      alert(err.message);
+    }
   };
-  const openEdit = x => {
-    setEditing(x); setForm({ name: x.name || '', email: x.email || '', phone: x.phone || '', company: x.company || '', source: x.source || 'Website', status: x.status || 'New', customer_id: x.customer_id || '' });
-    setShow(true)
-  };
+
+  const solutionNamesForLead = leadId => productIdsForLead(leadId)
+    .map(productId => productById(productId)?.name)
+    .filter(Boolean);
+
   return <>
-    <PageHeading eyebrow="PROSPECTING" title="Leads" description="Capture, qualify and convert prospects." action="New lead" onAction={() => {
-      setEditing(null);
-      setForm({ name: '', email: '', phone: '', company: '', source: 'Website', status: 'New', customer_id: '' });
-      setShow(true)
-    }} />
+    <PageHeading
+      eyebrow="PROSPECTING"
+      title="Leads"
+      description="Capture, qualify and convert prospects."
+      action="New lead"
+      onAction={openAdd}
+    />
     <div className="panel">
       <div className="toolbar">
         <div className="toolbar-search">
@@ -3808,30 +5425,110 @@ function Leads({ leads, customers, onAdd, onUpdate, onDelete, currentUserId, isA
               <tr>
                 <th>Lead</th>
                 <th>Company</th>
+                <th>Solutions</th>
                 <th>Source</th>
                 <th>Status</th>
                 <th>Actions</th>
-              </tr></thead>
-            <tbody>
-              {visible.map(x => <tr key={x.id}>
-                <td><strong>{x.name || x.email}</strong>
-                  <div className="deal-customer">{x.email}
-                  </div></td><td>{x.company || '—'}
-                </td>
-                <td>{x.source || '—'}</td>
-                <td><span className="status">{x.status}</span></td>
-                <td>
-                  <div className="toolbar-actions">
-                    <button className="secondary-btn" onClick={() => openEdit(x)}>Edit</button>
-                    {(isAdmin || x.created_by === currentUserId) && <button className="icon-btn" onClick={() => onDelete(x.id)}>
-                      <X size={16} />
-                    </button>}
-                  </div>
-                </td>
               </tr>
-              )}
-            </tbody></table></div>}</div>{show && <div className="modal-backdrop" onClick={() => setShow(false)}><form className="modal" onSubmit={save} onClick={e => e.stopPropagation()}><div className="modal-heading"><h2>{editing ? 'Edit lead' : 'New lead'}</h2><button type="button" className="icon-btn" onClick={() => setShow(false)}><X size={18} /></button></div>{[['name', 'Name'], ['email', 'Email'], ['phone', 'Phone'], ['company', 'Company']].map(([k, l]) => <label key={k}>{l}<input value={form[k]} onChange={e => setForm({ ...form, [k]: e.target.value })} required={k === 'name' || k === 'email'} /></label>)}<label>Source<select value={form.source} onChange={e => setForm({ ...form, source: e.target.value })}>{['Website', 'Referral', 'Social', 'Campaign', 'Cold outreach', 'Other'].map(x => <option key={x}>{x}</option>)}</select></label><label>Status<select value={form.status} onChange={e => setForm({ ...form, status: e.target.value })}>{['New', 'Contacted', 'Qualified', 'Unqualified', 'Converted'].map(x => <option key={x}>{x}</option>)}</select></label><label>Convert/link customer<select value={form.customer_id} onChange={e => setForm({ ...form, customer_id: e.target.value })}><option value="">None</option>{customers.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}</select></label><div className="modal-actions"><button type="button" className="secondary-btn" onClick={() => setShow(false)}>Cancel</button><button className="primary-btn">Save lead</button></div></form></div>}</>;
+            </thead>
+            <tbody>
+              {visible.map(x => {
+                const solutionNames = solutionNamesForLead(x.id);
+                return <tr key={x.id}>
+                  <td><strong>{x.name || x.email}</strong><div className="deal-customer">{x.email}</div></td>
+                  <td>{x.company || '—'}</td>
+                  <td>
+                    {solutionNames.length ? (
+                      <div className="lead-solution-tags compact">
+                        {solutionNames.slice(0, 2).map(name => <span key={name}>{name}</span>)}
+                        {solutionNames.length > 2 && <span>+{solutionNames.length - 2}</span>}
+                      </div>
+                    ) : <span className="deal-customer">Not selected</span>}
+                  </td>
+                  <td>{x.source || '—'}</td>
+                  <td><span className="status">{x.status}</span></td>
+                  <td>
+                    <div className="toolbar-actions">
+                      <button className="secondary-btn" onClick={() => openEdit(x)}>Edit</button>
+                      {(isAdmin || x.created_by === currentUserId) && <button className="icon-btn" onClick={() => onDelete(x.id)}><X size={16} /></button>}
+                    </div>
+                  </td>
+                </tr>;
+              })}
+            </tbody>
+          </table>
+        </div>}
+    </div>
+
+    {show && <div className="modal-backdrop" onClick={closeModal}>
+      <form className="modal lead-modal" onSubmit={save} onClick={e => e.stopPropagation()}>
+        <div className="modal-heading">
+          <div>
+            <h2>{editing ? 'Edit lead' : 'New lead'}</h2>
+            <p>Add the prospect and the solutions your salesperson wants to discuss.</p>
+          </div>
+          <button type="button" className="icon-btn" onClick={closeModal}><X size={18} /></button>
+        </div>
+
+        {[['name', 'Name'], ['email', 'Email'], ['phone', 'Phone'], ['company', 'Company']].map(([k, l]) =>
+          <label key={k}>{l}<input value={form[k]} onChange={e => setForm({ ...form, [k]: e.target.value })} required={k === 'name' || k === 'email'} /></label>
+        )}
+
+        <label>Source<select value={form.source} onChange={e => setForm({ ...form, source: e.target.value })}>{['Website', 'Referral', 'Social', 'Campaign', 'Cold outreach', 'Other'].map(x => <option key={x}>{x}</option>)}</select></label>
+        <label>Status<select value={form.status} onChange={e => setForm({ ...form, status: e.target.value })}>{['New', 'Contacted', 'Qualified', 'Unqualified', 'Converted'].map(x => <option key={x}>{x}</option>)}</select></label>
+        <label>Convert/link customer<select value={form.customer_id} onChange={e => setForm({ ...form, customer_id: e.target.value })}><option value="">None</option>{customers.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}</select></label>
+
+        <div className="lead-solutions-field">
+          <div className="lead-solutions-heading">
+            <div>
+              <strong>Solutions of interest</strong>
+              <span>Select one or more solutions the salesperson wants to deal with.</span>
+            </div>
+            <span className="lead-solution-count">{selectedProductIds.length} selected</span>
+          </div>
+
+          <div className="lead-solution-family-list">
+            {primaryVendors.map(vendor => {
+              const vendorProducts = productsForVendor(vendor);
+              const selectedCount = vendorProducts.filter(product => selectedProductIds.includes(product.id)).length;
+              const expanded = expandedVendor === vendor;
+
+              return <div className="lead-solution-family" key={vendor}>
+                <button type="button" className="lead-solution-family-button" onClick={() => setExpandedVendor(expanded ? null : vendor)}>
+                  <span><strong>{vendor}</strong><small>{vendorProducts.length} solutions</small></span>
+                  <span>{selectedCount ? `${selectedCount} selected` : expanded ? '−' : '+'}</span>
+                </button>
+
+                {expanded && <div className="lead-solution-children">
+                  {vendorProducts.length ? vendorProducts.map(product =>
+                    <label className="lead-solution-option" key={product.id}>
+                      <input type="checkbox" checked={selectedProductIds.includes(product.id)} onChange={() => toggleProduct(product.id)} />
+                      <span>{product.name}</span>
+                    </label>
+                  ) : <div className="deal-customer">No active solutions under {vendor}.</div>}
+                </div>}
+              </div>;
+            })}
+          </div>
+
+          {selectedProductIds.length > 0 && <div className="lead-solution-tags">
+            {selectedProductIds.map(productId => {
+              const product = productById(productId);
+              if (!product) return null;
+              return <button type="button" key={productId} onClick={() => toggleProduct(productId)} title="Remove solution">{product.name} ×</button>;
+            })}
+          </div>}
+        </div>
+
+        <div className="modal-actions">
+          <button type="button" className="secondary-btn" onClick={closeModal}>Cancel</button>
+          <button className="primary-btn">{editing ? 'Save changes' : 'Save lead'}</button>
+        </div>
+      </form>
+    </div>}
+  </>;
 }
+
 function EmailPage({ emailLogs, customers, integrations, loading, error, onConnect, onDisconnect, onAdd }) {
   const [showLog, setShowLog] = useState(false);
   useEffect(() => { const handler = () => setShowLog(true); window.addEventListener('orbit-open-email-log', handler); return () => window.removeEventListener('orbit-open-email-log', handler); }, []);
@@ -3985,7 +5682,332 @@ function CalendarPage({ events, customers, onAdd, onUpdate, onDelete }) {
       <label>Title<input required value={form.title} onChange={e => setForm({ ...form, title: e.target.value })} /></label>
       <label>Customer<select value={form.customer_id} onChange={e => setForm({ ...form, customer_id: e.target.value })}><option value="">None</option>{customers.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}</select></label><label>Start<input type="datetime-local" required value={form.start_at || ''} onChange={e => setForm({ ...form, start_at: e.target.value })} /></label><label>End<input type="datetime-local" value={form.end_at || ''} onChange={e => setForm({ ...form, end_at: e.target.value })} /></label><label>Type<select value={form.event_type} onChange={e => setForm({ ...form, event_type: e.target.value })}>{['Meeting', 'Call', 'Demo', 'Task', 'Other'].map(x => <option key={x}>{x}</option>)}</select></label><label>Location<input value={form.location || ''} onChange={e => setForm({ ...form, location: e.target.value })} /></label><label>Description<textarea value={form.description || ''} onChange={e => setForm({ ...form, description: e.target.value })} /></label><div className="modal-actions"><button type="button" className="secondary-btn" onClick={() => setShow(false)}>Cancel</button><button className="primary-btn">Save event</button></div></form></div>}</>
 }
-function Quotes({ quotes, customers, onAdd, onUpdate, formatAmount, currentUserId, isAdmin }) { const [show, setShow] = useState(false); const [editing, setEditing] = useState(null); const blank = { title: '', quote_number: `Q-${Date.now().toString().slice(-6)}`, customer_id: '', amount: 0, status: 'Draft', valid_until: '', notes: '' }; const [form, setForm] = useState(blank); const save = async e => { e.preventDefault(); try { if (editing) await onUpdate(editing.id, form); else await onAdd(form); setShow(false); setEditing(null) } catch (err) { alert(err.message) } }; return <><PageHeading eyebrow="SALES OPERATIONS" title="Quotes" description="Create and track customer quotations." action="New quote" onAction={() => { setEditing(null); setForm({ ...blank, quote_number: `Q-${Date.now().toString().slice(-6)}` }); setShow(true) }} /><div className="panel"><div className="table-wrap"><table><thead><tr><th>Quote</th><th>Customer</th><th>Amount</th><th>Status</th><th>Valid until</th><th>Actions</th></tr></thead><tbody>{quotes.length === 0 ? <tr><td colSpan="6">No quotes yet.</td></tr> : quotes.map(q => <tr key={q.id}><td><strong>{q.quote_number}</strong><div className="deal-customer">{q.title}</div></td><td>{q.customers?.name || '—'}</td><td>{formatAmount(q.amount)}</td><td>{q.status}</td><td>{q.valid_until ? formatDate(q.valid_until) : '—'}</td><td>{(isAdmin || q.created_by === currentUserId) && <button className="secondary-btn" onClick={() => { setEditing(q); setForm(q); setShow(true) }}>Edit</button>}</td></tr>)}</tbody></table></div></div>{show && <div className="modal-backdrop" onClick={() => setShow(false)}><form className="modal" onSubmit={save} onClick={e => e.stopPropagation()}><div className="modal-heading"><h2>{editing ? 'Edit quote' : 'New quote'}</h2><button type="button" className="icon-btn" onClick={() => setShow(false)}><X size={18} /></button></div><label>Quote number<input required value={form.quote_number} onChange={e => setForm({ ...form, quote_number: e.target.value })} /></label><label>Title<input required value={form.title} onChange={e => setForm({ ...form, title: e.target.value })} /></label><label>Customer<select value={form.customer_id} onChange={e => setForm({ ...form, customer_id: e.target.value })}><option value="">None</option>{customers.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}</select></label><label>Amount<input type="number" min="0" value={form.amount} onChange={e => setForm({ ...form, amount: Number(e.target.value) })} /></label><label>Status<select value={form.status} onChange={e => setForm({ ...form, status: e.target.value })}>{['Draft', 'Sent', 'Accepted', 'Rejected', 'Expired'].map(x => <option key={x}>{x}</option>)}</select></label><label>Valid until<input type="date" value={form.valid_until || ''} onChange={e => setForm({ ...form, valid_until: e.target.value })} /></label><label>Notes<textarea value={form.notes || ''} onChange={e => setForm({ ...form, notes: e.target.value })} /></label><div className="modal-actions"><button type="button" className="secondary-btn" onClick={() => setShow(false)}>Cancel</button><button className="primary-btn">Save quote</button></div></form></div>}</> }
+function Quotes({ quotes = [], products = [], quoteItems = [], onLoadQuoteItems, onAdd, onUpdate, onDelete, formatAmount, currentUserId, isAdmin }) {
+  const [show, setShow] = useState(false);
+  const [editing, setEditing] = useState(null);
+  const [saving, setSaving] = useState(false);
+  const [loadingItems, setLoadingItems] = useState(false);
+  const [error, setError] = useState('');
+  const [expandedVendor, setExpandedVendor] = useState(null);
+
+  const vendors = ['F5', 'Kong', 'IRONSCALES', 'SolarWinds', 'Utimaco'];
+  const blank = {
+    quote_number: `Q-${Date.now().toString().slice(-6)}`,
+    title: '',
+    quote_date: new Date().toISOString().slice(0, 10),
+    valid_until: '',
+    status: 'Draft',
+    customer_name: '',
+    company: '',
+    email: '',
+    phone: '',
+    billing_address: '',
+    payment_terms: '',
+    delivery_terms: '',
+    notes: '',
+    terms: ''
+  };
+
+  const emptyItem = () => ({
+    product_id: '',
+    product_name: '',
+    description: '',
+    quantity: 1,
+    unit_price: 0,
+    discount: 0,
+    tax: 0
+  });
+
+  const [form, setForm] = useState(blank);
+  const [items, setItems] = useState([emptyItem()]);
+
+  const moneyNumber = value => Number(value) || 0;
+  const lineSubtotal = item => moneyNumber(item.quantity) * moneyNumber(item.unit_price);
+  const lineTotal = item => Math.max(0, lineSubtotal(item) - moneyNumber(item.discount) + moneyNumber(item.tax));
+  const subtotal = items.reduce((sum, item) => sum + lineSubtotal(item), 0);
+  const discount = items.reduce((sum, item) => sum + moneyNumber(item.discount), 0);
+  const tax = items.reduce((sum, item) => sum + moneyNumber(item.tax), 0);
+  const total = Math.max(0, subtotal - discount + tax);
+
+  const productsByVendor = vendors.reduce((groups, vendor) => {
+    groups[vendor] = products.filter(product => (product.vendor || '').trim().toLowerCase() === vendor.toLowerCase());
+    return groups;
+  }, {});
+
+  const openNew = () => {
+    setEditing(null);
+    setError('');
+    setExpandedVendor(null);
+    setForm({ ...blank, quote_number: `Q-${Date.now().toString().slice(-6)}` });
+    setItems([emptyItem()]);
+    setShow(true);
+  };
+
+  const openEdit = async quote => {
+    setEditing(quote);
+    setLoadingItems(true);
+    setError('');
+    setExpandedVendor(null);
+    setForm({ ...blank, ...quote });
+    setItems([emptyItem()]);
+    setShow(true);
+
+    try {
+      // Always load the saved line items for this quote when editing.
+      // This prevents the edit form from losing its products when the
+      // global quote-items fetch has not completed yet.
+      const loadedItems = onLoadQuoteItems
+        ? await onLoadQuoteItems(quote)
+        : quoteItems.filter(item => item.quote_id === quote.id);
+
+      const existing = (loadedItems || []).map(item => ({
+        product_id: item.product_id || '',
+        product_name: item.product_name || '',
+        description: item.description || '',
+        quantity: Number(item.quantity) || 1,
+        unit_price: Number(item.unit_price) || 0,
+        discount: Number(item.discount) || 0,
+        tax: Number(item.tax) || 0
+      }));
+
+      setItems(existing.length ? existing : [emptyItem()]);
+    } catch (err) {
+      console.error('Unable to load quote items:', err);
+      setError(err?.message || 'Unable to load the saved quote items.');
+    } finally {
+      setLoadingItems(false);
+    }
+  };
+
+  const selectProduct = (index, product) => {
+    setItems(prev => prev.map((item, i) => i === index ? {
+      ...item,
+      product_id: product.id,
+      product_name: product.name,
+      description: item.description || product.description || ''
+    } : item));
+  };
+
+  const updateItem = (index, patch) => {
+    setItems(prev => prev.map((item, i) => i === index ? { ...item, ...patch } : item));
+  };
+
+  const removeItem = index => {
+    setItems(prev => prev.length === 1 ? [emptyItem()] : prev.filter((_, i) => i !== index));
+  };
+
+  const save = async event => {
+    event.preventDefault();
+    setError('');
+
+    const validItems = items.filter(item => item.product_id && item.product_name);
+    if (!form.quote_number.trim()) return setError('Quote number is required.');
+    if (!form.title.trim()) return setError('Quote title is required.');
+    if (!form.quote_date) return setError('Quote date is required.');
+    if (!form.customer_name.trim() && !form.company.trim()) return setError('Enter a customer name or company.');
+    if (form.email.trim() && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(form.email.trim())) return setError('Enter a valid customer email address.');
+    if (!validItems.length) return setError('Add at least one product or solution to the quote.');
+    if (validItems.some(item => moneyNumber(item.quantity) <= 0)) return setError('Each line item must have a quantity greater than 0.');
+
+    const payload = {
+      quote_number: form.quote_number.trim(),
+      title: form.title.trim(),
+      quote_date: form.quote_date || new Date().toISOString().slice(0, 10),
+      valid_until: form.valid_until || null,
+      status: form.status,
+      customer_name: form.customer_name.trim() || null,
+      company: form.company.trim() || null,
+      email: form.email.trim() || null,
+      phone: form.phone.trim() || null,
+      billing_address: form.billing_address.trim() || null,
+      subtotal,
+      discount,
+      tax,
+      total,
+      payment_terms: form.payment_terms.trim() || null,
+      delivery_terms: form.delivery_terms.trim() || null,
+      notes: form.notes.trim() || null,
+      terms: form.terms.trim() || null
+    };
+
+    const itemPayload = validItems.map(item => ({
+      product_id: item.product_id || null,
+      product_name: item.product_name,
+      description: item.description?.trim() || null,
+      quantity: moneyNumber(item.quantity),
+      unit_price: moneyNumber(item.unit_price),
+      discount: moneyNumber(item.discount),
+      tax: moneyNumber(item.tax),
+      total: lineTotal(item)
+    }));
+
+    setSaving(true);
+    try {
+      if (editing) await onUpdate(editing.id, payload, itemPayload);
+      else await onAdd(payload, itemPayload);
+      setShow(false);
+      setEditing(null);
+    } catch (err) {
+      setError(err.message || 'Unable to save quote.');
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  return <>
+    <PageHeading
+      eyebrow="SALES OPERATIONS"
+      title="Quotes"
+      description="Create and track customer quotations."
+      action="New quote"
+      onAction={openNew}
+    />
+
+    <div className="panel">
+      <div className="table-wrap">
+        <table>
+          <thead>
+            <tr>
+              <th>Quote</th>
+              <th>Customer</th>
+              <th>Total</th>
+              <th>Status</th>
+              <th>Valid until</th>
+              <th>Created</th>
+              <th>Actions</th>
+            </tr>
+          </thead>
+          <tbody>
+            {quotes.length === 0 ? <tr><td colSpan="7">No quotes yet.</td></tr> : quotes.map(q => (
+              <tr key={q.id}>
+                <td><strong>{q.quote_number}</strong><div className="deal-customer">{q.title}</div></td>
+                <td>{q.customer_name || q.company || '—'}{q.company && q.customer_name ? <div className="deal-customer">{q.company}</div> : null}</td>
+                <td>{formatAmount(q.total)}</td>
+                <td>{q.status}</td>
+                <td>{q.valid_until ? formatDate(q.valid_until) : '—'}</td>
+                <td>{q.created_at ? formatDate(q.created_at) : '—'}</td>
+                <td>{(isAdmin || q.created_by === currentUserId) && <div className="toolbar-actions"><button className="secondary-btn" onClick={() => openEdit(q)}>Edit</button><button type="button" className="icon-btn" title="Delete quote" onClick={async () => { if (!window.confirm('Delete this quote?')) return; try { await onDelete(q.id); } catch (err) { alert(err.message || 'Unable to delete quote.'); } }}><X size={16} /></button></div>}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+    </div>
+
+    {show && <div className="modal-backdrop" onClick={() => !saving && setShow(false)}>
+      <form className="modal modal-wide" noValidate onSubmit={save} onClick={e => e.stopPropagation()}>
+        <div className="modal-heading">
+          <div>
+            <h2>{editing ? 'Edit quote' : 'New quote'}</h2>
+            <p>Enter the quote manually and build the quoted items from your Products catalogue.</p>
+          </div>
+          <button type="button" className="icon-btn" onClick={() => !saving && setShow(false)}><X size={18} /></button>
+        </div>
+
+        {error && <div className="form-error">{error}</div>}
+
+        <div className="form-grid-2">
+          <label>Quote number<input required value={form.quote_number} readOnly={!!editing} onChange={e => !editing && setForm({ ...form, quote_number: e.target.value })} /></label>
+          <label>Quote title<input required placeholder="e.g. F5 Application Security Quote" value={form.title} onChange={e => setForm({ ...form, title: e.target.value })} /></label>
+          <label>Quote date<input type="date" required value={form.quote_date || ''} onChange={e => setForm({ ...form, quote_date: e.target.value })} /></label>
+          <label>Valid until<input type="date" value={form.valid_until || ''} onChange={e => setForm({ ...form, valid_until: e.target.value })} /></label>
+          <label>Status<select value={form.status} onChange={e => setForm({ ...form, status: e.target.value })}>{['Draft', 'Sent', 'Accepted', 'Rejected', 'Expired'].map(x => <option key={x}>{x}</option>)}</select></label>
+          <label>Customer name<input placeholder="Contact / customer name" value={form.customer_name} onChange={e => setForm({ ...form, customer_name: e.target.value })} /></label>
+          <label>Company<input placeholder="Company name" value={form.company} onChange={e => setForm({ ...form, company: e.target.value })} /></label>
+          <label>Email<input type="email" placeholder="customer@company.com" value={form.email} onChange={e => setForm({ ...form, email: e.target.value })} /></label>
+          <label>Phone<input value={form.phone} onChange={e => setForm({ ...form, phone: e.target.value })} /></label>
+        </div>
+
+        <label>Billing address<textarea rows="2" value={form.billing_address} onChange={e => setForm({ ...form, billing_address: e.target.value })} /></label>
+
+        <div className="quote-items-section">
+          <div className="section-heading-row">
+            <div><h3>Quoted items</h3><p>Select products from the existing catalogue and set the commercial pricing.</p></div>
+            <button type="button" className="secondary-btn" onClick={() => setItems(prev => [...prev, emptyItem()])}><Plus size={15} /> Add item</button>
+          </div>
+
+          {items.map((item, index) => <div className="quote-line-item" key={index}>
+            <div className="quote-line-header"><strong>Item {index + 1}</strong>{items.length > 1 && <button type="button" className="icon-btn" onClick={() => removeItem(index)} aria-label="Remove item"><X size={15} /></button>}</div>
+
+            <div className="solution-family-grid quote-product-families">
+              {vendors.map(vendor => <button
+                key={vendor}
+                type="button"
+                className={`solution-family-card ${expandedVendor === `${index}-${vendor}` ? 'selected' : ''}`}
+                onClick={() => setExpandedVendor(expandedVendor === `${index}-${vendor}` ? null : `${index}-${vendor}`)}
+              >
+                <strong>{vendor}</strong><span>{productsByVendor[vendor].length} solutions</span>
+              </button>)}
+            </div>
+
+            {expandedVendor?.startsWith(`${index}-`) && <div className="quote-product-picker">
+              {productsByVendor[expandedVendor.slice(index.toString().length + 1)]?.map(product => <button
+                type="button"
+                key={product.id}
+                className={`quote-product-option ${item.product_id === product.id ? 'selected' : ''}`}
+                onClick={() => selectProduct(index, product)}
+              >
+                <span>{product.name}</span><small>{product.description || product.category || ''}</small>
+              </button>)}
+            </div>}
+
+            <div className="form-grid-2">
+              <label>Selected product<input value={item.product_name} readOnly placeholder="Choose a product above" /></label>
+              <label>Description<input value={item.description} onChange={e => updateItem(index, { description: e.target.value })} /></label>
+              <label>Quantity<input type="number" min="1" step="1" value={item.quantity} onChange={e => updateItem(index, { quantity: e.target.value })} /></label>
+              <label>Unit price<input type="number" min="0" step="0.01" value={item.unit_price} onChange={e => updateItem(index, { unit_price: e.target.value })} /></label>
+              <label>Discount<input type="number" min="0" step="0.01" value={item.discount} onChange={e => updateItem(index, { discount: e.target.value })} /></label>
+              <label>Tax<input type="number" min="0" step="0.01" value={item.tax} onChange={e => updateItem(index, { tax: e.target.value })} /></label>
+            </div>
+            <div className="quote-line-total"><span>Line total</span><strong>{formatAmount(lineTotal(item))}</strong></div>
+          </div>)}
+        </div>
+
+        <div className="quote-total-card">
+          <div><span>Subtotal</span><strong>{formatAmount(subtotal)}</strong></div>
+          <div><span>Discount</span><strong>- {formatAmount(discount)}</strong></div>
+          <div><span>Tax</span><strong>{formatAmount(tax)}</strong></div>
+          <div className="grand-total"><span>Total</span><strong>{formatAmount(total)}</strong></div>
+        </div>
+
+        <div className="form-grid-2">
+          <label>Payment terms<textarea rows="3" placeholder="e.g. 50% upfront, balance on delivery" value={form.payment_terms} onChange={e => setForm({ ...form, payment_terms: e.target.value })} /></label>
+          <label>Delivery terms<textarea rows="3" placeholder="Delivery / implementation terms" value={form.delivery_terms} onChange={e => setForm({ ...form, delivery_terms: e.target.value })} /></label>
+          <label>Customer notes<textarea rows="3" value={form.notes} onChange={e => setForm({ ...form, notes: e.target.value })} /></label>
+          <label>Terms & conditions<textarea rows="3" value={form.terms} onChange={e => setForm({ ...form, terms: e.target.value })} /></label>
+        </div>
+
+        <div
+          className="modal-actions quote-modal-actions"
+          style={{
+            display: 'flex',
+            justifyContent: 'flex-end',
+            alignItems: 'center',
+            gap: 10,
+            width: '100%',
+            marginTop: 24
+          }}
+        >
+          <button
+            type="button"
+            className="secondary-btn"
+            onClick={() => !saving && setShow(false)}
+            disabled={saving}
+          >
+            Cancel
+          </button>
+          <button
+            type="submit"
+            className="primary-btn"
+            disabled={saving || loadingItems}
+          >
+            {loadingItems ? 'Loading quote...' : saving ? 'Saving quote...' : editing ? 'Save changes' : 'Save quote'}
+          </button>
+        </div>
+      </form>
+    </div>}
+  </>;
+}
 
 function Invoices({ invoices, payments, customers, onAdd, onUpdate, onAddPayment, formatAmount, currentUserId, isAdmin }) { const [show, setShow] = useState(false); const [pay, setPay] = useState(null); const blank = { invoice_number: `INV-${Date.now().toString().slice(-6)}`, title: '', customer_id: '', amount: 0, due_date: '', status: 'Draft', notes: '' }; const [form, setForm] = useState(blank); const save = async e => { e.preventDefault(); try { await onAdd(form); setShow(false) } catch (err) { alert(err.message) } }; const paymentSave = async e => { e.preventDefault(); try { await onAddPayment({ ...pay, payment_method: pay.payment_method || 'Bank transfer' }); setPay(null) } catch (err) { alert(err.message) } }; return <><PageHeading eyebrow="BILLING" title="Invoices & payments" description="Track invoices, balances and payments." action="New invoice" onAction={() => { setForm({ ...blank, invoice_number: `INV-${Date.now().toString().slice(-6)}` }); setShow(true) }} /><div className="stats-grid"><StatCard label="Invoiced" value={formatAmount(invoices.reduce((s, x) => s + Number(x.amount || 0), 0))} hint={`${invoices.length} invoices`} tone="blue" icon="$" /><StatCard label="Paid" value={formatAmount(payments.reduce((s, x) => s + Number(x.amount || 0), 0))} hint={`${payments.length} payments`} tone="green" icon="✓" /><StatCard label="Outstanding" value={formatAmount(invoices.filter(x => !['Paid', 'Cancelled'].includes(x.status)).reduce((s, x) => s + Number(x.amount || 0), 0))} hint="Open balances" tone="orange" icon="!" /></div><div className="panel"><div className="table-wrap"><table><thead><tr><th>Invoice</th><th>Customer</th><th>Amount</th><th>Status</th><th>Due</th><th>Actions</th></tr></thead><tbody>{invoices.length === 0 ? <tr><td colSpan="6">No invoices yet.</td></tr> : invoices.map(i => <tr key={i.id}><td><strong>{i.invoice_number}</strong><div className="deal-customer">{i.title}</div></td><td>{i.customers?.name || '—'}</td><td>{formatAmount(i.amount)}</td><td>{i.status}</td><td>{i.due_date ? formatDate(i.due_date) : '—'}</td><td><div className="toolbar-actions">{(isAdmin || i.created_by === currentUserId) && <button className="secondary-btn" onClick={() => onUpdate(i.id, { status: i.status === 'Paid' ? 'Sent' : 'Paid' })}>{i.status === 'Paid' ? 'Reopen' : 'Mark paid'}</button>}{i.status !== 'Paid' && <button className="secondary-btn" onClick={() => setPay({ invoice_id: i.id, amount: i.amount, paid_at: new Date().toISOString().slice(0, 16), payment_method: 'Bank transfer' })}>Record payment</button>}</div></td></tr>)}</tbody></table></div></div>{show && <div className="modal-backdrop" onClick={() => setShow(false)}><form className="modal" onSubmit={save} onClick={e => e.stopPropagation()}><div className="modal-heading"><h2>New invoice</h2><button type="button" className="icon-btn" onClick={() => setShow(false)}><X size={18} /></button></div><label>Invoice number<input required value={form.invoice_number} onChange={e => setForm({ ...form, invoice_number: e.target.value })} /></label><label>Title<input required value={form.title} onChange={e => setForm({ ...form, title: e.target.value })} /></label><label>Customer<select value={form.customer_id} onChange={e => setForm({ ...form, customer_id: e.target.value })}><option value="">None</option>{customers.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}</select></label><label>Amount<input type="number" min="0" value={form.amount} onChange={e => setForm({ ...form, amount: Number(e.target.value) })} /></label><label>Due date<input type="date" value={form.due_date || ''} onChange={e => setForm({ ...form, due_date: e.target.value })} /></label><label>Status<select value={form.status} onChange={e => setForm({ ...form, status: e.target.value })}>{['Draft', 'Sent', 'Partially Paid', 'Paid', 'Overdue', 'Cancelled'].map(x => <option key={x}>{x}</option>)}</select></label><label>Notes<textarea value={form.notes || ''} onChange={e => setForm({ ...form, notes: e.target.value })} /></label><div className="modal-actions"><button type="button" className="secondary-btn" onClick={() => setShow(false)}>Cancel</button><button className="primary-btn">Create invoice</button></div></form></div>}{pay && <div className="modal-backdrop" onClick={() => setPay(null)}><form className="modal" onSubmit={paymentSave} onClick={e => e.stopPropagation()}><div className="modal-heading"><h2>Record payment</h2><button type="button" className="icon-btn" onClick={() => setPay(null)}><X size={18} /></button></div><label>Amount<input type="number" min="0" value={pay.amount} onChange={e => setPay({ ...pay, amount: Number(e.target.value) })} /></label><label>Method<select value={pay.payment_method} onChange={e => setPay({ ...pay, payment_method: e.target.value })}>{['Bank transfer', 'Card', 'Cash', 'Online', 'Other'].map(x => <option key={x}>{x}</option>)}</select></label><label>Date<input type="datetime-local" value={pay.paid_at} onChange={e => setPay({ ...pay, paid_at: e.target.value })} /></label><div className="modal-actions"><button type="button" className="secondary-btn" onClick={() => setPay(null)}>Cancel</button><button className="primary-btn">Save payment</button></div></form></div>}</> }
 
@@ -3997,73 +6019,431 @@ function Segments({ segments, customers, onAdd, onUpdate }) { const [show, setSh
 
 function Forecast({ deals, formatAmount }) { const weighted = deals.filter(d => d.stage !== 'Lost' && d.stage !== 'Won').reduce((s, d) => s + (Number(d.amount) || 0) * stageProbability(d.stage), 0); const open = deals.filter(d => !['Lost', 'Won'].includes(d.stage)); return <><PageHeading eyebrow="SALES INTELLIGENCE" title="Sales forecast" description="Weighted forecast based on current pipeline stages." /><div className="stats-grid"><StatCard label="Weighted forecast" value={formatAmount(weighted)} hint="Open pipeline × stage probability" tone="purple" icon="↗" /><StatCard label="Open pipeline" value={formatAmount(open.reduce((s, d) => s + Number(d.amount || 0), 0))} hint={`${open.length} open deals`} tone="orange" icon="◈" /><StatCard label="Won revenue" value={formatAmount(deals.filter(d => d.stage === 'Won').reduce((s, d) => s + Number(d.amount || 0), 0))} hint="Closed won" tone="green" icon="✓" /></div><div className="panel"><h3>Forecast by stage</h3>{PIPELINE_STAGES.filter(s => s !== 'Lost').map(stage => { const list = deals.filter(d => d.stage === stage); const value = list.reduce((s, d) => s + Number(d.amount || 0), 0); return <BarRow key={stage} label={`${stage} (${Math.round(stageProbability(stage) * 100)}%)`} percent={weighted ? value * stageProbability(stage) / weighted * 100 : 0} display={formatAmount(value * stageProbability(stage))} /> })}</div></> }
 
-function stageProbability(stage) { return ({ 'New Lead': 0.1, 'Qualified': 0.25, 'Proposal': 0.5, 'Negotiation': 0.75, 'Won': 1, 'Lost': 0 })[stage] ?? 0.2; }
+function stageProbability(stage) { return ({ 'New Lead': 0.1, 'Qualified': 0.25, 'Proposal': 0.5, 'Won': 1, 'Lost': 0 })[stage] ?? 0.2; }
 
 function AdvancedReports({ customers, deals, activities, tickets, leads, quotes, invoices, payments, formatAmount }) { const pipeline = deals.filter(d => !['Won', 'Lost'].includes(d.stage)).reduce((s, d) => s + Number(d.amount || 0), 0); const won = deals.filter(d => d.stage === 'Won').reduce((s, d) => s + Number(d.amount || 0), 0); const paid = payments.reduce((s, p) => s + Number(p.amount || 0), 0); const leadConversion = leads.length ? leads.filter(l => l.status === 'Converted').length / leads.length * 100 : 0; const overdue = invoices.filter(i => i.status === 'Overdue').length; const response = tickets.filter(t => ['Resolved', 'Closed'].includes(t.status)).length; return <><PageHeading eyebrow="INSIGHTS" title="Advanced reports" description="Cross-module performance, conversion and revenue intelligence." /><div className="stats-grid"><StatCard label="Won revenue" value={formatAmount(won)} hint={`${deals.filter(d => d.stage === 'Won').length} won deals`} tone="green" icon="✓" /><StatCard label="Weighted forecast" value={formatAmount(deals.filter(d => !['Won', 'Lost'].includes(d.stage)).reduce((s, d) => s + Number(d.amount || 0) * stageProbability(d.stage), 0))} hint="Probability weighted" tone="purple" icon="↗" /><StatCard label="Lead conversion" value={`${leadConversion.toFixed(1)}%`} hint={`${leads.filter(l => l.status === 'Converted').length}/${leads.length} converted`} tone="blue" icon="◉" /><StatCard label="Collected" value={formatAmount(paid)} hint="Recorded payments" tone="orange" icon="$" /></div><div className="report-grid"><div className="panel report-summary"><h3>Sales funnel</h3><BarRow label="Leads" percent={100} display={leads.length} /><BarRow label="Qualified" percent={leads.length ? (leads.filter(l => l.status === 'Qualified').length / leads.length * 100) : 0} display={leads.filter(l => l.status === 'Qualified').length} /><BarRow label="Won deals" percent={leads.length ? (deals.filter(d => d.stage === 'Won').length / leads.length * 100) : 0} display={deals.filter(d => d.stage === 'Won').length} /></div><div className="panel report-summary"><h3>Revenue</h3><BarRow label="Open pipeline" percent={pipeline + won ? (pipeline / (pipeline + won)) * 100 : 0} display={formatAmount(pipeline)} /><BarRow label="Won" percent={pipeline + won ? (won / (pipeline + won)) * 100 : 0} display={formatAmount(won)} /><BarRow label="Collected" percent={won ? Math.min(100, paid / won * 100) : 0} display={formatAmount(paid)} /></div><div className="panel report-summary"><h3>Operations</h3><BarRow label="Activities completed" percent={activities.length ? activities.filter(a => a.status === 'Completed').length / activities.length * 100 : 0} display={`${activities.filter(a => a.status === 'Completed').length}/${activities.length}`} /><BarRow label="Tickets resolved" percent={tickets.length ? response / tickets.length * 100 : 0} display={`${response}/${tickets.length}`} /><BarRow label="Overdue invoices" percent={invoices.length ? overdue / invoices.length * 100 : 0} display={overdue} /></div><div className="panel report-summary"><h3>Quotes</h3><BarRow label="Accepted" percent={quotes.length ? quotes.filter(q => q.status === 'Accepted').length / quotes.length * 100 : 0} display={quotes.filter(q => q.status === 'Accepted').length} /><BarRow label="Sent" percent={quotes.length ? quotes.filter(q => q.status === 'Sent').length / quotes.length * 100 : 0} display={quotes.filter(q => q.status === 'Sent').length} /><BarRow label="Rejected" percent={quotes.length ? quotes.filter(q => q.status === 'Rejected').length / quotes.length * 100 : 0} display={quotes.filter(q => q.status === 'Rejected').length} /></div></div></> }
 
-function Products({ products, onAdd, onDelete, currentUserId, isAdmin }) {
+function SupportEngineers({ supportEngineers, solutionSupport, onAdd, onUpdate, onDeactivate, isAdmin }) {
+  const primaryVendors = ['F5', 'Kong', 'IRONSCALES', 'SolarWinds', 'Utimaco'];
+  const blank = { name: '', email: '', role: 'System Engineer', status: 'Active', solutionFamilies: [] };
   const [show, setShow] = useState(false);
-  const [form, setForm] = useState({ name: '', description: '' });
+  const [editing, setEditing] = useState(null);
+  const [form, setForm] = useState(blank);
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState('');
+
+  const familyNamesFor = engineerId => solutionSupport
+    .filter(row => row.support_engineer_id === engineerId)
+    .map(row => row.solution_family);
+
+  const openAdd = () => { setEditing(null); setForm(blank); setError(''); setShow(true); };
+  const openEdit = engineer => {
+    setEditing(engineer);
+    setForm({ name: engineer.name || '', email: engineer.email || '', role: engineer.role || 'System Engineer', status: engineer.status || 'Active', solutionFamilies: familyNamesFor(engineer.id) });
+    setError('');
+    setShow(true);
+  };
+  const close = () => { setShow(false); setEditing(null); setForm(blank); setError(''); };
+
+  const save = async event => {
+    event.preventDefault();
+    if (!form.name.trim()) return setError('Engineer name is required.');
+    setSaving(true); setError('');
+    try {
+      const payload = { name: form.name.trim(), email: form.email.trim() || null, role: form.role.trim() || 'System Engineer', status: form.status };
+      if (editing) await onUpdate(editing.id, payload, form.solutionFamilies);
+      else await onAdd(payload, form.solutionFamilies);
+      close();
+    } catch (err) { setError(err.message || 'Unable to save support engineer.'); }
+    finally { setSaving(false); }
+  };
+
+  const toggleFamily = family => setForm(prev => ({ ...prev, solutionFamilies: prev.solutionFamilies.includes(family) ? prev.solutionFamilies.filter(item => item !== family) : [...prev.solutionFamilies, family] }));
+
+  return <>
+    <PageHeading eyebrow="WORK & SUPPORT" title="Technical Support" description="Manage the engineers who support Storhet solutions and assign them to deals." action={isAdmin ? 'Add support engineer' : undefined} onAction={isAdmin ? openAdd : undefined} />
+    <div className="stats-grid">
+      <StatCard label="Support engineers" value={supportEngineers.filter(x => x.status === 'Active').length} hint={`${supportEngineers.length} total`} tone="blue" icon="◉" />
+      <StatCard label="Solution families" value={primaryVendors.length} hint="Configured solution families" tone="purple" icon="◈" />
+      <StatCard label="Active assignments" value={solutionSupport.length} hint="Parent-solution support links" tone="green" icon="✓" />
+    </div>
+    <div className="panel">
+      <div className="panel-heading"><div><h3>Support engineers</h3><p>These people can be assigned to solution families and deals.</p></div></div>
+      {supportEngineers.length === 0 ? <div className="empty-state"><p>No support engineers have been added yet.</p>{isAdmin && <button className="primary-btn" onClick={openAdd}>Add your first support engineer</button>}</div> : <div className="table-wrap"><table className="data-table"><thead><tr><th>Engineer</th><th>Role</th><th>Supported solutions</th><th>Status</th><th>Actions</th></tr></thead><tbody>{supportEngineers.map(engineer => { const families = familyNamesFor(engineer.id); return <tr key={engineer.id}><td><strong>{engineer.name}</strong><div className="table-subtext">{engineer.email || 'No email added'}</div></td><td>{engineer.role || 'System Engineer'}</td><td>{families.length ? families.map(f => <span key={f} className="tag-pill">{f}</span>) : <span className="table-subtext">Not assigned</span>}</td><td><span className={`status ${engineer.status === 'Active' ? 'paid' : 'overdue'}`}>{engineer.status}</span></td><td>{isAdmin && <div className="table-actions"><button type="button" className="secondary-btn" onClick={() => openEdit(engineer)}><Pencil size={14} /> Edit</button>{engineer.status === 'Active' && <button type="button" className="secondary-btn" onClick={async () => { if (!window.confirm(`Deactivate ${engineer.name}?`)) return; try { await onDeactivate(engineer.id); } catch (err) { alert(err.message); } }}>Deactivate</button>}</div>}</td></tr>; })}</tbody></table></div>}
+    </div>
+    {show && <div className="modal-backdrop" onClick={close}><form className="modal" onSubmit={save} onClick={e => e.stopPropagation()}><div className="modal-heading"><div><h2>{editing ? 'Edit support engineer' : 'Add support engineer'}</h2><p>Manage the technical people available to Storhet.</p></div><button type="button" className="icon-btn" onClick={close}><X size={18} /></button></div>{error && <div className="form-error">{error}</div>}<label>Name *<input required value={form.name} onChange={e => setForm({ ...form, name: e.target.value })} placeholder="e.g. Michel Agboola" /></label><label>Email<input type="email" value={form.email} onChange={e => setForm({ ...form, email: e.target.value })} placeholder="engineer@storhet.com" /></label><label>Role<input value={form.role} onChange={e => setForm({ ...form, role: e.target.value })} placeholder="e.g. System Engineer" /></label><label>Status<select value={form.status} onChange={e => setForm({ ...form, status: e.target.value })}><option value="Active">Active</option><option value="Inactive">Inactive</option></select></label><div className="product-selector"><div className="product-selector-heading"><div><strong>Supported solution families</strong><span>{form.solutionFamilies.length} selected</span></div></div><div className="product-vendor-children">{primaryVendors.map(family => { const selected = form.solutionFamilies.includes(family); return <label key={family} className={`product-option ${selected ? 'selected' : ''}`}><input type="checkbox" checked={selected} onChange={() => toggleFamily(family)} /><span>{family}</span></label>; })}</div></div><div className="modal-actions"><button type="button" className="secondary-btn" onClick={close}>Cancel</button><button type="submit" className="primary-btn" disabled={saving}>{saving ? 'Saving...' : editing ? 'Save changes' : 'Add engineer'}</button></div></form></div>}
+  </>;
+}
+
+function Products({ products, supportEngineers, solutionSupport, onAdd, onUpdate, onDelete, onUpdateFamilySupport, currentUserId, isAdmin }) {
+  const [show, setShow] = useState(false);
+  const [selectedVendor, setSelectedVendor] = useState(null);
+  const blank = {
+    name: '',
+    description: '',
+    category: '',
+    custom_category: '',
+    vendor: '',
+    logo_url: '',
+    status: 'Active'
+  };
+  const [form, setForm] = useState(blank);
+  const [editingProduct, setEditingProduct] = useState(null);
+  const [showFamilySupport, setShowFamilySupport] = useState(false);
+  const [familySupportIds, setFamilySupportIds] = useState([]);
+  const [familySupportSaving, setFamilySupportSaving] = useState(false);
+
+  const categories = [
+    'API Management',
+    'Application Security',
+    'Network & Infrastructure',
+    'Cybersecurity',
+    'Cloud',
+    'IT Services',
+    'Software',
+    'Hardware',
+    'Other'
+  ];
+
+  // The five primary solution families in Storhet's catalogue.
+  // Individual products are displayed inside their parent vendor family.
+  const primaryVendors = ['F5', 'Kong', 'IRONSCALES', 'SolarWinds', 'Utimaco'];
+  const vendorLogos = {
+    F5: '/logos/f5.png',
+    Kong: '/logos/kong.png',
+    IRONSCALES: '/logos/ironscales.png',
+    SolarWinds: '/logos/solarwinds.jpg',
+    Utimaco: '/logos/utimaco.jpg'
+  };
+
+  const normalizeVendor = vendor => (vendor || '').trim().toLowerCase();
+  const getVendorKey = vendor => {
+    const match = primaryVendors.find(item => normalizeVendor(item) === normalizeVendor(vendor));
+    return match || (vendor || 'Other').trim() || 'Other';
+  };
+
+  const groupedProducts = primaryVendors.reduce((groups, vendor) => {
+    groups[vendor] = products.filter(product => normalizeVendor(product.vendor) === normalizeVendor(vendor));
+    return groups;
+  }, {});
+
+  const otherVendorGroups = products.reduce((groups, product) => {
+    const vendor = getVendorKey(product.vendor);
+    if (primaryVendors.includes(vendor)) return groups;
+    if (!groups[vendor]) groups[vendor] = [];
+    groups[vendor].push(product);
+    return groups;
+  }, {});
 
   const save = async event => {
     event.preventDefault();
     if (!form.name.trim()) return;
+
+    if (form.category === 'Other' && !form.custom_category.trim()) {
+      alert('Please enter the category you want to use.');
+      return;
+    }
+
     try {
-      await onAdd({ name: form.name.trim(), description: form.description.trim() || null });
-      setForm({ name: '', description: '' });
-      setShow(false);
+      const payload = {
+        name: form.name.trim(),
+        description: form.description.trim() || null,
+        category: form.category || null,
+        custom_category: form.category === 'Other' ? form.custom_category.trim() : null,
+        vendor: form.vendor.trim() || null,
+        logo_url: form.logo_url.trim() || null,
+        status: form.status
+      };
+
+      if (editingProduct) {
+        await onUpdate(editingProduct.id, payload);
+      } else {
+        await onAdd(payload);
+      }
+      closeModal();
     } catch (error) {
       alert(error.message);
     }
   };
 
+  const openAdd = () => {
+    setEditingProduct(null);
+    setForm(blank);
+    setShow(true);
+  };
+
+  const openEdit = product => {
+    setEditingProduct(product);
+    setForm({
+      name: product.name || '',
+      description: product.description || '',
+      category: product.category || '',
+      custom_category: product.custom_category || '',
+      vendor: product.vendor || '',
+      logo_url: product.logo_url || '',
+      status: product.status || 'Active'
+    });
+    setShow(true);
+  };
+
+  const closeModal = () => {
+    setShow(false);
+    setEditingProduct(null);
+    setForm(blank);
+  };
+
+  const getFamilySupport = vendor => solutionSupport.filter(row => row.solution_family === vendor && row.support_engineers?.status === 'Active').map(row => row.support_engineer_id);
+  const getFamilySupportNames = vendor => solutionSupport.filter(row => row.solution_family === vendor && row.support_engineers?.status === 'Active').map(row => row.support_engineers?.name).filter(Boolean);
+  const openFamilySupport = vendor => { setFamilySupportIds(getFamilySupport(vendor)); setSelectedVendor(vendor); setShowFamilySupport(true); };
+  const saveFamilySupport = async () => { setFamilySupportSaving(true); try { await onUpdateFamilySupport(selectedVendor, familySupportIds); setShowFamilySupport(false); } catch (err) { alert(err.message); } finally { setFamilySupportSaving(false); } };
+
+  const getCategoryLabel = product => {
+    if (product.category === 'Other') return product.custom_category || 'Other';
+    return product.category || 'Uncategorized';
+  };
+
+  const getLogoUrl = (productOrVendor) => {
+    const vendor = typeof productOrVendor === 'string' ? productOrVendor : productOrVendor?.vendor;
+    const productLogo = typeof productOrVendor === 'string' ? null : productOrVendor?.logo_url;
+    return productLogo || vendorLogos[getVendorKey(vendor)] || null;
+  };
+
+  const LogoMark = ({ product, vendor, large = false }) => {
+    const name = vendor || product?.vendor || product?.name || 'Solution';
+    const logoUrl = getLogoUrl(product || vendor);
+    const fallbackText = name.slice(0, 2).toUpperCase();
+
+    return (
+      <div className={`product-logo ${large ? 'product-logo-large' : ''}`}>
+        {logoUrl ? (
+          <img
+            src={logoUrl}
+            alt={`${name} logo`}
+            onError={event => {
+              event.currentTarget.style.display = 'none';
+              const fallback = event.currentTarget.parentElement.querySelector('.product-logo-fallback');
+              if (fallback) fallback.style.display = 'grid';
+            }}
+          />
+        ) : null}
+        <span className="product-logo-fallback" style={{ display: logoUrl ? 'none' : 'grid' }}>
+          {logoUrl ? <Building2 size={large ? 22 : 18} /> : fallbackText}
+        </span>
+      </div>
+    );
+  };
+
+  const renderProductCard = product => (
+    <div className="panel product-card" key={product.id}>
+      <div className="product-card-top">
+        <LogoMark product={product} />
+        <div className="product-card-actions">
+          <span className={`product-status ${product.status === 'Inactive' ? 'inactive' : ''}`}>
+            {product.status || 'Active'}
+          </span>
+          {(isAdmin || product.created_by === currentUserId) && (
+            <div className="product-card-actions-buttons">
+              <button type="button" className="icon-btn" title="Edit product" onClick={() => openEdit(product)}><Pencil size={16} /></button>
+              <button type="button" className="icon-btn" title="Delete product" onClick={() => onDelete(product.id)}><X size={16} /></button>
+            </div>
+          )}
+        </div>
+      </div>
+
+      <div className="product-category">{getCategoryLabel(product)}</div>
+      <h3>{product.name}</h3>
+      {product.vendor && <div className="product-vendor">{product.vendor}</div>}
+      <p>{product.description || 'No description added.'}</p>
+      <small>Added {formatDate(product.created_at)}</small>
+    </div>
+  );
+
+  const renderVendorCard = vendor => {
+    const vendorProducts = groupedProducts[vendor] || [];
+    const categoriesForVendor = [...new Set(vendorProducts.map(getCategoryLabel).filter(Boolean))];
+
+    return (
+      <button type="button" className="panel solution-family-card" key={vendor} onClick={() => setSelectedVendor(vendor)}>
+        <div className="solution-family-top">
+          <LogoMark vendor={vendor} large />
+          <ChevronRight size={19} className="solution-family-arrow" />
+        </div>
+        <div className="solution-family-label">SOLUTION FAMILY</div>
+        <h3>{vendor}</h3>
+        <p>{vendorProducts.length} {vendorProducts.length === 1 ? 'solution' : 'solutions'} in catalogue</p>
+        <div className="solution-family-support-preview"><strong>Supported by</strong><div>{getFamilySupportNames(vendor).length ? getFamilySupportNames(vendor).slice(0, 3).map(name => <span key={name}>{name}</span>) : <span>Not assigned</span>}</div></div>
+        <div className="solution-family-categories">
+          {categoriesForVendor.slice(0, 4).map(category => (
+            <span key={category}>{category}</span>
+          ))}
+          {categoriesForVendor.length > 4 && <span>+{categoriesForVendor.length - 4} more</span>}
+        </div>
+      </button>
+    );
+  };
+
   return (
     <>
       <PageHeading
-        eyebrow="PRODUCTS"
-        title="Tech products"
-        description="Manage the technology products your team can offer to customers."
+        eyebrow="PRODUCTS & SOLUTIONS"
+        title="Products & solutions"
+        description="Manage the products and technology solutions your team can offer to customers."
         action="Add product"
-        onAction={() => { setForm({ name: '', description: '' }); setShow(true); }}
+        onAction={openAdd}
       />
+
       {products.length === 0 ? (
         <div className="panel empty-state">
-          <p>No products have been added yet.</p>
-          <button className="primary-btn" onClick={() => setShow(true)}>Add your first product</button>
+          <p>No products or solutions have been added yet.</p>
+          <button className="primary-btn" onClick={openAdd}>Add your first product</button>
+        </div>
+      ) : selectedVendor ? (
+        <div className="solution-family-view">
+          <button type="button" className="solution-back-btn" onClick={() => setSelectedVendor(null)}>
+            <ArrowLeft size={16} />
+            Back to solutions
+          </button>
+
+          <div className="solution-family-heading">
+            <LogoMark vendor={selectedVendor} large />
+            <div>
+              <div className="solution-family-label">SOLUTION FAMILY</div>
+              <h2>{selectedVendor}</h2>
+              <p>{(groupedProducts[selectedVendor] || []).length} solutions available in the catalogue.</p>
+              <div className="solution-family-support-preview"><strong>Supported by</strong><div>{getFamilySupportNames(selectedVendor).length ? getFamilySupportNames(selectedVendor).map(name => <span key={name}>{name}</span>) : <span>Not assigned</span>}</div></div>
+            </div>
+            {isAdmin && <button type="button" className="secondary-btn" onClick={() => openFamilySupport(selectedVendor)}>Manage support</button>}
+          </div>
+
+          {(groupedProducts[selectedVendor] || []).length > 0 ? (
+            <div className="product-grid">
+              {(groupedProducts[selectedVendor] || []).map(renderProductCard)}
+            </div>
+          ) : (
+            <div className="panel empty-state">
+              <p>No products have been added under {selectedVendor} yet.</p>
+              <button className="primary-btn" onClick={openAdd}>Add product</button>
+            </div>
+          )}
         </div>
       ) : (
-        <div className="product-grid">
-          {products.map(product => (
-            <div className="panel product-card" key={product.id}>
-              <div className="product-card-top">
-                <div className="product-icon"><FileText size={18} /></div>
-                {(isAdmin || product.created_by === currentUserId) && (
-                  <button className="icon-btn" title="Delete product" onClick={() => onDelete(product.id)}><X size={16} /></button>
-                )}
+        <>
+          <div className="solution-family-grid">
+            {primaryVendors.map(renderVendorCard)}
+          </div>
+
+          {Object.keys(otherVendorGroups).length > 0 && (
+            <div className="other-vendor-section">
+              <div className="solution-family-section-heading">
+                <div>
+                  <div className="solution-family-label">OTHER VENDORS</div>
+                  <h2>Additional solutions</h2>
+                </div>
               </div>
-              <h3>{product.name}</h3>
-              <p>{product.description || 'No description added.'}</p>
-              <small>Added {formatDate(product.created_at)}</small>
+              <div className="product-grid">
+                {Object.values(otherVendorGroups).flat().map(renderProductCard)}
+              </div>
             </div>
-          ))}
-        </div>
+          )}
+        </>
       )}
+
+      {showFamilySupport && selectedVendor && <div className="modal-backdrop" onClick={() => !familySupportSaving && setShowFamilySupport(false)}><div className="modal" onClick={e => e.stopPropagation()}><div className="modal-heading"><div><h2>{selectedVendor} support team</h2><p>Assign engineers at the parent solution-family level. This applies to the solutions under {selectedVendor}.</p></div><button type="button" className="icon-btn" onClick={() => setShowFamilySupport(false)}><X size={18} /></button></div><div className="product-selector"><div className="product-selector-heading"><div><strong>Supported by</strong><span>{familySupportIds.length} selected</span></div></div><div className="product-vendor-children">{supportEngineers.filter(engineer => engineer.status === 'Active').length === 0 ? <p className="settings-hint">Add support engineers from the Technical Support page first.</p> : supportEngineers.filter(engineer => engineer.status === 'Active').map(engineer => { const selected = familySupportIds.includes(engineer.id); return <label key={engineer.id} className={`product-option ${selected ? 'selected' : ''}`}><input type="checkbox" checked={selected} onChange={() => setFamilySupportIds(prev => selected ? prev.filter(id => id !== engineer.id) : [...prev, engineer.id])} /><span>{engineer.name}{engineer.role ? ` — ${engineer.role}` : ''}</span></label>; })}</div></div><div className="modal-actions"><button type="button" className="secondary-btn" onClick={() => setShowFamilySupport(false)}>Cancel</button><button type="button" className="primary-btn" disabled={familySupportSaving} onClick={saveFamilySupport}>{familySupportSaving ? 'Saving...' : 'Save support team'}</button></div></div></div>}
+
       {show && (
-        <div className="modal-backdrop" onClick={() => setShow(false)}>
-          <form className="modal" onSubmit={save} onClick={e => e.stopPropagation()}>
+        <div className="modal-backdrop" onClick={closeModal}>
+          <form className="modal product-modal" onSubmit={save} onClick={e => e.stopPropagation()}>
             <div className="modal-heading">
-              <h2>Add product</h2>
-              <button type="button" className="icon-btn" onClick={() => setShow(false)}><X size={18} /></button>
+              <div>
+                <h2>{editingProduct ? 'Edit product' : 'Add product'}</h2>
+                <p>{editingProduct ? 'Update the product or solution details in your catalogue.' : 'Add a Storhet product or technology solution to the catalogue.'}</p>
+              </div>
+              <button type="button" className="icon-btn" onClick={closeModal}><X size={18} /></button>
             </div>
-            <label>Product name<input value={form.name} onChange={e => setForm({ ...form, name: e.target.value })} placeholder="e.g. IronScale" required /></label>
-            <label>Description<input value={form.description} onChange={e => setForm({ ...form, description: e.target.value })} placeholder="What does this product do?" /></label>
-            <button className="primary-btn" type="submit">Add product</button>
+
+            <label>
+              Product / solution name <span className="required-mark">*</span>
+              <input
+                value={form.name}
+                onChange={e => setForm({ ...form, name: e.target.value })}
+                placeholder="e.g. Kong API Gateway"
+                required
+              />
+            </label>
+
+            <div className="product-form-grid">
+              <label>
+                Category
+                <select
+                  value={form.category}
+                  onChange={e => setForm({ ...form, category: e.target.value, custom_category: e.target.value === 'Other' ? form.custom_category : '' })}
+                >
+                  <option value="">Select category</option>
+                  {categories.map(category => <option key={category} value={category}>{category}</option>)}
+                </select>
+              </label>
+
+              <label>
+                Vendor / brand
+                <input
+                  value={form.vendor}
+                  onChange={e => setForm({ ...form, vendor: e.target.value })}
+                  placeholder="e.g. Kong"
+                />
+              </label>
+            </div>
+
+            <label>
+              Solution logo URL
+              <input
+                type="url"
+                value={form.logo_url}
+                onChange={e => setForm({ ...form, logo_url: e.target.value })}
+                placeholder="e.g. /logos/kong.png"
+              />
+            </label>
+
+            {form.category === 'Other' && (
+              <label>
+                Custom category <span className="required-mark">*</span>
+                <input
+                  value={form.custom_category}
+                  onChange={e => setForm({ ...form, custom_category: e.target.value })}
+                  placeholder="Type any category you want, e.g. Data Analytics"
+                  required
+                />
+              </label>
+            )}
+
+            <label>
+              Description
+              <textarea
+                value={form.description}
+                onChange={e => setForm({ ...form, description: e.target.value })}
+                placeholder="What does this product or solution do?"
+                rows="4"
+              />
+            </label>
+
+            <label>
+              Status
+              <select value={form.status} onChange={e => setForm({ ...form, status: e.target.value })}>
+                <option value="Active">Active</option>
+                <option value="Inactive">Inactive</option>
+              </select>
+            </label>
+
+            <div className="modal-actions">
+              <button type="button" className="secondary-btn" onClick={closeModal}>Cancel</button>
+              <button className="primary-btn" type="submit">{editingProduct ? 'Save changes' : 'Add product'}</button>
+            </div>
           </form>
         </div>
       )}
     </>
   );
 }
+
 function SettingsPage({ currency, setCurrency }) {
   const [selectedCurrency, setSelectedCurrency] = useState(currency);
   const [saved, setSaved] = useState(false);
