@@ -6269,8 +6269,8 @@ function Invoices({ invoices, payments, customers, products, onAdd, onUpdate, on
 
             <label>
               Unit price
-              <input type="number" min="0" step="0.01" value={form.unit_price} readOnly />
-              <span className="invoice-payment-term-help">Pulled from the selected solution.</span>
+              <input type="number" min="0" step="0.01" value={form.unit_price} onChange={e => setInvoiceField('unit_price', e.target.value)} />
+              <span className="invoice-payment-term-help">Auto-filled from the catalogue, but you can edit it for a custom price.</span>
             </label>
 
             <div className="invoice-item-total">
