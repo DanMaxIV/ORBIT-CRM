@@ -3110,7 +3110,7 @@ async function signUpWithEmail(event) {
         {page === 'Email' && <EmailPage emailLogs={emailLogs} customers={customers} integrations={emailIntegrations} loading={emailIntegrationLoading} error={emailIntegrationError} onConnect={connectEmailProvider} onDisconnect={disconnectEmailProvider} onAdd={async payload => { try { await addEmailLog(payload); showToast('Email logged.'); } catch (e) { alert(e.message); } }} />}
         {page === 'Calendar' && <CalendarPage events={calendarEvents} customers={customers} onAdd={addCalendarEvent} onUpdate={updateCalendarEvent} onDelete={deleteCalendarEvent} />}
         {page === 'Quotes' && <Quotes quotes={quotes} products={products} quoteItems={quoteItems} onLoadQuoteItems={loadQuoteItems} onAdd={addQuote} onUpdate={updateQuote} onDelete={deleteQuote} formatAmount={formatAmount} currentUserId={session.user.id} isAdmin={authorizationProfile?.role === 'admin'} />}
-        {page === 'Invoices' && <Invoices invoices={invoices} payments={payments} customers={customers} onAdd={addInvoice} onUpdate={updateInvoice} onAddPayment={addPayment} formatAmount={formatAmount} currentUserId={session.user.id} isAdmin={authorizationProfile?.role === 'admin'} />}
+        {page === 'Invoices' && <Invoices invoices={invoices} payments={payments} customers={customers} products={products} onAdd={addInvoice} onUpdate={updateInvoice} onAddPayment={addPayment} formatAmount={formatAmount} currentUserId={session.user.id} isAdmin={authorizationProfile?.role === 'admin'} />}
         {page === 'Documents' && <Documents documents={documents} customers={customers} onUpload={uploadDocument} onDownload={downloadDocument} onDelete={deleteDocument} />}
         {page === 'Automation' && <Automation workflows={workflows} onAdd={addWorkflow} onUpdate={updateWorkflow} />}
         {page === 'Segments' && <Segments segments={segments} customers={customers} onAdd={addSegment} onUpdate={updateSegment} />}
@@ -6009,7 +6009,7 @@ function Quotes({ quotes = [], products = [], quoteItems = [], onLoadQuoteItems,
   </>;
 }
 
-function Invoices({ invoices, payments, customers, onAdd, onUpdate, onAddPayment, formatAmount, currentUserId, isAdmin }) {
+function Invoices({ invoices, payments, customers, products, onAdd, onUpdate, onAddPayment, formatAmount, currentUserId, isAdmin }) {
   const [show, setShow] = useState(false);
   const [pay, setPay] = useState(null);
   const [preview, setPreview] = useState(null);
@@ -6017,17 +6017,96 @@ function Invoices({ invoices, payments, customers, onAdd, onUpdate, onAddPayment
     invoice_number: `INV-${Date.now().toString().slice(-6)}`,
     title: '',
     customer_id: '',
+    product_id: '',
+    item_type: 'Product',
+    quantity: 1,
+    unit_price: 0,
     amount: 0,
     due_date: '',
+    payment_terms: 'Due on receipt',
     status: 'Draft',
     notes: ''
   };
   const [form, setForm] = useState(blank);
 
+  const setInvoiceField = (field, value) => {
+    setForm(prev => {
+      const next = { ...prev, [field]: value };
+      if (field === 'quantity' || field === 'unit_price') {
+        next.amount = Math.max(0, Number(next.quantity) || 0) * Math.max(0, Number(next.unit_price) || 0);
+      }
+      return next;
+    });
+  };
+
+  const availableInvoiceProducts = products.filter(product => (product.status || 'Active') === 'Active' && (product.type || 'Product') === form.item_type);
+
+  const setInvoiceProduct = productId => {
+    const product = products.find(item => item.id === productId);
+    if (!product) {
+      setForm(prev => ({ ...prev, product_id: '', title: '', unit_price: 0, amount: 0 }));
+      return;
+    }
+
+    const unitPrice = Math.max(0, Number(product.unit_price) || 0);
+    const quantity = Math.max(1, Number(form.quantity) || 1);
+    setForm(prev => ({
+      ...prev,
+      product_id: product.id,
+      title: product.name,
+      item_type: product.type || 'Product',
+      unit_price: unitPrice,
+      amount: quantity * unitPrice
+    }));
+  };
+
+  const setInvoiceItemType = value => {
+    setForm(prev => ({
+      ...prev,
+      item_type: value,
+      product_id: '',
+      title: '',
+      unit_price: 0,
+      amount: 0
+    }));
+  };
+
+  const setPaymentTerms = value => {
+    const today = new Date();
+    let dueDate = '';
+
+    if (value === 'Due on receipt') {
+      dueDate = today.toISOString().slice(0, 10);
+    } else if (value.startsWith('Net ')) {
+      const days = Number(value.replace('Net ', '')) || 0;
+      today.setDate(today.getDate() + days);
+      dueDate = today.toISOString().slice(0, 10);
+    }
+
+    setForm(prev => ({
+      ...prev,
+      payment_terms: value,
+      due_date: value === 'Custom' ? prev.due_date : dueDate
+    }));
+  };
+
   const save = async e => {
     e.preventDefault();
     try {
-      await onAdd(form);
+      const payload = {
+        invoice_number: form.invoice_number,
+        title: form.title,
+        customer_id: form.customer_id || null,
+        product_id: form.product_id || null,
+        item_type: form.item_type || 'Product',
+        quantity: Number(form.quantity) || 1,
+        unit_price: Number(form.unit_price) || 0,
+        amount: Number(form.amount) || 0,
+        due_date: form.due_date || null,
+        status: form.status,
+        notes: form.notes || ''
+      };
+      await onAdd(payload);
       setShow(false);
     } catch (err) {
       alert(err.message);
@@ -6097,16 +6176,130 @@ function Invoices({ invoices, payments, customers, onAdd, onUpdate, onAddPayment
     </div>
 
     {show && <div className="modal-backdrop" onClick={() => setShow(false)}>
-      <form className="modal" onSubmit={save} onClick={e => e.stopPropagation()}>
-        <div className="modal-heading"><h2>New invoice</h2><button type="button" className="icon-btn" onClick={() => setShow(false)}><X size={18} /></button></div>
-        <label>Invoice number<input required value={form.invoice_number} onChange={e => setForm({ ...form, invoice_number: e.target.value })} /></label>
-        <label>Title<input required value={form.title} onChange={e => setForm({ ...form, title: e.target.value })} /></label>
-        <label>Customer<select value={form.customer_id} onChange={e => setForm({ ...form, customer_id: e.target.value })}><option value="">None</option>{customers.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}</select></label>
-        <label>Amount<input type="number" min="0" value={form.amount} onChange={e => setForm({ ...form, amount: Number(e.target.value) })} /></label>
-        <label>Due date<input type="date" value={form.due_date || ''} onChange={e => setForm({ ...form, due_date: e.target.value })} /></label>
-        <label>Status<select value={form.status} onChange={e => setForm({ ...form, status: e.target.value })}>{['Draft', 'Sent', 'Partially Paid', 'Paid', 'Overdue', 'Cancelled'].map(x => <option key={x}>{x}</option>)}</select></label>
-        <label>Notes<textarea value={form.notes || ''} onChange={e => setForm({ ...form, notes: e.target.value })} /></label>
-        <div className="modal-actions"><button type="button" className="secondary-btn" onClick={() => setShow(false)}>Cancel</button><button className="primary-btn">Create invoice</button></div>
+      <form className="modal invoice-form-modal" onSubmit={save} onClick={e => e.stopPropagation()}>
+        <div className="modal-heading">
+          <div>
+            <h2>New invoice</h2>
+            <span className="invoice-form-subtitle">Create a simple professional invoice for your customer.</span>
+          </div>
+          <button type="button" className="icon-btn" onClick={() => setShow(false)}><X size={18} /></button>
+        </div>
+
+        <div className="invoice-form-section">
+          <div className="invoice-form-section-title">Invoice details</div>
+          <div className="invoice-form-grid">
+            <label>
+              Invoice number
+              <input required value={form.invoice_number} onChange={e => setForm({ ...form, invoice_number: e.target.value })} />
+            </label>
+
+            <label>
+              Customer
+              <select required value={form.customer_id} onChange={e => setForm({ ...form, customer_id: e.target.value })}>
+                <option value="">Select customer</option>
+                {customers.map(c => <option key={c.id} value={c.id}>{c.name}{c.company ? ` · ${c.company}` : ''}</option>)}
+              </select>
+            </label>
+
+            <label>
+              Invoice date
+              <input type="date" value={new Date().toISOString().slice(0, 10)} readOnly />
+            </label>
+
+            <label className="invoice-payment-terms-field">
+              Payment terms
+              <select value={form.payment_terms} onChange={e => setPaymentTerms(e.target.value)}>
+                <option>Due on receipt</option>
+                <option>Net 15</option>
+                <option>Net 30</option>
+                <option>Net 45</option>
+                <option>Net 60</option>
+                <option>Custom</option>
+              </select>
+              <span className="invoice-payment-term-help">
+                {form.payment_terms === 'Due on receipt'
+                  ? 'Payment is due when the invoice is received.'
+                  : form.payment_terms === 'Custom'
+                    ? 'Choose the exact due date below.'
+                    : `Payment is due ${form.payment_terms.replace('Net ', '')} days after the invoice date.`}
+              </span>
+            </label>
+
+            <label>
+              Due date
+              <input type="date" value={form.due_date || ''} onChange={e => setForm({ ...form, due_date: e.target.value })} />
+            </label>
+
+            <label>
+              Status
+              <select value={form.status} onChange={e => setForm({ ...form, status: e.target.value })}>
+                {['Draft', 'Sent', 'Partially Paid', 'Paid', 'Overdue', 'Cancelled'].map(x => <option key={x}>{x}</option>)}
+              </select>
+            </label>
+          </div>
+        </div>
+
+        <div className="invoice-form-section">
+          <div className="invoice-form-section-title">Items</div>
+          <div className="invoice-item-editor">
+            <label>
+              Type
+              <select value={form.item_type} onChange={e => setInvoiceItemType(e.target.value)}>
+                <option value="Product">Product</option>
+                <option value="Service">Service</option>
+              </select>
+            </label>
+
+            <label className="invoice-item-description">
+              Item / service
+              <select required value={form.product_id} onChange={e => setInvoiceProduct(e.target.value)}>
+                <option value="">Select from solutions</option>
+                {availableInvoiceProducts.map(product => (
+                  <option key={product.id} value={product.id}>
+                    {product.name}{product.vendor ? ` · ${product.vendor}` : ''}
+                  </option>
+                ))}
+              </select>
+            </label>
+
+            <label>
+              Qty
+              <input type="number" min="1" step="1" value={form.quantity} onChange={e => setInvoiceField('quantity', e.target.value)} />
+            </label>
+
+            <label>
+              Unit price
+              <input type="number" min="0" step="0.01" value={form.unit_price} readOnly />
+              <span className="invoice-payment-term-help">Pulled from the selected solution.</span>
+            </label>
+
+            <div className="invoice-item-total">
+              <span>Amount</span>
+              <strong>{formatAmount(form.amount)}</strong>
+            </div>
+          </div>
+          {form.item_type && availableInvoiceProducts.length === 0 && (
+            <div className="invoice-item-empty">No active {form.item_type.toLowerCase()} solutions have a selling price in the catalogue yet.</div>
+          )}
+
+          <div className="invoice-form-total">
+            <span>Total</span>
+            <strong>{formatAmount(form.amount)}</strong>
+          </div>
+        </div>
+
+        <div className="invoice-form-section">
+          <div className="invoice-form-section-title">Notes</div>
+          <label>
+            Customer notes
+            <textarea rows="3" placeholder="Thank you for your business." value={form.notes || ''} onChange={e => setForm({ ...form, notes: e.target.value })} />
+          </label>
+        </div>
+
+        <div className="modal-actions">
+          <button type="button" className="secondary-btn" onClick={() => setShow(false)}>Cancel</button>
+          <button className="primary-btn">Create invoice</button>
+        </div>
       </form>
     </div>}
 
@@ -6174,9 +6367,9 @@ function Invoices({ invoices, payments, customers, onAdd, onUpdate, onAddPayment
               <tbody>
                 <tr>
                   <td>1</td>
-                  <td><strong>{preview.title || 'Professional services'}</strong><span>Storhet Solutions service / solution delivery</span></td>
-                  <td>1</td>
-                  <td>{formatAmount(amount)}</td>
+                  <td><strong>{preview.title || 'Professional services'}</strong><span>{preview.item_type || 'Product'} · Storhet Solutions solution delivery</span></td>
+                  <td>{preview.quantity || 1}</td>
+                  <td>{formatAmount(preview.unit_price ?? amount)}</td>
                   <td>{formatAmount(amount)}</td>
                 </tr>
               </tbody>
@@ -6283,6 +6476,8 @@ function Products({ products, supportEngineers, solutionSupport, onAdd, onUpdate
     custom_category: '',
     vendor: '',
     logo_url: '',
+    type: 'Product',
+    unit_price: 0,
     status: 'Active'
   };
   const [form, setForm] = useState(blank);
@@ -6350,6 +6545,8 @@ function Products({ products, supportEngineers, solutionSupport, onAdd, onUpdate
         custom_category: form.category === 'Other' ? form.custom_category.trim() : null,
         vendor: form.vendor.trim() || null,
         logo_url: form.logo_url.trim() || null,
+        type: form.type || 'Product',
+        unit_price: Math.max(0, Number(form.unit_price) || 0),
         status: form.status
       };
 
@@ -6379,6 +6576,8 @@ function Products({ products, supportEngineers, solutionSupport, onAdd, onUpdate
       custom_category: product.custom_category || '',
       vendor: product.vendor || '',
       logo_url: product.logo_url || '',
+      type: product.type || 'Product',
+      unit_price: Number(product.unit_price || 0),
       status: product.status || 'Active'
     });
     setShow(true);
@@ -6450,7 +6649,8 @@ function Products({ products, supportEngineers, solutionSupport, onAdd, onUpdate
 
       <div className="product-category">{getCategoryLabel(product)}</div>
       <h3>{product.name}</h3>
-      {product.vendor && <div className="product-vendor">{product.vendor}</div>}
+      <div className="product-vendor">{product.vendor || 'Storhet'} · {product.type || 'Product'}</div>
+      {Number(product.unit_price || 0) > 0 && <div className="product-price">{formatAmount(product.unit_price)}</div>}
       <p>{product.description || 'No description added.'}</p>
       <small>Added {formatDate(product.created_at)}</small>
     </div>
@@ -6587,6 +6787,28 @@ function Products({ products, supportEngineers, solutionSupport, onAdd, onUpdate
                   value={form.vendor}
                   onChange={e => setForm({ ...form, vendor: e.target.value })}
                   placeholder="e.g. Kong"
+                />
+              </label>
+            </div>
+
+            <div className="product-form-grid">
+              <label>
+                Type
+                <select value={form.type} onChange={e => setForm({ ...form, type: e.target.value })}>
+                  <option value="Product">Product</option>
+                  <option value="Service">Service</option>
+                </select>
+              </label>
+
+              <label>
+                Selling price
+                <input
+                  type="number"
+                  min="0"
+                  step="0.01"
+                  value={form.unit_price}
+                  onChange={e => setForm({ ...form, unit_price: e.target.value })}
+                  placeholder="0.00"
                 />
               </label>
             </div>
