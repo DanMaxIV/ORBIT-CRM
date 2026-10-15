@@ -5353,3 +5353,14 @@ tbody tr:last-child td {
   color: #64748b;
   font-size: 12px;
 }
+
+.invoice-custom-due-date {
+  padding: 10px 12px;
+  border: 1px solid rgba(16,185,129,.35);
+  border-radius: 12px;
+  background: rgba(16,185,129,.045);
+}
+
+.invoice-custom-due-date input {
+  margin-top: 6px;
+}

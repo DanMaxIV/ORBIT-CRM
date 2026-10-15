@@ -5377,6 +5377,10 @@ function Leads({ leads, customers, products, leadProducts, onAdd, onUpdate, onSy
 
   const save = async e => {
     e.preventDefault();
+    if (form.payment_terms === 'Custom' && !form.due_date) {
+      alert('Please choose a custom due date.');
+      return;
+    }
     try {
       const payload = { ...form, customer_id: form.customer_id || null };
 
@@ -6071,22 +6075,29 @@ function Invoices({ invoices, payments, customers, products, onAdd, onUpdate, on
     }));
   };
 
+  const localDateString = date => {
+    const year = date.getFullYear();
+    const month = String(date.getMonth() + 1).padStart(2, '0');
+    const day = String(date.getDate()).padStart(2, '0');
+    return `${year}-${month}-${day}`;
+  };
+
   const setPaymentTerms = value => {
     const today = new Date();
     let dueDate = '';
 
     if (value === 'Due on receipt') {
-      dueDate = today.toISOString().slice(0, 10);
+      dueDate = localDateString(today);
     } else if (value.startsWith('Net ')) {
       const days = Number(value.replace('Net ', '')) || 0;
       today.setDate(today.getDate() + days);
-      dueDate = today.toISOString().slice(0, 10);
+      dueDate = localDateString(today);
     }
 
     setForm(prev => ({
       ...prev,
       payment_terms: value,
-      due_date: value === 'Custom' ? prev.due_date : dueDate
+      due_date: value === 'Custom' ? '' : dueDate
     }));
   };
 
@@ -6103,6 +6114,7 @@ function Invoices({ invoices, payments, customers, products, onAdd, onUpdate, on
         unit_price: Number(form.unit_price) || 0,
         amount: Number(form.amount) || 0,
         due_date: form.due_date || null,
+        payment_terms: form.payment_terms || 'Due on receipt',
         status: form.status,
         notes: form.notes || ''
       };
@@ -6220,14 +6232,22 @@ function Invoices({ invoices, payments, customers, products, onAdd, onUpdate, on
                 {form.payment_terms === 'Due on receipt'
                   ? 'Payment is due when the invoice is received.'
                   : form.payment_terms === 'Custom'
-                    ? 'Choose the exact due date below.'
+                    ? 'Set the exact payment due date below.'
                     : `Payment is due ${form.payment_terms.replace('Net ', '')} days after the invoice date.`}
               </span>
             </label>
 
-            <label>
-              Due date
-              <input type="date" value={form.due_date || ''} onChange={e => setForm({ ...form, due_date: e.target.value })} />
+            <label className={form.payment_terms === 'Custom' ? 'invoice-custom-due-date' : ''}>
+              {form.payment_terms === 'Custom' ? 'Custom due date' : 'Due date'}
+              <input
+                type="date"
+                value={form.due_date || ''}
+                onChange={e => setForm(prev => ({ ...prev, due_date: e.target.value }))}
+                required={form.payment_terms === 'Custom'}
+              />
+              {form.payment_terms === 'Custom' && (
+                <span className="invoice-payment-term-help">Choose a date from the calendar, or enter the date manually.</span>
+              )}
             </label>
 
             <label>
