@@ -6009,7 +6009,205 @@ function Quotes({ quotes = [], products = [], quoteItems = [], onLoadQuoteItems,
   </>;
 }
 
-function Invoices({ invoices, payments, customers, onAdd, onUpdate, onAddPayment, formatAmount, currentUserId, isAdmin }) { const [show, setShow] = useState(false); const [pay, setPay] = useState(null); const blank = { invoice_number: `INV-${Date.now().toString().slice(-6)}`, title: '', customer_id: '', amount: 0, due_date: '', status: 'Draft', notes: '' }; const [form, setForm] = useState(blank); const save = async e => { e.preventDefault(); try { await onAdd(form); setShow(false) } catch (err) { alert(err.message) } }; const paymentSave = async e => { e.preventDefault(); try { await onAddPayment({ ...pay, payment_method: pay.payment_method || 'Bank transfer' }); setPay(null) } catch (err) { alert(err.message) } }; return <><PageHeading eyebrow="BILLING" title="Invoices & payments" description="Track invoices, balances and payments." action="New invoice" onAction={() => { setForm({ ...blank, invoice_number: `INV-${Date.now().toString().slice(-6)}` }); setShow(true) }} /><div className="stats-grid"><StatCard label="Invoiced" value={formatAmount(invoices.reduce((s, x) => s + Number(x.amount || 0), 0))} hint={`${invoices.length} invoices`} tone="blue" icon="$" /><StatCard label="Paid" value={formatAmount(payments.reduce((s, x) => s + Number(x.amount || 0), 0))} hint={`${payments.length} payments`} tone="green" icon="✓" /><StatCard label="Outstanding" value={formatAmount(invoices.filter(x => !['Paid', 'Cancelled'].includes(x.status)).reduce((s, x) => s + Number(x.amount || 0), 0))} hint="Open balances" tone="orange" icon="!" /></div><div className="panel"><div className="table-wrap"><table><thead><tr><th>Invoice</th><th>Customer</th><th>Amount</th><th>Status</th><th>Due</th><th>Actions</th></tr></thead><tbody>{invoices.length === 0 ? <tr><td colSpan="6">No invoices yet.</td></tr> : invoices.map(i => <tr key={i.id}><td><strong>{i.invoice_number}</strong><div className="deal-customer">{i.title}</div></td><td>{i.customers?.name || '—'}</td><td>{formatAmount(i.amount)}</td><td>{i.status}</td><td>{i.due_date ? formatDate(i.due_date) : '—'}</td><td><div className="toolbar-actions">{(isAdmin || i.created_by === currentUserId) && <button className="secondary-btn" onClick={() => onUpdate(i.id, { status: i.status === 'Paid' ? 'Sent' : 'Paid' })}>{i.status === 'Paid' ? 'Reopen' : 'Mark paid'}</button>}{i.status !== 'Paid' && <button className="secondary-btn" onClick={() => setPay({ invoice_id: i.id, amount: i.amount, paid_at: new Date().toISOString().slice(0, 16), payment_method: 'Bank transfer' })}>Record payment</button>}</div></td></tr>)}</tbody></table></div></div>{show && <div className="modal-backdrop" onClick={() => setShow(false)}><form className="modal" onSubmit={save} onClick={e => e.stopPropagation()}><div className="modal-heading"><h2>New invoice</h2><button type="button" className="icon-btn" onClick={() => setShow(false)}><X size={18} /></button></div><label>Invoice number<input required value={form.invoice_number} onChange={e => setForm({ ...form, invoice_number: e.target.value })} /></label><label>Title<input required value={form.title} onChange={e => setForm({ ...form, title: e.target.value })} /></label><label>Customer<select value={form.customer_id} onChange={e => setForm({ ...form, customer_id: e.target.value })}><option value="">None</option>{customers.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}</select></label><label>Amount<input type="number" min="0" value={form.amount} onChange={e => setForm({ ...form, amount: Number(e.target.value) })} /></label><label>Due date<input type="date" value={form.due_date || ''} onChange={e => setForm({ ...form, due_date: e.target.value })} /></label><label>Status<select value={form.status} onChange={e => setForm({ ...form, status: e.target.value })}>{['Draft', 'Sent', 'Partially Paid', 'Paid', 'Overdue', 'Cancelled'].map(x => <option key={x}>{x}</option>)}</select></label><label>Notes<textarea value={form.notes || ''} onChange={e => setForm({ ...form, notes: e.target.value })} /></label><div className="modal-actions"><button type="button" className="secondary-btn" onClick={() => setShow(false)}>Cancel</button><button className="primary-btn">Create invoice</button></div></form></div>}{pay && <div className="modal-backdrop" onClick={() => setPay(null)}><form className="modal" onSubmit={paymentSave} onClick={e => e.stopPropagation()}><div className="modal-heading"><h2>Record payment</h2><button type="button" className="icon-btn" onClick={() => setPay(null)}><X size={18} /></button></div><label>Amount<input type="number" min="0" value={pay.amount} onChange={e => setPay({ ...pay, amount: Number(e.target.value) })} /></label><label>Method<select value={pay.payment_method} onChange={e => setPay({ ...pay, payment_method: e.target.value })}>{['Bank transfer', 'Card', 'Cash', 'Online', 'Other'].map(x => <option key={x}>{x}</option>)}</select></label><label>Date<input type="datetime-local" value={pay.paid_at} onChange={e => setPay({ ...pay, paid_at: e.target.value })} /></label><div className="modal-actions"><button type="button" className="secondary-btn" onClick={() => setPay(null)}>Cancel</button><button className="primary-btn">Save payment</button></div></form></div>}</> }
+function Invoices({ invoices, payments, customers, onAdd, onUpdate, onAddPayment, formatAmount, currentUserId, isAdmin }) {
+  const [show, setShow] = useState(false);
+  const [pay, setPay] = useState(null);
+  const [preview, setPreview] = useState(null);
+  const blank = {
+    invoice_number: `INV-${Date.now().toString().slice(-6)}`,
+    title: '',
+    customer_id: '',
+    amount: 0,
+    due_date: '',
+    status: 'Draft',
+    notes: ''
+  };
+  const [form, setForm] = useState(blank);
+
+  const save = async e => {
+    e.preventDefault();
+    try {
+      await onAdd(form);
+      setShow(false);
+    } catch (err) {
+      alert(err.message);
+    }
+  };
+
+  const paymentSave = async e => {
+    e.preventDefault();
+    try {
+      await onAddPayment({ ...pay, payment_method: pay.payment_method || 'Bank transfer' });
+      setPay(null);
+    } catch (err) {
+      alert(err.message);
+    }
+  };
+
+  const getCustomer = invoice => {
+    return customers.find(customer => customer.id === invoice.customer_id) || null;
+  };
+
+  return <>
+    <PageHeading
+      eyebrow="BILLING"
+      title="Invoices & payments"
+      description="Track invoices, balances and payments."
+      action="New invoice"
+      onAction={() => {
+        setForm({ ...blank, invoice_number: `INV-${Date.now().toString().slice(-6)}` });
+        setShow(true);
+      }}
+    />
+
+    <div className="stats-grid">
+      <StatCard label="Invoiced" value={formatAmount(invoices.reduce((s, x) => s + Number(x.amount || 0), 0))} hint={`${invoices.length} invoices`} tone="blue" icon="$" />
+      <StatCard label="Paid" value={formatAmount(payments.reduce((s, x) => s + Number(x.amount || 0), 0))} hint={`${payments.length} payments`} tone="green" icon="✓" />
+      <StatCard label="Outstanding" value={formatAmount(invoices.filter(x => !['Paid', 'Cancelled'].includes(x.status)).reduce((s, x) => s + Number(x.amount || 0), 0))} hint="Open balances" tone="orange" icon="!" />
+    </div>
+
+    <div className="panel">
+      <div className="table-wrap">
+        <table>
+          <thead>
+            <tr><th>Invoice</th><th>Customer</th><th>Amount</th><th>Status</th><th>Due</th><th>Actions</th></tr>
+          </thead>
+          <tbody>
+            {invoices.length === 0 ? <tr><td colSpan="6">No invoices yet.</td></tr> : invoices.map(i => (
+              <tr key={i.id}>
+                <td><strong>{i.invoice_number}</strong><div className="deal-customer">{i.title}</div></td>
+                <td>{i.customers?.name || '—'}</td>
+                <td>{formatAmount(i.amount)}</td>
+                <td>{i.status}</td>
+                <td>{i.due_date ? formatDate(i.due_date) : '—'}</td>
+                <td>
+                  <div className="toolbar-actions">
+                    <button type="button" className="secondary-btn" onClick={() => setPreview(i)}>
+                      <FileText size={15} /> View
+                    </button>
+                    {(isAdmin || i.created_by === currentUserId) && <button className="secondary-btn" onClick={() => onUpdate(i.id, { status: i.status === 'Paid' ? 'Sent' : 'Paid' })}>{i.status === 'Paid' ? 'Reopen' : 'Mark paid'}</button>}
+                    {i.status !== 'Paid' && <button className="secondary-btn" onClick={() => setPay({ invoice_id: i.id, amount: i.amount, paid_at: new Date().toISOString().slice(0, 16), payment_method: 'Bank transfer' })}>Record payment</button>}
+                  </div>
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+    </div>
+
+    {show && <div className="modal-backdrop" onClick={() => setShow(false)}>
+      <form className="modal" onSubmit={save} onClick={e => e.stopPropagation()}>
+        <div className="modal-heading"><h2>New invoice</h2><button type="button" className="icon-btn" onClick={() => setShow(false)}><X size={18} /></button></div>
+        <label>Invoice number<input required value={form.invoice_number} onChange={e => setForm({ ...form, invoice_number: e.target.value })} /></label>
+        <label>Title<input required value={form.title} onChange={e => setForm({ ...form, title: e.target.value })} /></label>
+        <label>Customer<select value={form.customer_id} onChange={e => setForm({ ...form, customer_id: e.target.value })}><option value="">None</option>{customers.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}</select></label>
+        <label>Amount<input type="number" min="0" value={form.amount} onChange={e => setForm({ ...form, amount: Number(e.target.value) })} /></label>
+        <label>Due date<input type="date" value={form.due_date || ''} onChange={e => setForm({ ...form, due_date: e.target.value })} /></label>
+        <label>Status<select value={form.status} onChange={e => setForm({ ...form, status: e.target.value })}>{['Draft', 'Sent', 'Partially Paid', 'Paid', 'Overdue', 'Cancelled'].map(x => <option key={x}>{x}</option>)}</select></label>
+        <label>Notes<textarea value={form.notes || ''} onChange={e => setForm({ ...form, notes: e.target.value })} /></label>
+        <div className="modal-actions"><button type="button" className="secondary-btn" onClick={() => setShow(false)}>Cancel</button><button className="primary-btn">Create invoice</button></div>
+      </form>
+    </div>}
+
+    {pay && <div className="modal-backdrop" onClick={() => setPay(null)}>
+      <form className="modal" onSubmit={paymentSave} onClick={e => e.stopPropagation()}>
+        <div className="modal-heading"><h2>Record payment</h2><button type="button" className="icon-btn" onClick={() => setPay(null)}><X size={18} /></button></div>
+        <label>Amount<input type="number" min="0" value={pay.amount} onChange={e => setPay({ ...pay, amount: Number(e.target.value) })} /></label>
+        <label>Method<select value={pay.payment_method} onChange={e => setPay({ ...pay, payment_method: e.target.value })}>{['Bank transfer', 'Card', 'Cash', 'Online', 'Other'].map(x => <option key={x}>{x}</option>)}</select></label>
+        <label>Date<input type="datetime-local" value={pay.paid_at} onChange={e => setPay({ ...pay, paid_at: e.target.value })} /></label>
+        <div className="modal-actions"><button type="button" className="secondary-btn" onClick={() => setPay(null)}>Cancel</button><button className="primary-btn">Save payment</button></div>
+      </form>
+    </div>}
+
+    {preview && (() => {
+      const customer = getCustomer(preview);
+      const invoiceDate = preview.created_at || new Date().toISOString();
+      const amount = Number(preview.amount || 0);
+      return <div className="invoice-preview-backdrop" onClick={() => setPreview(null)}>
+        <div className="invoice-preview-shell" onClick={e => e.stopPropagation()}>
+          <div className="invoice-preview-toolbar">
+            <div>
+              <strong>Invoice preview</strong>
+              <span>Temporary document template</span>
+            </div>
+            <div className="invoice-preview-actions">
+              <button type="button" className="secondary-btn" onClick={() => window.print()}><Download size={15} /> Print / Save PDF</button>
+              <button type="button" className="icon-btn" onClick={() => setPreview(null)}><X size={18} /></button>
+            </div>
+          </div>
+
+          <div className="invoice-print-sheet">
+            <header className="invoice-document-header">
+              <div className="invoice-company-block">
+                <img src="/storhet-logo.png" alt="Storhet Solutions" className="invoice-company-logo" />
+                <div>
+                  <h2>STORHET SOLUTIONS</h2>
+                  <p>Technology Solutions & Services</p>
+                </div>
+              </div>
+              <div className="invoice-title-block">
+                <div className="invoice-document-title">INVOICE</div>
+                <div className="invoice-status-pill">{preview.status || 'Draft'}</div>
+              </div>
+            </header>
+
+            <div className="invoice-document-rule" />
+
+            <section className="invoice-meta-grid">
+              <div>
+                <span className="invoice-label">BILL TO</span>
+                <strong>{customer?.name || preview.customers?.name || 'Customer'}</strong>
+                {customer?.company && <span>{customer.company}</span>}
+                {customer?.email && <span>{customer.email}</span>}
+                {customer?.phone && <span>{customer.phone}</span>}
+              </div>
+              <div className="invoice-details-box">
+                <div><span>Invoice #</span><strong>{preview.invoice_number}</strong></div>
+                <div><span>Invoice Date</span><strong>{formatDate(invoiceDate)}</strong></div>
+                <div><span>Due Date</span><strong>{preview.due_date ? formatDate(preview.due_date) : '—'}</strong></div>
+              </div>
+            </section>
+
+            <table className="invoice-document-table">
+              <thead><tr><th>#</th><th>ITEM &amp; DESCRIPTION</th><th>QTY</th><th>RATE</th><th>AMOUNT</th></tr></thead>
+              <tbody>
+                <tr>
+                  <td>1</td>
+                  <td><strong>{preview.title || 'Professional services'}</strong><span>Storhet Solutions service / solution delivery</span></td>
+                  <td>1</td>
+                  <td>{formatAmount(amount)}</td>
+                  <td>{formatAmount(amount)}</td>
+                </tr>
+              </tbody>
+            </table>
+
+            <section className="invoice-bottom-grid">
+              <div className="invoice-notes-block">
+                <span className="invoice-label">NOTES</span>
+                <p>{preview.notes || 'Thank you for your business.'}</p>
+              </div>
+              <div className="invoice-totals-block">
+                <div><span>Subtotal</span><strong>{formatAmount(amount)}</strong></div>
+                <div><span>Discount</span><strong>{formatAmount(0)}</strong></div>
+                <div className="invoice-total-row"><span>TOTAL</span><strong>{formatAmount(amount)}</strong></div>
+                <div className="invoice-balance-row"><span>BALANCE DUE</span><strong>{formatAmount(amount)}</strong></div>
+              </div>
+            </section>
+
+            <footer className="invoice-document-footer">
+              <div>
+                <strong>Payment / Terms</strong>
+                <p>Please make payment by the stated due date. Payment details can be added here later.</p>
+              </div>
+              <div className="invoice-thank-you">Thank you for doing business with<br /><strong>STORHET SOLUTIONS</strong>.</div>
+            </footer>
+          </div>
+        </div>
+      </div>;
+    })()}
+  </>;
+}
 
 function Documents({ documents, customers, onUpload, onDownload, onDelete }) { const [customerId, setCustomerId] = useState(''); const upload = e => { const f = e.target.files?.[0]; if (!f) return; onUpload(f, customerId).catch(err => alert(err.message)); e.target.value = '' }; return <><PageHeading eyebrow="FILES" title="Documents" description="Store customer and CRM files in Supabase Storage." /><div className="panel"><div className="toolbar"><select value={customerId} onChange={e => setCustomerId(e.target.value)}><option value="">No customer link</option>{customers.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}</select><label className="secondary-btn" style={{ display: 'inline-flex', alignItems: 'center', gap: 8, cursor: 'pointer' }}><Upload size={15} /> Upload file<input type="file" hidden onChange={upload} /></label></div><div className="table-wrap"><table><thead><tr><th>File</th><th>Customer</th><th>Type</th><th>Size</th><th>Created</th><th>Actions</th></tr></thead><tbody>{documents.length === 0 ? <tr><td colSpan="6">No documents yet.</td></tr> : documents.map(d => <tr key={d.id}><td><strong>{d.name}</strong></td><td>{d.customers?.name || '—'}</td><td>{d.mime_type}</td><td>{Math.max(1, Math.round(Number(d.size_bytes || 0) / 1024))} KB</td><td>{formatDate(d.created_at)}</td><td><div className="toolbar-actions"><button className="secondary-btn" onClick={() => onDownload(d)}><Download size={14} /> Download</button><button className="icon-btn" onClick={() => onDelete(d)}><X size={16} /></button></div></td></tr>)}</tbody></table></div></div></> }
 
