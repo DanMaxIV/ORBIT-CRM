@@ -5,6 +5,70 @@ import { LayoutDashboard, Users, Kanban, CalendarCheck, BarChart3, Settings, Bel
 // Lets every page heading refresh the latest workspace data without prop-drilling.
 const RefreshContext = createContext(null);
 
+// PostgREST returns at most 1,000 rows per request, so any list longer than that was being cut off
+// silently. This pages through the table in chunks so lists (and totals built from them) stay complete.
+// `id` is added as a tie-breaker so rows never repeat or go missing between pages.
+async function fetchAllRows(makeQuery, pageSize = 1000) {
+  const rows = [];
+  for (let from = 0; ; from += pageSize) {
+    const { data, error } = await makeQuery().order('id', { ascending: true }).range(from, from + pageSize - 1);
+    if (error) return { data: null, error };
+    rows.push(...(data || []));
+    if (!data || data.length < pageSize) break;
+  }
+  return { data: rows, error: null };
+}
+
+// Waits for the user to stop typing before an expensive filter re-runs.
+function useDebouncedValue(value, delay = 250) {
+  const [debounced, setDebounced] = useState(value);
+  useEffect(() => {
+    const timer = window.setTimeout(() => setDebounced(value), delay);
+    return () => window.clearTimeout(timer);
+  }, [value, delay]);
+  return debounced;
+}
+
+// ----- page-by-page loading -----
+const PAGE_SIZE = 25;
+
+// Keeps user-typed text from breaking a PostgREST filter string.
+const sanitizeSearch = value => String(value || '').replace(/[,()*%\\:"']/g, ' ').replace(/\s+/g, ' ').trim();
+
+function Pager({ page, pageSize = PAGE_SIZE, total, onPage, loading = false }) {
+  const pages = Math.max(1, Math.ceil(total / pageSize));
+  const from = total === 0 ? 0 : page * pageSize + 1;
+  const to = Math.min(total, (page + 1) * pageSize);
+  if (total <= pageSize && page === 0) return total > 0 ? <div className="pager"><span className="pager-info">Showing all {total}</span></div> : null;
+  return (
+    <div className="pager" role="navigation" aria-label="Pagination">
+      <span className="pager-info">{total === 0 ? 'No results' : `Showing ${from}–${to} of ${total}`}</span>
+      <div className="pager-buttons">
+        <button type="button" className="secondary-btn" onClick={() => onPage(0)} disabled={loading || page <= 0} aria-label="First page">«</button>
+        <button type="button" className="secondary-btn" onClick={() => onPage(page - 1)} disabled={loading || page <= 0}>Previous</button>
+        <span className="pager-page">Page {page + 1} of {pages}</span>
+        <button type="button" className="secondary-btn" onClick={() => onPage(page + 1)} disabled={loading || page + 1 >= pages}>Next</button>
+        <button type="button" className="secondary-btn" onClick={() => onPage(pages - 1)} disabled={loading || page + 1 >= pages} aria-label="Last page">»</button>
+      </div>
+    </div>
+  );
+}
+
+// Datasets that only some pages need. They are fetched the first time the page (or a feature that
+// uses them) is opened instead of all at login.
+const PAGE_DATA = {
+  Leads: ['leads', 'leadProducts'],
+  Reports: ['leads', 'quotes', 'invoices', 'payments'],
+  Quotes: ['quotes', 'quoteItems'],
+  Invoices: ['invoices', 'payments'],
+  Documents: ['documents'],
+  Email: ['emailLogs', 'emailIntegrations'],
+  'Email Logs': ['emailLogs'],
+  Calendar: ['calendarEvents'],
+  Automation: ['workflows'],
+  Segments: ['segments']
+};
+
 function AuthScreen({ onGoogleSignIn, onEmailSignIn, onEmailSignUp, onPortalSignUp, authMode, setAuthMode, email, setEmail, password, setPassword,
   error,
   notice,
@@ -774,7 +838,9 @@ function App() {
   const [editDealSaving, setEditDealSaving] = useState(false);
   const [editDealError, setEditDealError] = useState('');
   const [search, setSearch] = useState('');
+  const debouncedSearch = useDebouncedValue(search, 250);
   const [globalSearch, setGlobalSearch] = useState('');
+  const debouncedGlobalSearch = useDebouncedValue(globalSearch, 250);
   const [showCustomerForm, setShowCustomerForm] = useState(false);
   const [newCustomer, setNewCustomer] = useState({ name: '', company: '', email: '', status: 'Active' });
   const [selectedCustomer, setSelectedCustomer] = useState(null);
@@ -793,6 +859,27 @@ function App() {
   const [editActivityError, setEditActivityError] = useState('');
   const [selectedActivity, setSelectedActivity] = useState(null);
   const [tickets, setTickets] = useState([]);
+
+  // Server-side paging for the big lists (PAGE_SIZE rows per page).
+  const [ticketPage, setTicketPage] = useState(0);
+  const [ticketTotal, setTicketTotal] = useState(0);
+  const [ticketCounts, setTicketCounts] = useState({});
+  const [ticketListLoading, setTicketListLoading] = useState(false);
+  const [ticketFilters, setTicketFilters] = useState({ query: '', status: 'All', priority: 'All', queue: 'All tickets' });
+  const debouncedTicketQuery = useDebouncedValue(ticketFilters.query, 300);
+  const [activityTab, setActivityTab] = useState('All');
+  const [activityPage, setActivityPage] = useState(0);
+  const [activityTotal, setActivityTotal] = useState(0);
+  const [activityCounts, setActivityCounts] = useState({});
+  const [activityListLoading, setActivityListLoading] = useState(false);
+  const [customerRows, setCustomerRows] = useState([]);
+  const [customerPageIndex, setCustomerPageIndex] = useState(0);
+  const [customerTotal, setCustomerTotal] = useState(0);
+  const [customerListLoading, setCustomerListLoading] = useState(false);
+  const [dashStats, setDashStats] = useState({ overdue: 0, dueToday: 0, openTickets: 0, totalTickets: 0, upcoming: [] });
+  const [customerRelated, setCustomerRelated] = useState({ activities: [], tickets: [] });
+  const [serverSearch, setServerSearch] = useState({ activities: [], tickets: [] });
+  const [reportData, setReportData] = useState({ activities: [], tickets: [] });
   const [leads, setLeads] = useState([]);
   const [leadProducts, setLeadProducts] = useState([]);
   const [emailLogs, setEmailLogs] = useState([]);
@@ -809,6 +896,7 @@ function App() {
   const [selectedInvoice, setSelectedInvoice] = useState(null);
   const [phase2Error, setPhase2Error] = useState('');
   const [emailIntegrations, setEmailIntegrations] = useState([]);
+  const [composeDraft, setComposeDraft] = useState(null);
   const [emailIntegrationLoading, setEmailIntegrationLoading] = useState(false);
   const [emailIntegrationError, setEmailIntegrationError] = useState('');
   const [showTicketForm, setShowTicketForm] = useState(false);
@@ -831,6 +919,9 @@ function App() {
   const searchInputRef = useRef(null);
   const lastRefreshRef = useRef(Date.now());
   const refreshingRef = useRef(false);
+  const loadedDataRef = useRef(new Set());
+  const pageRef = useRef('Dashboard');
+  const pagingRef = useRef({});
   const [refreshing, setRefreshing] = useState(false);
   const [toast, setToast] = useState('');
 
@@ -865,9 +956,9 @@ function App() {
     })}`;
   };
 
-  const filteredCustomers = useMemo(() => customers.filter(c => (statusFilter === 'All' || (c.status || 'Active') === statusFilter) && `${c.name} ${c.company || ''} ${c.email || ''}`.toLowerCase().includes(search.toLowerCase())), [customers, search, statusFilter]);
+  const filteredCustomers = useMemo(() => customers.filter(c => (statusFilter === 'All' || (c.status || 'Active') === statusFilter) && `${c.name} ${c.company || ''} ${c.email || ''}`.toLowerCase().includes(debouncedSearch.toLowerCase())), [customers, debouncedSearch, statusFilter]);
   const globalSearchResults = useMemo(() => {
-    const query = globalSearch.trim().toLowerCase();
+    const query = debouncedGlobalSearch.trim().toLowerCase();
 
     if (!query) return [];
 
@@ -900,7 +991,7 @@ function App() {
       }
     });
 
-    activities.forEach(activity => {
+    serverSearch.activities.forEach(activity => {
       const text = `${activity.title} ${activity.type || ''} ${activity.notes || ''}`.toLowerCase();
 
       if (text.includes(query)) {
@@ -914,7 +1005,7 @@ function App() {
       }
     });
 
-    tickets.forEach(ticket => {
+    serverSearch.tickets.forEach(ticket => {
       const text = `${ticket.title} ${ticket.description || ''} ${ticket.category || ''}`.toLowerCase();
 
       if (text.includes(query)) {
@@ -932,7 +1023,7 @@ function App() {
     quotes.forEach(q => { const text = `${q.quote_number || ''} ${q.title || ''} ${q.customer_name || ''} ${q.company || ''} ${q.email || ''}`.toLowerCase(); if (text.includes(query)) results.push({ type: 'Quote', title: q.quote_number || q.title, subtitle: q.customer_name || q.company || 'Quote', page: 'Quotes', quote: q }); });
     invoices.forEach(i => { const text = `${i.invoice_number || ''} ${i.title || ''} ${i.customers?.name || ''}`.toLowerCase(); if (text.includes(query)) results.push({ type: 'Invoice', title: i.invoice_number || i.title, subtitle: i.customers?.name || 'Invoice', page: 'Invoices', invoice: i }); });
     return results.slice(0, 12);
-  }, [globalSearch, customers, deals, activities, tickets, leads, quotes, invoices]);
+  }, [debouncedGlobalSearch, customers, deals, serverSearch, leads, quotes, invoices]);
   const revenue = deals
     .filter(d => d.stage === 'Won')
     .reduce((sum, d) => sum + (Number(d.amount) || 0), 0);
@@ -1223,12 +1314,12 @@ async function signUpWithEmail(event) {
   const fetchCustomers = async () => {
     setLoading(true);
 
-    const { data, error } = await supabase
+    const { data, error } = await fetchAllRows(() => supabase
       .from("customers")
       .select("*")
       .order("created_at", {
         ascending: false,
-      });
+      }));
 
     if (error) {
       console.error("Error fetching customers:", error);
@@ -1239,10 +1330,10 @@ async function signUpWithEmail(event) {
     setLoading(false);
   };
   const fetchDeals = async () => {
-    const { data, error } = await supabase
+    const { data, error } = await fetchAllRows(() => supabase
       .from('deals')
       .select('*')
-      .order('created_at', { ascending: false });
+      .order('created_at', { ascending: false }));
 
     if (error) {
       console.error('Error fetching deals:', error);
@@ -1250,36 +1341,142 @@ async function signUpWithEmail(event) {
       setDeals(data || []);
     }
   };
-  async function fetchActivities() {
-    const { data, error } = await supabase
-      .from('activities')
-      .select('*')
-      .order('activity_date', { ascending: true });
-    if (error) {
-      console.error('Error fetching activities:', error);
-      return;
-    }
-    setActivities(data || []);
+  // ---------- page-by-page loading ----------
+  async function fetchCustomerPage() {
+    const { page: pageIndex, search: term, status } = pagingRef.current.customers;
+    setCustomerListLoading(true);
+    let query = supabase.from('customers').select('*', { count: 'exact' });
+    if (status === 'Active') query = query.or('status.eq.Active,status.is.null');
+    else if (status !== 'All') query = query.eq('status', status);
+    const text = sanitizeSearch(term);
+    if (text) query = query.or(`name.ilike.%${text}%,company.ilike.%${text}%,email.ilike.%${text}%`);
+    const { data, count, error } = await query
+      .order('created_at', { ascending: false }).order('id', { ascending: true })
+      .range(pageIndex * PAGE_SIZE, pageIndex * PAGE_SIZE + PAGE_SIZE - 1);
+    setCustomerListLoading(false);
+    if (error) { console.error('Error fetching customers page:', error); return; }
+    if ((data || []).length === 0 && (count || 0) > 0 && pageIndex > 0) { setCustomerPageIndex(Math.ceil(count / PAGE_SIZE) - 1); return; }
+    setCustomerRows(data || []);
+    setCustomerTotal(count || 0);
   }
+
+  async function matchingCustomerIds(text) {
+    const { data } = await supabase.from('customers').select('id').or(`name.ilike.%${text}%,company.ilike.%${text}%`).limit(50);
+    return (data || []).map(row => row.id);
+  }
+
+  function changeTicketFilters(patch) {
+    setTicketFilters(current => ({ ...current, ...patch }));
+    setTicketPage(0);
+  }
+
+  async function fetchTicketCounts() {
+    const head = () => supabase.from('tickets').select('id', { count: 'exact', head: true });
+    const [open, progress, done, portalOpen] = await Promise.all([
+      head().eq('status', 'Open'),
+      head().eq('status', 'In Progress'),
+      head().in('status', ['Resolved', 'Closed']),
+      head().eq('source', 'portal').in('status', ['Open', 'In Progress'])
+    ]);
+    setTicketCounts({ Open: open.count || 0, 'In Progress': progress.count || 0, done: done.count || 0, portalOpen: portalOpen.count || 0 });
+  }
+
   async function fetchTickets() {
-    const { data, error } = await supabase
-      .from('tickets')
-      .select(`
-      *,
-      customers (
-        name,
-        company
-      )
-    `)
-      .order('created_at', { ascending: false });
-
-    if (error) {
-      console.error('Error fetching tickets:', error);
-      return;
+    const { page: pageIndex, filters } = pagingRef.current.tickets;
+    setTicketListLoading(true);
+    let query = supabase.from('tickets').select('*, customers (name, company)', { count: 'exact' });
+    if (filters.status !== 'All') query = query.eq('status', filters.status);
+    if (filters.priority !== 'All') query = query.eq('priority', filters.priority);
+    if (filters.queue === 'Assigned to me') query = query.eq('assigned_to', session?.user?.id);
+    else if (filters.queue === 'Unassigned') query = query.is('assigned_to', null);
+    else if (filters.queue === 'Customer portal') query = query.eq('source', 'portal');
+    const text = sanitizeSearch(filters.query);
+    if (text) {
+      const ids = await matchingCustomerIds(text);
+      const number = Number(text.replace(/^#/, ''));
+      const parts = [`title.ilike.%${text}%`, `description.ilike.%${text}%`, `category.ilike.%${text}%`];
+      if (Number.isInteger(number) && number > 0) parts.push(`ticket_number.eq.${number}`);
+      if (ids.length) parts.push(`customer_id.in.(${ids.join(',')})`);
+      query = query.or(parts.join(','));
     }
-
+    const { data, count, error } = await query
+      .order('created_at', { ascending: false }).order('id', { ascending: true })
+      .range(pageIndex * PAGE_SIZE, pageIndex * PAGE_SIZE + PAGE_SIZE - 1);
+    setTicketListLoading(false);
+    if (error) { console.error('Error fetching tickets:', error); return; }
+    if ((data || []).length === 0 && (count || 0) > 0 && pageIndex > 0) { setTicketPage(Math.ceil(count / PAGE_SIZE) - 1); return; }
     setTickets(data || []);
+    setTicketTotal(count || 0);
+    fetchTicketCounts();
   }
+
+  const ACTIVITY_OPEN = 'status.is.null,status.not.in.(Completed,Cancelled)';
+  function activityFilterQuery(query, tab) {
+    const nowIso = new Date().toISOString();
+    if (tab === 'Completed') return query.eq('status', 'Completed');
+    if (tab === 'Upcoming') return query.or(ACTIVITY_OPEN).or(`activity_date.is.null,activity_date.gte.${nowIso}`);
+    if (tab === 'Overdue') return query.or(ACTIVITY_OPEN).lt('activity_date', nowIso);
+    return query;
+  }
+
+  async function fetchActivities() {
+    const { tab, page: pageIndex } = pagingRef.current.activities;
+    setActivityListLoading(true);
+    const { data, count, error } = await activityFilterQuery(supabase.from('activities').select('*', { count: 'exact' }), tab)
+      .order('activity_date', { ascending: tab !== 'Completed', nullsFirst: false })
+      .order('id', { ascending: true })
+      .range(pageIndex * PAGE_SIZE, pageIndex * PAGE_SIZE + PAGE_SIZE - 1);
+    setActivityListLoading(false);
+    if (error) { console.error('Error fetching activities:', error); return; }
+    if ((data || []).length === 0 && (count || 0) > 0 && pageIndex > 0) { setActivityPage(Math.ceil(count / PAGE_SIZE) - 1); return; }
+    setActivities(data || []);
+    setActivityTotal(count || 0);
+    const counts = {};
+    await Promise.all(['All', 'Upcoming', 'Overdue', 'Completed'].map(async name => {
+      const result = await activityFilterQuery(supabase.from('activities').select('id', { count: 'exact', head: true }), name);
+      counts[name] = result.count || 0;
+    }));
+    setActivityCounts(counts);
+  }
+
+  // Small, fixed-size queries for the dashboard cards.
+  async function fetchDashboardStats() {
+    const start = new Date(); start.setHours(0, 0, 0, 0);
+    const end = new Date(start); end.setDate(end.getDate() + 1);
+    const nowIso = new Date().toISOString();
+    const head = table => supabase.from(table).select('id', { count: 'exact', head: true });
+    const [overdue, dueToday, openTickets, totalTickets, upcoming] = await Promise.all([
+      head('activities').or(ACTIVITY_OPEN).lt('activity_date', nowIso),
+      head('activities').or(ACTIVITY_OPEN).gte('activity_date', start.toISOString()).lt('activity_date', end.toISOString()),
+      head('tickets').in('status', ['Open', 'In Progress']),
+      head('tickets'),
+      supabase.from('activities').select('*').or(ACTIVITY_OPEN).order('activity_date', { ascending: true, nullsFirst: false }).limit(4)
+    ]);
+    setDashStats({
+      overdue: overdue.count || 0, dueToday: dueToday.count || 0,
+      openTickets: openTickets.count || 0, totalTickets: totalTickets.count || 0,
+      upcoming: upcoming.data || []
+    });
+  }
+
+  // The customer pop-up shows that customer's own tickets and activities.
+  async function fetchCustomerRelated(customerId) {
+    const [activityResult, ticketResult] = await Promise.all([
+      supabase.from('activities').select('*').eq('customer_id', customerId).order('activity_date', { ascending: false, nullsFirst: false }).limit(100),
+      supabase.from('tickets').select('*, customers (name, company)').eq('customer_id', customerId).order('created_at', { ascending: false }).limit(100)
+    ]);
+    setCustomerRelated({ activities: activityResult.data || [], tickets: ticketResult.data || [] });
+  }
+
+  // Reports are the one place that needs every row, so they load the full lists only while open.
+  async function fetchReportData() {
+    const [activityResult, ticketResult] = await Promise.all([
+      fetchAllRows(() => supabase.from('activities').select('*').order('activity_date', { ascending: true })),
+      fetchAllRows(() => supabase.from('tickets').select('*, customers (name, company)').order('created_at', { ascending: false }))
+    ]);
+    setReportData({ activities: activityResult.data || [], tickets: ticketResult.data || [] });
+  }
+
   async function fetchEmailIntegrations() {
     if (!session?.user?.id) return;
     setEmailIntegrationLoading(true); setEmailIntegrationError('');
@@ -1306,9 +1503,9 @@ async function signUpWithEmail(event) {
   }
 
   async function fetchLeads() {
-    const { data, error } = await supabase.from('leads')
+    const { data, error } = await fetchAllRows(() => supabase.from('leads')
       .select('*, customers(name,company)')
-      .order('created_at', { ascending: false });
+      .order('created_at', { ascending: false }));
     if (error) {
       console.error('Error fetching leads:', error);
       return;
@@ -1334,22 +1531,22 @@ async function signUpWithEmail(event) {
     }
     setDealProducts(data || []);
   }
-  async function fetchEmailLogs() { const { data, error } = await supabase.from('email_logs').select('*, customers(name,company)').order('sent_at', { ascending: false }); if (error) { console.error('Error fetching email logs:', error); return; } setEmailLogs(data || []); }
-  async function fetchCalendarEvents() { const { data, error } = await supabase.from('calendar_events').select('*, customers(name,company)').order('start_at', { ascending: true }); if (error) { console.error('Error fetching calendar events:', error); return; } setCalendarEvents(data || []); }
+  async function fetchEmailLogs() { const { data, error } = await fetchAllRows(() => supabase.from('email_logs').select('*, customers(name,company)').order('sent_at', { ascending: false })); if (error) { console.error('Error fetching email logs:', error); return; } setEmailLogs(data || []); }
+  async function fetchCalendarEvents() { const { data, error } = await fetchAllRows(() => supabase.from('calendar_events').select('*, customers(name,company)').order('start_at', { ascending: true })); if (error) { console.error('Error fetching calendar events:', error); return; } setCalendarEvents(data || []); }
   async function fetchQuotes() {
-    const { data, error } = await supabase
+    const { data, error } = await fetchAllRows(() => supabase
       .from('quotes')
       .select('*')
-      .order('created_at', { ascending: false });
+      .order('created_at', { ascending: false }));
     if (error) { console.error('Error fetching quotes:', error); return; }
     setQuotes(data || []);
   }
 
   async function fetchQuoteItems() {
-    const { data, error } = await supabase
+    const { data, error } = await fetchAllRows(() => supabase
       .from('quote_items')
       .select('*')
-      .order('created_at', { ascending: true });
+      .order('created_at', { ascending: true }));
     if (error) { console.error('Error fetching quote items:', error); return; }
     setQuoteItems(data || []);
   }
@@ -1403,9 +1600,9 @@ async function signUpWithEmail(event) {
 
     return data || [];
   }
-  async function fetchInvoices() { const { data, error } = await supabase.from('invoices').select('*, customers(name,company)').order('created_at', { ascending: false }); if (error) { console.error('Error fetching invoices:', error); return; } setInvoices(data || []); }
-  async function fetchPayments() { const { data, error } = await supabase.from('payments').select('*').order('paid_at', { ascending: false }); if (error) { console.error('Error fetching payments:', error); return; } setPayments(data || []); }
-  async function fetchDocuments() { const { data, error } = await supabase.from('documents').select('*, customers(name,company)').order('created_at', { ascending: false }); if (error) { console.error('Error fetching documents:', error); return; } setDocuments(data || []); }
+  async function fetchInvoices() { const { data, error } = await fetchAllRows(() => supabase.from('invoices').select('*, customers(name,company)').order('created_at', { ascending: false })); if (error) { console.error('Error fetching invoices:', error); return; } setInvoices(data || []); }
+  async function fetchPayments() { const { data, error } = await fetchAllRows(() => supabase.from('payments').select('*').order('paid_at', { ascending: false })); if (error) { console.error('Error fetching payments:', error); return; } setPayments(data || []); }
+  async function fetchDocuments() { const { data, error } = await fetchAllRows(() => supabase.from('documents').select('*, customers(name,company)').order('created_at', { ascending: false })); if (error) { console.error('Error fetching documents:', error); return; } setDocuments(data || []); }
   async function fetchWorkflows() { const { data, error } = await supabase.from('workflows').select('*').order('created_at', { ascending: false }); if (error) { console.error('Error fetching workflows:', error); return; } setWorkflows(data || []); }
   async function fetchSegments() { const { data, error } = await supabase.from('customer_segments').select('*').order('created_at', { ascending: false }); if (error) { console.error('Error fetching segments:', error); return; } setSegments(data || []); }
   async function fetchProducts() { const { data, error } = await supabase.from('products').select('*').order('created_at', { ascending: false }); if (error) { console.error('Error fetching products:', error); return; } setProducts(data || []); }
@@ -1516,6 +1713,26 @@ async function signUpWithEmail(event) {
     ]);
   }
   async function deleteLead(id) { if (!window.confirm('Delete this lead?')) return; const { error } = await supabase.from('leads').delete().eq('id', id); if (error) { alert(error.message); return; } setLeads(prev => prev.filter(x => x.id !== id)); }
+  // Opens the Compose window from anywhere (Email page, customer pop-up).
+  function openCompose(defaults = {}) {
+    ensureData(['emailIntegrations']);
+    setComposeDraft(defaults);
+  }
+
+  // Sends through the send-email Edge Function, which also records the email in the log.
+  async function sendEmail(payload) {
+    const { data, error } = await supabase.functions.invoke('send-email', { body: payload });
+    if (error) {
+      let message = error.message;
+      try { const details = await error.context?.json(); if (details?.error) message = details.error; } catch { /* keep the default message */ }
+      fetchEmailLogs();
+      throw new Error(message);
+    }
+    if (data?.error) { fetchEmailLogs(); throw new Error(data.error); }
+    fetchEmailLogs();
+    showToast(data?.logged === false ? 'Email sent, but it could not be saved to the log.' : 'Email sent.');
+  }
+
   async function addEmailLog(payload) { const { data, error } = await supabase.from('email_logs').insert([{ ...payload, created_by: session.user.id }]).select('*, customers(name,company)').single(); if (error) throw error; setEmailLogs(prev => [data, ...prev]); return data; }
   async function addCalendarEvent(payload) { const { data, error } = await supabase.from('calendar_events').insert([{ ...payload, created_by: session.user.id }]).select('*, customers(name,company)').single(); if (error) throw error; setCalendarEvents(prev => [...prev, data].sort((a, b) => new Date(a.start_at) - new Date(b.start_at))); return data; }
   async function updateCalendarEvent(id, payload) { const { data, error } = await supabase.from('calendar_events').update(payload).eq('id', id).select('*, customers(name,company)').single(); if (error) throw error; setCalendarEvents(prev => prev.map(x => x.id === id ? data : x)); return data; }
@@ -1903,13 +2120,18 @@ async function signUpWithEmail(event) {
     setRefreshing(true);
 
     try {
+      // Core lists, plus any on-demand lists the user has already opened.
+      const loaders = getDataLoaders();
       const jobs = [
-        fetchCustomers(), fetchDeals(), fetchActivities(), fetchTickets(), fetchStaffUsers(),
-        fetchLeads(), fetchLeadProducts(), fetchDealProducts(), fetchEmailLogs(), fetchCalendarEvents(),
-        fetchQuotes(), fetchQuoteItems(), fetchInvoices(), fetchPayments(), fetchDocuments(),
-        fetchWorkflows(), fetchSegments(), fetchProducts(), fetchSupportEngineers(),
+        fetchCustomers(), fetchDeals(), fetchStaffUsers(),
+        ...(pageRef.current === 'Tickets' ? [fetchTickets()] : []),
+        ...(pageRef.current === 'Activities' ? [fetchActivities()] : []),
+        ...(pageRef.current === 'Customers' ? [fetchCustomerPage()] : []),
+        ...(pageRef.current === 'Dashboard' ? [fetchDashboardStats()] : []),
+        ...(pageRef.current === 'Reports' ? [fetchReportData()] : []),
+        fetchDealProducts(), fetchProducts(), fetchSupportEngineers(),
         fetchSolutionSupport(), fetchDealSupport(), fetchNotifications(), fetchOwnerProfiles(),
-        fetchEmailIntegrations()
+        ...Array.from(loadedDataRef.current).map(key => loaders[key]?.())
       ];
 
       if (authorizationProfile?.role === 'admin') {
@@ -2074,11 +2296,96 @@ async function signUpWithEmail(event) {
 
     fetchCustomers();
     fetchDeals();
-    fetchActivities();
-    fetchTickets();
     fetchStaffUsers();
-    fetchEmailIntegrations(); fetchLeads(); fetchLeadProducts(); fetchDealProducts(); fetchDealSupport(); fetchSolutionSupport(); fetchSupportEngineers(); fetchEmailLogs(); fetchCalendarEvents(); fetchQuotes(); fetchQuoteItems(); fetchInvoices(); fetchPayments(); fetchDocuments(); fetchWorkflows(); fetchSegments(); fetchProducts();
+    // Core data every screen and pop-up form needs. Everything else loads when first used (see ensureData).
+    loadedDataRef.current = new Set();
+    fetchDealProducts(); fetchDealSupport(); fetchSolutionSupport(); fetchSupportEngineers(); fetchProducts();
   }, [session, authorized]);
+
+  function getDataLoaders() {
+    return {
+      leads: fetchLeads, leadProducts: fetchLeadProducts, quotes: fetchQuotes, quoteItems: fetchQuoteItems,
+      invoices: fetchInvoices, payments: fetchPayments, documents: fetchDocuments, emailLogs: fetchEmailLogs,
+      emailIntegrations: fetchEmailIntegrations, calendarEvents: fetchCalendarEvents,
+      workflows: fetchWorkflows, segments: fetchSegments
+    };
+  }
+
+  function ensureData(keys) {
+    const loaders = getDataLoaders();
+    keys.forEach(key => {
+      if (loadedDataRef.current.has(key) || !loaders[key]) return;
+      loadedDataRef.current.add(key);
+      loaders[key]();
+    });
+  }
+
+  // Load what the open page needs.
+  useEffect(() => {
+    if (!session || !authorized) return;
+    ensureData(PAGE_DATA[page] || []);
+  }, [session, authorized, page]);
+
+  // Keep the paging inputs where long-lived callbacks (realtime, refresh) can always read the latest values.
+  pageRef.current = page;
+  pagingRef.current = {
+    customers: { page: customerPageIndex, search: debouncedSearch, status: statusFilter },
+    tickets: { page: ticketPage, filters: { ...ticketFilters, query: debouncedTicketQuery } },
+    activities: { tab: activityTab, page: activityPage }
+  };
+
+  useEffect(() => {
+    if (session && authorized && page === 'Customers') fetchCustomerPage();
+  }, [session, authorized, page, customerPageIndex, debouncedSearch, statusFilter, customers]);
+
+  useEffect(() => {
+    if (session && authorized && page === 'Tickets') fetchTickets();
+  }, [session, authorized, page, ticketPage, ticketFilters.status, ticketFilters.priority, ticketFilters.queue, debouncedTicketQuery]);
+
+  useEffect(() => {
+    if (session && authorized && page === 'Activities') fetchActivities();
+  }, [session, authorized, page, activityPage, activityTab]);
+
+  useEffect(() => {
+    if (session && authorized && page === 'Dashboard') fetchDashboardStats();
+  }, [session, authorized, page]);
+
+  useEffect(() => {
+    if (session && authorized && page === 'Reports') fetchReportData();
+  }, [session, authorized, page]);
+
+  useEffect(() => {
+    if (!session || !authorized) return;
+    if (!selectedCustomer?.id) { setCustomerRelated({ activities: [], tickets: [] }); return; }
+    fetchCustomerRelated(selectedCustomer.id);
+  }, [session, authorized, selectedCustomer?.id]);
+
+  // Global search: tickets and activities are searched on the server instead of from a full list.
+  useEffect(() => {
+    const text = sanitizeSearch(debouncedGlobalSearch);
+    if (!session || !authorized || !text) { setServerSearch({ activities: [], tickets: [] }); return; }
+    let cancelled = false;
+    (async () => {
+      const [activityResult, ticketResult] = await Promise.all([
+        supabase.from('activities').select('*').or(`title.ilike.%${text}%,type.ilike.%${text}%,notes.ilike.%${text}%`).limit(8),
+        supabase.from('tickets').select('*, customers (name, company)').or(`title.ilike.%${text}%,description.ilike.%${text}%,category.ilike.%${text}%`).limit(8)
+      ]);
+      if (!cancelled) setServerSearch({ activities: activityResult.data || [], tickets: ticketResult.data || [] });
+    })();
+    return () => { cancelled = true; };
+  }, [session, authorized, debouncedGlobalSearch]);
+
+  // The customer pop-up shows quotes, invoices, payments, emails and documents.
+  useEffect(() => {
+    if (!session || !authorized || !selectedCustomer) return;
+    ensureData(['quotes', 'invoices', 'payments', 'emailLogs', 'documents']);
+  }, [session, authorized, selectedCustomer?.id]);
+
+  // Global search also looks through leads, quotes and invoices, so load them the first time someone searches.
+  useEffect(() => {
+    if (!session || !authorized || !debouncedGlobalSearch.trim()) return;
+    ensureData(['leads', 'quotes', 'invoices']);
+  }, [session, authorized, debouncedGlobalSearch]);
 
   // Quietly refresh when the user returns to the CRM tab after it has been idle.
   useEffect(() => {
@@ -2764,6 +3071,7 @@ async function signUpWithEmail(event) {
       }).eq('id', editingActivity.id).select('*').single();
       if (error) { console.error('Error updating activity:', error); setEditActivityError(error.message); return; }
       setActivities(prev => prev.map(activity => activity.id === data.id ? data : activity));
+      fetchActivities();
       setEditingActivity(null);
       if (selectedActivity?.id === data.id) setSelectedActivity(data);
     } finally { setEditActivitySaving(false); }
@@ -2773,6 +3081,7 @@ async function signUpWithEmail(event) {
     const { data, error } = await supabase.from('activities').update({ status }).eq('id', id).select('*').single();
     if (error) { console.error('Error updating activity:', error); alert(error.message); return; }
     setActivities(prev => prev.map(activity => activity.id === data.id ? data : activity));
+    fetchActivities();
     if (selectedActivity?.id === data.id) setSelectedActivity(data);
   }
   async function deleteActivity(id) {
@@ -2796,6 +3105,7 @@ async function signUpWithEmail(event) {
     setActivities((prev) =>
       prev.filter((activity) => activity.id !== id)
     );
+    fetchActivities();
   }
   async function addTicket(e) {
     e.preventDefault();
@@ -2809,7 +3119,7 @@ async function signUpWithEmail(event) {
         priority: newTicket.priority, category: newTicket.category, assigned_to: newTicket.assigned_to || session.user.id, portal_visible: newTicket.portal_visible !== false, created_by: session.user.id
       }]).select(`*, customers (name, company)`).single();
       if (error) { console.error('Error adding ticket:', error); setTicketError(error.message); return; }
-      setTickets(prev => [data, ...prev]);
+      fetchTickets();
       setNewTicket({ title: '', description: '', customer_id: '', status: 'Open', priority: 'Medium', category: 'General', assigned_to: '', portal_visible: true });
       setShowTicketForm(false);
     } catch (error) { console.error('Unexpected error:', error); setTicketError('Something went wrong. Please try again.'); }
@@ -2829,6 +3139,7 @@ async function signUpWithEmail(event) {
       }).eq('id', editingTicket.id).select(`*, customers (name, company)`).single();
       if (error) { console.error('Error updating ticket:', error); setEditTicketError(error.message); return; }
       setTickets(prev => prev.map(ticket => ticket.id === data.id ? data : ticket));
+      fetchTickets();
       setEditingTicket(null);
       if (selectedTicket?.id === data.id) setSelectedTicket(data);
     } finally { setEditTicketSaving(false); }
@@ -2839,6 +3150,7 @@ async function signUpWithEmail(event) {
     const { data, error } = await supabase.from('tickets').update({ status, updated_at: new Date().toISOString() }).eq('id', id).select(`*, customers (name, company)`).single();
     if (error) { console.error('Error updating ticket status:', error); setTicketError(error.message); return; }
     setTickets(prev => prev.map(ticket => ticket.id === id ? data : ticket));
+    fetchTickets();
     if (selectedTicket?.id === id) setSelectedTicket(data);
   }
 
@@ -2854,6 +3166,7 @@ async function signUpWithEmail(event) {
       return;
     }
     setTickets(prev => prev.map(ticket => ticket.id === id ? data : ticket));
+    fetchTickets();
     if (selectedTicket?.id === id) setSelectedTicket(data);
     if (userId && userId !== session.user.id) {
       const { error: notifyError } = await supabase.from('notifications').insert({
@@ -2874,6 +3187,7 @@ async function signUpWithEmail(event) {
     const { error } = await supabase.from('tickets').delete().eq('id', id);
     if (error) { console.error('Error deleting ticket:', error); setTicketError(error.message); return; }
     setTickets(prev => prev.filter(ticket => ticket.id !== id));
+    fetchTickets();
     if (selectedTicket?.id === id) setSelectedTicket(null);
   }
 
@@ -3086,15 +3400,15 @@ async function signUpWithEmail(event) {
       <RefreshContext.Provider value={{ refreshAll, refreshing }}>
       <section className="page-content">
         {page === 'Dashboard' && (
-          <Dashboard revenue={revenue} customers={customers} deals={deals} activities={activities} tickets={tickets} setPage={setPage} formatAmount={formatAmount} onSelectCustomer={setSelectedCustomer} onEditCustomer={setEditingCustomer} onDeleteCustomer={deleteCustomer} />
+          <Dashboard revenue={revenue} customers={customers} deals={deals} stats={dashStats} setPage={setPage} formatAmount={formatAmount} onSelectCustomer={setSelectedCustomer} onEditCustomer={setEditingCustomer} onDeleteCustomer={deleteCustomer} />
         )}
         {page === 'Customers' && (
-          <Customers customers={filteredCustomers}
+          <Customers customers={customerRows} total={customerTotal} pageIndex={customerPageIndex} loading={customerListLoading} onPage={setCustomerPageIndex}
             allCustomers={customers}
             search={search}
-            setSearch={setSearch}
+            setSearch={value => { setSearch(value); setCustomerPageIndex(0); }}
             statusFilter={statusFilter}
-            setStatusFilter={setStatusFilter}
+            setStatusFilter={value => { setStatusFilter(value); setCustomerPageIndex(0); }}
             deals={deals}
             onImport={importCustomers}
             onAdd={() => { setCustomerError(''); setShowCustomerForm(true); }}
@@ -3107,7 +3421,7 @@ async function signUpWithEmail(event) {
         {page === 'Products' && <Products products={products} supportEngineers={supportEngineers} solutionSupport={solutionSupport} onAdd={addProduct} onUpdate={updateProduct} onDelete={deleteProduct} onUpdateFamilySupport={syncSolutionSupport} currentUserId={session.user.id} isAdmin={authorizationProfile?.role === 'admin'} />}
         {page === 'Technical Support' && <SupportEngineers supportEngineers={supportEngineers} solutionSupport={solutionSupport} onAdd={addSupportEngineer} onUpdate={updateSupportEngineer} onDeactivate={deactivateSupportEngineer} isAdmin={authorizationProfile?.role === 'admin'} />}
         {page === 'Leads' && <Leads leads={leads} customers={customers} products={products} leadProducts={leadProducts} onAdd={addLead} onUpdate={updateLead} onSyncProducts={syncLeadProducts} onDelete={deleteLead} currentUserId={session.user.id} isAdmin={authorizationProfile?.role === 'admin'} />}
-        {page === 'Email' && <EmailPage emailLogs={emailLogs} customers={customers} integrations={emailIntegrations} loading={emailIntegrationLoading} error={emailIntegrationError} onConnect={connectEmailProvider} onDisconnect={disconnectEmailProvider} onAdd={async payload => { try { await addEmailLog(payload); showToast('Email logged.'); } catch (e) { alert(e.message); } }} />}
+        {page === 'Email' && <EmailPage emailLogs={emailLogs} customers={customers} integrations={emailIntegrations} loading={emailIntegrationLoading} error={emailIntegrationError} onConnect={connectEmailProvider} onDisconnect={disconnectEmailProvider} onCompose={() => openCompose()} onAdd={async payload => { try { await addEmailLog(payload); showToast('Email logged.'); } catch (e) { alert(e.message); } }} />}
         {page === 'Calendar' && <CalendarPage events={calendarEvents} customers={customers} onAdd={addCalendarEvent} onUpdate={updateCalendarEvent} onDelete={deleteCalendarEvent} />}
         {page === 'Quotes' && <Quotes quotes={quotes} products={products} quoteItems={quoteItems} onLoadQuoteItems={loadQuoteItems} onAdd={addQuote} onUpdate={updateQuote} onDelete={deleteQuote} formatAmount={formatAmount} currentUserId={session.user.id} isAdmin={authorizationProfile?.role === 'admin'} />}
         {page === 'Invoices' && <Invoices invoices={invoices} payments={payments} customers={customers} onAdd={addInvoice} onUpdate={updateInvoice} onAddPayment={addPayment} formatAmount={formatAmount} currentUserId={session.user.id} isAdmin={authorizationProfile?.role === 'admin'} />}
@@ -3146,11 +3460,19 @@ async function signUpWithEmail(event) {
           />
         )}
         {page === 'Activities' && (
-          <Activities activities={activities} customers={customers} ownerProfiles={ownerProfiles} currentUserEmail={session.user.email} onAdd={() => { setActivityError(''); setNewActivity(a => ({ ...a, customer_id: '' })); setShowActivityForm(true); }} onStatusChange={updateActivityStatus} onDelete={deleteActivity} onEdit={activity => { setEditActivityError(''); setEditingActivity({ ...activity, activity_date: formatDateTimeLocal(activity.activity_date) }); }} onView={setSelectedActivity} currentUserId={session.user.id} isAdmin={authorizationProfile?.role === 'admin'} />
+          <Activities activities={activities} counts={activityCounts} tab={activityTab} setTab={tab => { setActivityTab(tab); setActivityPage(0); }} page={activityPage} total={activityTotal} loading={activityListLoading} onPage={setActivityPage} customers={customers} ownerProfiles={ownerProfiles} currentUserEmail={session.user.email} onAdd={() => { setActivityError(''); setNewActivity(a => ({ ...a, customer_id: '' })); setShowActivityForm(true); }} onStatusChange={updateActivityStatus} onDelete={deleteActivity} onEdit={activity => { setEditActivityError(''); setEditingActivity({ ...activity, activity_date: formatDateTimeLocal(activity.activity_date) }); }} onView={setSelectedActivity} currentUserId={session.user.id} isAdmin={authorizationProfile?.role === 'admin'} />
         )}
         {page === 'Tickets' && (
           <Tickets
             tickets={tickets}
+            total={ticketTotal}
+            page={ticketPage}
+            pageSize={PAGE_SIZE}
+            loading={ticketListLoading}
+            filters={ticketFilters}
+            onFilters={changeTicketFilters}
+            onPage={setTicketPage}
+            counts={ticketCounts}
             error={ticketError}
             onAdd={() => { setTicketError(''); setNewTicket(t => ({ ...t, customer_id: '' })); setShowTicketForm(true); }}
             onStatusChange={updateTicketStatus}
@@ -3166,7 +3488,7 @@ async function signUpWithEmail(event) {
           />
         )}
         {page === 'Chat' && <Chat />}
-        {page === 'Reports' && <AdvancedReports customers={customers} deals={deals} activities={activities} tickets={tickets} leads={leads} quotes={quotes} invoices={invoices} payments={payments} formatAmount={formatAmount} />}
+        {page === 'Reports' && <AdvancedReports customers={customers} deals={deals} activities={reportData.activities} tickets={reportData.tickets} leads={leads} quotes={quotes} invoices={invoices} payments={payments} formatAmount={formatAmount} />}
         {page === 'Email Logs' && <EmailLogs emailLogs={emailLogs} customers={customers} onAdd={addEmailLog} />}
         {page === 'UserManagement' && <UserManagement users={authorizedUsers} loading={usersLoading} error={usersError} onRefresh={fetchAuthorizedUsers} onUpdateUser={updateAuthorizedUser} currentUserId={session?.user?.id} pendingPortalAccounts={pendingPortalAccounts} portalRequestsLoading={portalRequestsLoading} portalRequestsError={portalRequestsError} portalRequestsNotice={portalRequestsNotice} onRefreshPortalRequests={fetchPendingPortalAccounts} onReviewPortalRequest={reviewPortalRequest} portalRequestActionId={portalRequestActionId} />}
         {page === 'Settings' && <SettingsPage currency={currency} setCurrency={setCurrency} />}
@@ -3218,8 +3540,8 @@ async function signUpWithEmail(event) {
         currentUserId={session.user.id}
         customer={selectedCustomer}
         deals={deals}
-        activities={activities}
-        tickets={tickets}
+        activities={customerRelated.activities}
+        tickets={customerRelated.tickets}
         quotes={quotes}
         invoices={invoices}
         payments={payments}
@@ -3231,6 +3553,7 @@ async function signUpWithEmail(event) {
         onAddDeal={c => { setSelectedCustomer(null); setDealError(''); setNewDeal(d => ({ ...d, customer_id: c.id, company: c.company || '' })); setSelectedDealProductIds([]); setExpandedDealVendor(null); setShowDealForm(true); }}
         onAddActivity={c => { setSelectedCustomer(null); setActivityError(''); setNewActivity(a => ({ ...a, customer_id: c.id })); setShowActivityForm(true); }}
         onAddTicket={c => { setSelectedCustomer(null); setTicketError(''); setNewTicket(t => ({ ...t, customer_id: c.id })); setShowTicketForm(true); }}
+        onEmail={c => { setSelectedCustomer(null); openCompose({ customer_id: c.id, to: c.email || '' }); }}
       />
     )}
     {editingCustomer && (
@@ -3953,6 +4276,7 @@ async function signUpWithEmail(event) {
     )}
     {selectedActivity && <ActivityDetail activity={selectedActivity} customer={customers.find(c => c.id === selectedActivity.customer_id)} ownerProfiles={ownerProfiles} currentUserEmail={session?.user?.email} onClose={() => setSelectedActivity(null)} onEdit={activity => { setSelectedActivity(null); setEditActivityError(''); setEditingActivity({ ...activity, activity_date: formatDateTimeLocal(activity.activity_date) }); }} />}
     {editingActivity && <div className="modal-backdrop" onClick={() => setEditingActivity(null)}><form className="modal" onSubmit={updateActivity} onClick={e => e.stopPropagation()}><div className="modal-heading"><h2>Edit Activity</h2><button type="button" className="icon-btn" onClick={() => setEditingActivity(null)}><X size={18} /></button></div>{editActivityError && <p className="form-error">{editActivityError}</p>}<label>Activity title<input type="text" value={editingActivity.title || ''} onChange={e => setEditingActivity({ ...editingActivity, title: e.target.value })} required /></label><label>Activity type<select value={editingActivity.type || 'Task'} onChange={e => setEditingActivity({ ...editingActivity, type: e.target.value })}><option value="Task">Task</option><option value="Call">Call</option><option value="Meeting">Meeting</option><option value="Email">Email</option><option value="Follow-up">Follow-up</option></select></label><label>Due date and time<input type="datetime-local" value={editingActivity.activity_date || ''} onChange={e => setEditingActivity({ ...editingActivity, activity_date: e.target.value })} /></label><div className="activity-form-grid"><label>Priority<select value={editingActivity.priority || 'Medium'} onChange={e => setEditingActivity({ ...editingActivity, priority: e.target.value })}><option value="Low">Low</option><option value="Medium">Medium</option><option value="High">High</option><option value="Urgent">Urgent</option></select></label><label>Assign to<select value={editingActivity.assigned_to || session.user.id} onChange={e => setEditingActivity({ ...editingActivity, assigned_to: e.target.value })}><option value={session.user.id}>{profileName.trim() || session.user.email || 'Me'} (me)</option>{Object.entries(ownerProfiles).filter(([id, name]) => id !== session.user.id).map(([id, name]) => <option key={id} value={id}>{name || 'Team member'}</option>)}</select></label></div><label>Customer<select value={editingActivity.customer_id || ''} onChange={e => setEditingActivity({ ...editingActivity, customer_id: e.target.value })}><option value="">No customer selected</option>{customers.map(customer => <option key={customer.id} value={customer.id}>{customer.name}{customer.company ? ` — ${customer.company}` : ''}</option>)}</select></label><label>Notes<textarea value={editingActivity.notes || ''} onChange={e => setEditingActivity({ ...editingActivity, notes: e.target.value })} rows="4" /></label><label>Status<select value={editingActivity.status || 'Scheduled'} onChange={e => setEditingActivity({ ...editingActivity, status: e.target.value })}><option value="Scheduled">Scheduled</option><option value="In Progress">In Progress</option><option value="Completed">Completed</option><option value="Cancelled">Cancelled</option></select></label><div className="modal-actions"><button type="button" className="secondary-btn" onClick={() => setEditingActivity(null)}>Cancel</button><button type="submit" className="primary-btn" disabled={editActivitySaving}>{editActivitySaving ? 'Saving...' : 'Save changes'}</button></div></form></div>}
+    {composeDraft && <ComposeEmailModal integrations={emailIntegrations} customers={customers} defaults={composeDraft} userId={session.user.id} onSend={sendEmail} onClose={() => setComposeDraft(null)} />}
     {selectedTicket && <TicketDetail ticket={tickets.find(t => t.id === selectedTicket.id) || selectedTicket} onRefresh={fetchTickets} staffName={staffName} staffOptions={getStaffOptions()} currentUserId={session.user.id} canManage={canManageTicket} onStatusChange={updateTicketStatus} onAssign={assignTicket} onClose={() => setSelectedTicket(null)} onEdit={ticket => { setSelectedTicket(null); setEditTicketError(''); setEditingTicket(ticket); }} />}
     {editingTicket && <div className="modal-backdrop" onClick={() => setEditingTicket(null)}><form className="modal" onSubmit={updateTicket} onClick={e => e.stopPropagation()}><div className="modal-heading"><h2>Edit Ticket</h2><button type="button" className="icon-btn" onClick={() => setEditingTicket(null)}><X size={18} /></button></div>{editTicketError && <p className="form-error">{editTicketError}</p>}<label>Ticket title<input type="text" value={editingTicket.title || ''} onChange={e => setEditingTicket({ ...editingTicket, title: e.target.value })} required /></label><label>Description<textarea value={editingTicket.description || ''} onChange={e => setEditingTicket({ ...editingTicket, description: e.target.value })} rows="4" /></label><label>Customer<select value={editingTicket.customer_id || ''} onChange={e => setEditingTicket({ ...editingTicket, customer_id: e.target.value })}><option value="">No customer selected</option>{customers.map(customer => <option key={customer.id} value={customer.id}>{customer.name}{customer.company ? ` — ${customer.company}` : ''}</option>)}</select></label><label>Assign to<select value={editingTicket.assigned_to || ''} onChange={e => setEditingTicket({ ...editingTicket, assigned_to: e.target.value })}><option value="">Unassigned</option>{getStaffOptions().map(u => <option key={u.user_id} value={u.user_id}>{staffName(u.user_id)}</option>)}</select></label>{editingTicket.source !== 'portal' && <label className="portal-check-row"><input type="checkbox" checked={!!editingTicket.portal_visible} onChange={e => setEditingTicket({ ...editingTicket, portal_visible: e.target.checked })} />Show this ticket in the customer's portal (needs a linked customer)</label>}<label>Category<select value={editingTicket.category || 'General'} onChange={e => setEditingTicket({ ...editingTicket, category: e.target.value })}><option value="General">General</option><option value="Technical">Technical</option><option value="Billing">Billing</option><option value="Account">Account</option><option value="Feature Request">Feature Request</option></select></label><label>Priority<select value={editingTicket.priority || 'Medium'} onChange={e => setEditingTicket({ ...editingTicket, priority: e.target.value })}><option value="Low">Low</option><option value="Medium">Medium</option><option value="High">High</option><option value="Urgent">Urgent</option></select></label><label>Status<select value={editingTicket.status || 'Open'} onChange={e => setEditingTicket({ ...editingTicket, status: e.target.value })}><option value="Open">Open</option><option value="In Progress">In Progress</option><option value="Resolved">Resolved</option><option value="Closed">Closed</option></select></label><div className="modal-actions"><button type="button" className="secondary-btn" onClick={() => setEditingTicket(null)}>Cancel</button><button type="submit" className="primary-btn" disabled={editTicketSaving}>{editTicketSaving ? 'Saving...' : 'Save changes'}</button></div></form></div>}
     {showTicketForm && (
@@ -4373,7 +4697,7 @@ function StatCard({ label, value, change, hint, icon, tone }) {
   );
 }
 
-function Dashboard({ revenue, customers, deals, activities, tickets, setPage, formatAmount, onSelectCustomer, onEditCustomer, onDeleteCustomer }) {
+function Dashboard({ revenue, customers, deals, stats, setPage, formatAmount, onSelectCustomer, onEditCustomer, onDeleteCustomer }) {
   const [range, setRange] = useState(6);
 
   const monthlyRevenue = useMemo(() => {
@@ -4412,15 +4736,12 @@ function Dashboard({ revenue, customers, deals, activities, tickets, setPage, fo
   const wonDeals = deals.filter(d => d.stage === 'Won');
   const openDeals = deals.filter(d => d.stage !== 'Won');
   const winRate = deals.length ? (wonDeals.length / deals.length) * 100 : 0;
-  const overdueCount = activities.filter(isOverdue).length;
-  const dueTodayCount = activities.filter(a => { if (!isOpenActivity(a) || !a.activity_date) return false; const d = new Date(a.activity_date); const today = new Date(); return d.getFullYear() === today.getFullYear() && d.getMonth() === today.getMonth() && d.getDate() === today.getDate(); }).length;
-  const openTickets = tickets.filter(t => t.status === 'Open' || t.status === 'In Progress').length;
+  const overdueCount = stats.overdue;
+  const dueTodayCount = stats.dueToday;
+  const openTickets = stats.openTickets;
   const avgDeal = wonDeals.length ? sumAmount(wonDeals) / wonDeals.length : 0;
 
-  const upcoming = useMemo(() => activities
-    .filter(isOpenActivity)
-    .sort((a, b) => new Date(a.activity_date || 8.64e15) - new Date(b.activity_date || 8.64e15))
-    .slice(0, 4), [activities]);
+  const upcoming = stats.upcoming;
 
   const maxRevenue = Math.max(...monthlyRevenue.map(item => item.revenue), 0);
   const step = maxRevenue > 0 ? maxRevenue / 4 : 0;
@@ -4442,7 +4763,7 @@ function Dashboard({ revenue, customers, deals, activities, tickets, setPage, fo
       <StatCard label="Win rate" value={`${winRate.toFixed(1)}%`} hint={`${wonDeals.length} of ${deals.length} deals won`} tone="green" icon="◉" />
       <StatCard label="Overdue activities" value={overdueCount} hint={overdueCount ? 'Needs attention' : 'You are on track'} tone="orange" icon="◷" />
       <StatCard label="Due today" value={dueTodayCount} hint="Activity reminders" tone="blue" icon="!" />
-      <StatCard label="Open tickets" value={openTickets} hint={`${tickets.length} tickets in total`} tone="blue" icon="✉" />
+      <StatCard label="Open tickets" value={openTickets} hint={`${stats.totalTickets} tickets in total`} tone="blue" icon="✉" />
       <StatCard label="Average deal size" value={formatAmount(avgDeal)} hint="Across won deals" tone="purple" icon="◆" />
       <StatCard label="Deals won" value={wonDeals.length} hint={`${formatAmount(sumAmount(wonDeals))} closed`} tone="green" icon="✓" />
     </div>
@@ -4608,7 +4929,7 @@ function CustomerTable({ customers, deals = [], formatAmount, onSelectCustomer, 
   );
 }
 
-function Customers({ customers, allCustomers, deals, search, setSearch, statusFilter, setStatusFilter, onAdd, onImport, formatAmount, onSelectCustomer, onEditCustomer, onDeleteCustomer }) {
+function Customers({ customers, total = customers.length, pageIndex = 0, loading = false, onPage = () => {}, allCustomers, deals, search, setSearch, statusFilter, setStatusFilter, onAdd, onImport, formatAmount, onSelectCustomer, onEditCustomer, onDeleteCustomer }) {
   const fileRef = useRef(null);
 
   async function handleFile(event) {
@@ -4627,11 +4948,14 @@ function Customers({ customers, allCustomers, deals, search, setSearch, statusFi
     })));
   }
 
+  // Export covers every matching customer, not just the visible page.
+  const exportRows = allCustomers.filter(c => (statusFilter === 'All' || (c.status || 'Active') === statusFilter) && `${c.name} ${c.company || ''} ${c.email || ''}`.toLowerCase().includes(search.toLowerCase()));
+
   function exportCustomers() {
     downloadCSV(
       'customers.csv',
       ['name', 'company', 'email', 'status', 'lifetime_value'],
-      customers.map(c => [c.name, c.company || '', c.email, c.status || 'Active', lifetimeValue(c, deals)])
+      exportRows.map(c => [c.name, c.company || '', c.email, c.status || 'Active', lifetimeValue(c, deals)])
     );
   }
 
@@ -4643,13 +4967,13 @@ function Customers({ customers, allCustomers, deals, search, setSearch, statusFi
       <div className="panel">
         <div className="panel-heading">
           <div>
-            <h3>All customers <span className="count-badge">{customers.length}</span></h3>
+            <h3>All customers <span className="count-badge">{total}</span></h3>
             <p>Search, filter and manage your contacts.</p>
           </div>
           <div className="toolbar-actions">
             <input ref={fileRef} type="file" accept=".csv,text/csv" onChange={handleFile} hidden />
             <button className="secondary-btn" type="button" onClick={() => fileRef.current?.click()}><Users size={15} /> Import CSV</button>
-            <button className="secondary-btn" type="button" onClick={exportCustomers} disabled={customers.length === 0}>Export CSV</button>
+            <button className="secondary-btn" type="button" onClick={exportCustomers} disabled={exportRows.length === 0}>Export CSV</button>
           </div>
         </div>
         <div className="toolbar">
@@ -4683,6 +5007,7 @@ function Customers({ customers, allCustomers, deals, search, setSearch, statusFi
           onEditCustomer={onEditCustomer}
           onDeleteCustomer={onDeleteCustomer}
         />
+        <Pager page={pageIndex} total={total} onPage={onPage} loading={loading} />
       </div>
     </>
   );
@@ -4768,7 +5093,7 @@ function PortalSharingPanel({ customer, deals, quotes, invoices, documents, curr
   );
 }
 
-function CustomerDetail({ currentUserId, customer, deals, activities, tickets, quotes = [], invoices = [], payments = [], emailLogs = [], documents = [], formatAmount, onClose, onEdit, onAddDeal, onAddActivity, onAddTicket }) {
+function CustomerDetail({ currentUserId, customer, deals, activities, tickets, quotes = [], invoices = [], payments = [], emailLogs = [], documents = [], formatAmount, onClose, onEdit, onAddDeal, onAddActivity, onAddTicket, onEmail }) {
   const myDeals = deals.filter(d => d.customer_id === customer.id);
   const myActivities = activities.filter(a => a.customer_id === customer.id);
   const myTickets = tickets.filter(t => t.customer_id === customer.id);
@@ -4825,6 +5150,7 @@ function CustomerDetail({ currentUserId, customer, deals, activities, tickets, q
           <button type="button" className="primary-btn" onClick={() => onAddDeal(customer)}><Plus size={15} /> New deal</button>
           <button type="button" className="secondary-btn" onClick={() => onAddActivity(customer)}>Log activity</button>
           <button type="button" className="secondary-btn" onClick={() => onAddTicket(customer)}>Create ticket</button>
+          {onEmail && <button type="button" className="secondary-btn" onClick={() => onEmail(customer)}>Send email</button>}
         </div>
 
         <h3 className="detail-title">Customer history</h3>
@@ -4977,13 +5303,11 @@ function Pipeline({ deals, customers, dealSupport = [], supportEngineers = [], m
 }
 
 
-function Activities({ activities, customers, ownerProfiles = {}, currentUserEmail, onAdd, onStatusChange, onDelete, onEdit, onView, currentUserId, isAdmin }) {
-  const [tab, setTab] = useState('All');
+function Activities({ activities, counts = {}, tab, setTab, page, total = 0, loading = false, onPage = () => {}, customers, ownerProfiles = {}, currentUserEmail, onAdd, onStatusChange, onDelete, onEdit, onView, currentUserId, isAdmin }) {
   const getCustomerName = id => customers.find(c => c.id === id)?.name || 'No customer linked';
-  const filters = { All: () => true, Upcoming: a => isOpenActivity(a) && !isOverdue(a), Overdue: isOverdue, Completed: a => a.status === 'Completed' };
-  const counts = Object.fromEntries(Object.entries(filters).map(([k, f]) => [k, activities.filter(f).length]));
-  const list = activities.filter(filters[tab]).sort((a, b) => { const diff = new Date(a.activity_date || 8.64e15) - new Date(b.activity_date || 8.64e15); return tab === 'Completed' ? -diff : diff; });
-  return <><PageHeading eyebrow="PRODUCTIVITY" title="Activities" description="Keep track of meetings, calls, and follow-ups." action="New activity" onAction={onAdd} /><div className="panel"><div className="panel-heading"><div><h3>Schedule</h3><p>Your tasks, calls and follow-ups.</p></div></div><div className="filter-tabs" role="tablist" aria-label="Filter activities">{Object.keys(filters).map(name => <button key={name} type="button" className={`filter-tab ${tab === name ? 'active' : ''} ${name === 'Overdue' && counts.Overdue ? 'danger' : ''}`} onClick={() => setTab(name)}>{name} ({counts[name]})</button>)}</div>{list.length === 0 ? <div className="empty-state"><p>{activities.length === 0 ? 'No activities yet.' : `No ${tab.toLowerCase()} activities.`}</p>{activities.length === 0 && <button type="button" className="primary-btn" onClick={onAdd}>Create your first activity</button>}</div> : list.map(activity => { const canEdit = isAdmin || activity.created_by === currentUserId; const date = activity.activity_date ? new Date(activity.activity_date) : null; return <div className="activity-row large" key={activity.id}><div className="date-box"><strong>{date ? date.getDate() : '--'}</strong><span>{date ? date.toLocaleDateString('en-US', { month: 'short' }).toUpperCase() : '---'}</span></div><div className="activity-content"><strong>{activity.title} {isOverdue(activity) && <span className="status overdue">Overdue</span>}</strong><p>{activity.type || 'Task'} · {getCustomerName(activity.customer_id)}</p><div className="activity-meta-badges"><span className={`priority-pill priority-${String(activity.priority || 'Medium').toLowerCase()}`}>{activity.priority || 'Medium'} priority</span><span className="assignee-pill">Assigned: {(activity.assigned_to === currentUserId ? (ownerProfiles[currentUserId] || currentUserEmail || 'Me') : (ownerProfiles[activity.assigned_to] || (activity.assigned_to ? 'Team member' : 'Unassigned')))}</span></div><small>Due: {formatDateTime(activity.activity_date)}</small>{activity.notes && <p className="activity-notes">{activity.notes}</p>}</div><div className="activity-actions"><button type="button" className="secondary-btn" onClick={() => onView(activity)}>View</button>{canEdit && <button type="button" className="secondary-btn" onClick={() => onEdit(activity)}><Pencil size={14} /> Edit</button>}{canEdit && isOpenActivity(activity) && <button type="button" className="secondary-btn" onClick={() => onStatusChange(activity.id, 'Completed')}>Mark done</button>}<select value={activity.status || 'Scheduled'} onChange={e => onStatusChange(activity.id, e.target.value)} disabled={!canEdit}><option value="Scheduled">Scheduled</option><option value="In Progress">In Progress</option><option value="Completed">Completed</option><option value="Cancelled">Cancelled</option></select>{canEdit && <button type="button" className="icon-btn" title="Delete activity" onClick={() => onDelete(activity.id)}><X size={16} /></button>}</div></div> })}</div></>;
+  const filterNames = ['All', 'Upcoming', 'Overdue', 'Completed'];
+  const list = activities; // already filtered, sorted and paged by the server
+  return <><PageHeading eyebrow="PRODUCTIVITY" title="Activities" description="Keep track of meetings, calls, and follow-ups." action="New activity" onAction={onAdd} /><div className="panel"><div className="panel-heading"><div><h3>Schedule</h3><p>Your tasks, calls and follow-ups.</p></div></div><div className="filter-tabs" role="tablist" aria-label="Filter activities">{filterNames.map(name => <button key={name} type="button" className={`filter-tab ${tab === name ? 'active' : ''} ${name === 'Overdue' && counts.Overdue ? 'danger' : ''}`} onClick={() => setTab(name)}>{name} ({counts[name]})</button>)}</div>{list.length === 0 ? <div className="empty-state"><p>{(counts.All || 0) === 0 ? 'No activities yet.' : `No ${tab.toLowerCase()} activities.`}</p>{(counts.All || 0) === 0 && <button type="button" className="primary-btn" onClick={onAdd}>Create your first activity</button>}</div> : list.map(activity => { const canEdit = isAdmin || activity.created_by === currentUserId; const date = activity.activity_date ? new Date(activity.activity_date) : null; return <div className="activity-row large" key={activity.id}><div className="date-box"><strong>{date ? date.getDate() : '--'}</strong><span>{date ? date.toLocaleDateString('en-US', { month: 'short' }).toUpperCase() : '---'}</span></div><div className="activity-content"><strong>{activity.title} {isOverdue(activity) && <span className="status overdue">Overdue</span>}</strong><p>{activity.type || 'Task'} · {getCustomerName(activity.customer_id)}</p><div className="activity-meta-badges"><span className={`priority-pill priority-${String(activity.priority || 'Medium').toLowerCase()}`}>{activity.priority || 'Medium'} priority</span><span className="assignee-pill">Assigned: {(activity.assigned_to === currentUserId ? (ownerProfiles[currentUserId] || currentUserEmail || 'Me') : (ownerProfiles[activity.assigned_to] || (activity.assigned_to ? 'Team member' : 'Unassigned')))}</span></div><small>Due: {formatDateTime(activity.activity_date)}</small>{activity.notes && <p className="activity-notes">{activity.notes}</p>}</div><div className="activity-actions"><button type="button" className="secondary-btn" onClick={() => onView(activity)}>View</button>{canEdit && <button type="button" className="secondary-btn" onClick={() => onEdit(activity)}><Pencil size={14} /> Edit</button>}{canEdit && isOpenActivity(activity) && <button type="button" className="secondary-btn" onClick={() => onStatusChange(activity.id, 'Completed')}>Mark done</button>}<select value={activity.status || 'Scheduled'} onChange={e => onStatusChange(activity.id, e.target.value)} disabled={!canEdit}><option value="Scheduled">Scheduled</option><option value="In Progress">In Progress</option><option value="Completed">Completed</option><option value="Cancelled">Cancelled</option></select>{canEdit && <button type="button" className="icon-btn" title="Delete activity" onClick={() => onDelete(activity.id)}><X size={16} /></button>}</div></div> })}<Pager page={page} total={total} onPage={onPage} loading={loading} /></div></>;
 }
 
 function ActivityDetail({ activity, customer, ownerProfiles = {}, currentUserEmail, onClose, onEdit }) {
@@ -5034,32 +5358,30 @@ function ActivityDetail({ activity, customer, ownerProfiles = {}, currentUserEma
   );
 }
 
-function Tickets({ tickets, error, onAdd, onStatusChange, onDelete, onEdit, onView, currentUserId, isAdmin, canManage, staffName, staffOptions, onAssign }) {
-  const [query, setQuery] = useState('');
-  const [status, setStatus] = useState('All');
-  const [priority, setPriority] = useState('All');
-  const [queue, setQueue] = useState('All tickets');
-  const q = query.trim().toLowerCase();
-  const matchesQueue = t => queue === 'All tickets'
-    || (queue === 'Assigned to me' && t.assigned_to === currentUserId)
-    || (queue === 'Unassigned' && !t.assigned_to)
-    || (queue === 'Customer portal' && t.source === 'portal');
-  const filtered = tickets.filter(t => (status === 'All' || t.status === status) && (priority === 'All' || t.priority === priority) && matchesQueue(t) && (!q || `${t.title} ${t.description || ''} ${t.customers?.name || ''} ${t.category || ''} ${t.ticket_number || ''}`.toLowerCase().includes(q)));
-  const count = s => tickets.filter(t => t.status === s).length;
-  const portalOpen = tickets.filter(t => t.source === 'portal' && (t.status === 'Open' || t.status === 'In Progress')).length;
+function Tickets({ tickets, total = 0, page = 0, pageSize = PAGE_SIZE, loading = false, filters, onFilters, onPage = () => {}, counts = {}, error, onAdd, onStatusChange, onDelete, onEdit, onView, currentUserId, isAdmin, canManage, staffName, staffOptions, onAssign }) {
+  // Filtering, searching and paging all happen on the server; these just read and change the filters.
+  const { query, status, priority, queue } = filters;
+  const setQuery = value => onFilters({ query: value });
+  const setStatus = value => onFilters({ status: value });
+  const setPriority = value => onFilters({ priority: value });
+  const setQueue = value => onFilters({ queue: value });
+  const hasFilters = !!query.trim() || status !== 'All' || priority !== 'All' || queue !== 'All tickets';
+  const filtered = tickets;
+  const count = key => counts[key] || 0;
+  const portalOpen = counts.portalOpen || 0;
   return <>
     <PageHeading eyebrow="SUPPORT" title="Tickets" description="Manage customer issues and support requests, including tickets raised from the customer portal." action="Create Ticket" onAction={onAdd} />
     <div className="stats-grid">
       <StatCard label="Open" value={count('Open')} hint="Waiting for a response" tone="orange" icon="!" />
       <StatCard label="In progress" value={count('In Progress')} hint="Being worked on" tone="blue" icon="◷" />
-      <StatCard label="Resolved" value={count('Resolved') + count('Closed')} hint="Resolved or closed" tone="green" icon="✓" />
+      <StatCard label="Resolved" value={count('done')} hint="Resolved or closed" tone="green" icon="✓" />
       <StatCard label="From customer portal" value={portalOpen} hint="Open portal tickets" tone="purple" icon="✉" />
     </div>
     <div className="panel">
       <div className="panel-heading">
         <div>
           <h3>All Tickets</h3>
-          <p>{filtered.length} of {tickets.length} tickets</p>
+          <p>{total} {total === 1 ? 'ticket' : 'tickets'}{loading ? ' · loading…' : ''}</p>
         </div>
       </div>
       {error && <div className="form-error">{error}</div>}
@@ -5071,7 +5393,7 @@ function Tickets({ tickets, error, onAdd, onStatusChange, onDelete, onEdit, onVi
         <select value={priority} onChange={e => setPriority(e.target.value)}>
           {['All', 'Low', 'Medium', 'High', 'Urgent'].map(x => <option key={x} value={x}>{x === 'All' ? 'All priorities' : x}</option>)}</select>
       </div>
-      {tickets.length === 0 ?
+      {tickets.length === 0 && !hasFilters && !loading ?
         <div className="empty-state">
           <p>No tickets yet.</p>
           <button type="button" className="secondary-btn" onClick={onAdd}>Create your first ticket</button>
@@ -5091,7 +5413,7 @@ function Tickets({ tickets, error, onAdd, onStatusChange, onDelete, onEdit, onVi
             <td>{formatDate(ticket.created_at)}</td>
             <td><div className="toolbar-actions"><button type="button" className="secondary-btn" onClick={() => onView(ticket)}>View</button>{editable && <button type="button" className="secondary-btn" onClick={() => onEdit(ticket)}><Pencil size={14} /> Edit</button>}{(isAdmin || ticket.created_by === currentUserId) && <button type="button" className="icon-btn" title="Delete ticket" onClick={() => onDelete(ticket.id)}><X size={16} /></button>}</div></td>
           </tr>;
-        })}</tbody></table></div>}</div></>;
+        })}</tbody></table></div>}<Pager page={page} pageSize={pageSize} total={total} onPage={onPage} loading={loading} /></div></>;
 }
 function TicketDetail({ onRefresh, ticket, staffName, staffOptions, currentUserId, canManage, onClose, onEdit, onStatusChange, onAssign }) {
   const [comments, setComments] = useState([]);
@@ -5529,11 +5851,137 @@ function Leads({ leads, customers, products, leadProducts, onAdd, onUpdate, onSy
   </>;
 }
 
-function EmailPage({ emailLogs, customers, integrations, loading, error, onConnect, onDisconnect, onAdd }) {
+function ComposeEmailModal({ integrations, customers, defaults = {}, userId, onSend, onClose }) {
+  const accounts = integrations.filter(x => x.status === 'connected');
+  const [provider, setProvider] = useState(accounts[0]?.provider || '');
+  const [customerId, setCustomerId] = useState(defaults.customer_id || '');
+  const [to, setTo] = useState(defaults.to || '');
+  const [cc, setCc] = useState('');
+  const [bcc, setBcc] = useState('');
+  const [showCc, setShowCc] = useState(false);
+  const [subject, setSubject] = useState(defaults.subject || '');
+  const [body, setBody] = useState(defaults.body || '');
+  const [signature, setSignature] = useState('');
+  const [useSignature, setUseSignature] = useState(true);
+  const [showSignature, setShowSignature] = useState(false);
+  const [signatureSaving, setSignatureSaving] = useState(false);
+  const [sending, setSending] = useState(false);
+  const [error, setError] = useState('');
+
+  // The connected accounts may finish loading after the window opens.
+  useEffect(() => {
+    if (!provider && accounts[0]) setProvider(accounts[0].provider);
+  }, [integrations]);
+
+  useEffect(() => {
+    let cancelled = false;
+    supabase.from('user_profiles').select('email_signature').eq('user_id', userId).maybeSingle()
+      .then(({ data }) => { if (!cancelled && data?.email_signature) setSignature(data.email_signature); });
+    return () => { cancelled = true; };
+  }, [userId]);
+
+  const pickCustomer = id => {
+    setCustomerId(id);
+    const customer = customers.find(c => c.id === id);
+    if (customer?.email) setTo(customer.email);
+  };
+
+  async function saveSignature() {
+    setSignatureSaving(true);
+    const { error: saveError } = await supabase.from('user_profiles').upsert({ user_id: userId, email_signature: signature.trim() || null, updated_at: new Date().toISOString() });
+    setSignatureSaving(false);
+    if (saveError) setError(`Could not save your signature: ${saveError.message}`);
+    else { setError(''); setShowSignature(false); }
+  }
+
+  const submit = async event => {
+    event.preventDefault();
+    setError('');
+    if (!provider) { setError('Connect a Gmail or Outlook account first.'); return; }
+    if (!to.trim()) { setError('Enter at least one recipient.'); return; }
+    setSending(true);
+    try {
+      const finalBody = useSignature && signature.trim() ? `${body.trimEnd()}\n\n-- \n${signature.trim()}` : body;
+      await onSend({ provider, to: to.trim(), cc: cc.trim(), bcc: bcc.trim(), subject: subject.trim(), body: finalBody, customer_id: customerId || null });
+      onClose();
+    } catch (err) {
+      setError(err.message || 'The email could not be sent.');
+    } finally {
+      setSending(false);
+    }
+  };
+
+  return (
+    <div className="modal-backdrop">
+      <form className="modal modal-wide compose-modal" onSubmit={submit}>
+        <div className="modal-heading">
+          <div><h2>New email</h2><p>Sent from your connected account and saved to the customer's history.</p></div>
+          <button type="button" className="icon-btn" onClick={onClose} disabled={sending} aria-label="Close compose email"><X size={18} /></button>
+        </div>
+        {accounts.length === 0 ? (
+          <>
+            <p className="detail-empty">Connect Gmail or Outlook on the Email page before sending email from here.</p>
+            <div className="modal-actions"><button type="button" className="primary-btn" onClick={onClose}>Close</button></div>
+          </>
+        ) : (
+          <>
+            {error && <div className="form-error" role="alert">{error}</div>}
+            <div className="compose-row">
+              <label>From
+                <select value={provider} onChange={e => setProvider(e.target.value)}>
+                  {accounts.map(a => <option key={a.id} value={a.provider}>{a.email_address || a.provider} ({a.provider === 'gmail' ? 'Gmail' : 'Outlook'})</option>)}
+                </select>
+              </label>
+              <label>Customer (optional)
+                <select value={customerId} onChange={e => pickCustomer(e.target.value)}>
+                  <option value="">Not linked to a customer</option>
+                  {customers.map(c => <option key={c.id} value={c.id}>{c.name}{c.company ? ` — ${c.company}` : ''}</option>)}
+                </select>
+              </label>
+            </div>
+            <label>To
+              <input type="text" value={to} onChange={e => setTo(e.target.value)} placeholder="name@company.com (separate several with commas)" required />
+            </label>
+            {showCc ? (
+              <div className="compose-row">
+                <label>Cc<input type="text" value={cc} onChange={e => setCc(e.target.value)} placeholder="Optional" /></label>
+                <label>Bcc<input type="text" value={bcc} onChange={e => setBcc(e.target.value)} placeholder="Optional" /></label>
+              </div>
+            ) : (
+              <button type="button" className="text-btn compose-link" onClick={() => setShowCc(true)}>+ Add Cc / Bcc</button>
+            )}
+            <label>Subject
+              <input value={subject} onChange={e => setSubject(e.target.value)} maxLength={300} required />
+            </label>
+            <label>Message
+              <textarea rows="9" value={body} onChange={e => setBody(e.target.value)} required />
+            </label>
+            <div className="compose-signature">
+              <label className="compose-check"><input type="checkbox" checked={useSignature} onChange={e => setUseSignature(e.target.checked)} />Add my signature</label>
+              <button type="button" className="text-btn" onClick={() => setShowSignature(v => !v)}>{showSignature ? 'Hide signature' : signature ? 'Edit signature' : 'Create signature'}</button>
+            </div>
+            {showSignature && (
+              <div className="compose-signature-editor">
+                <textarea rows="4" value={signature} onChange={e => setSignature(e.target.value)} placeholder={'Your name\nYour title · Company\nPhone'} maxLength={1000} />
+                <button type="button" className="secondary-btn" onClick={saveSignature} disabled={signatureSaving}>{signatureSaving ? 'Saving…' : 'Save signature'}</button>
+              </div>
+            )}
+            <div className="modal-actions">
+              <button type="button" className="secondary-btn" onClick={onClose} disabled={sending}>Cancel</button>
+              <button type="submit" className="primary-btn" disabled={sending}>{sending ? 'Sending…' : 'Send email'}</button>
+            </div>
+          </>
+        )}
+      </form>
+    </div>
+  );
+}
+
+function EmailPage({ emailLogs, customers, integrations, loading, error, onConnect, onDisconnect, onAdd, onCompose }) {
   const [showLog, setShowLog] = useState(false);
   useEffect(() => { const handler = () => setShowLog(true); window.addEventListener('orbit-open-email-log', handler); return () => window.removeEventListener('orbit-open-email-log', handler); }, []);
   return <>
-    <PageHeading eyebrow="COMMUNICATIONS" title="Email" description="Connect Gmail or Outlook and keep customer communication in your CRM." />
+    <PageHeading eyebrow="COMMUNICATIONS" title="Email" description="Connect Gmail or Outlook, send email from inside the CRM, and keep customer communication in one place." action="Compose email" onAction={onCompose} />
     <div className="stats-grid">
       <StatCard label="Connected accounts" value={integrations.filter(x => x.status === 'connected').length} hint="Gmail and Outlook" tone="blue" icon="@" />
       <StatCard label="Email logs" value={emailLogs.length} hint="CRM communication history" tone="green" icon="✉" />
