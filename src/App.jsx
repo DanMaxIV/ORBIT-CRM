@@ -1048,106 +1048,106 @@ function App() {
     }
   }
   async function signInWithEmail(event) {
-  event.preventDefault();
-  justSignedUp.current = false;
-  setAuthError('');
-  setAuthNotice('');
+    event.preventDefault();
+    justSignedUp.current = false;
+    setAuthError('');
+    setAuthNotice('');
 
-  const trimmedEmail = email.trim();
-  if (!trimmedEmail || !password) {
-    setAuthError('Please enter both your email address and password.');
-    return;
-  }
-
-  setEmailLoading(true);
-
-  try {
-    const { data, error } = await supabase.auth.signInWithPassword({
-      email: trimmedEmail,
-      password
-    });
-
-    if (error) {
-      console.error('Email sign-in error:', error);
-      setAuthError(error.message);
-    } else if (data?.user) {
-      // Re-verify workspace authorization status
-      await checkAuthorization(data.session);
-    }
-  } catch (err) {
-    console.error('Unexpected sign-in error:', err);
-    setAuthError('An unexpected error occurred during sign in.');
-  } finally {
-    setEmailLoading(false);
-  }
-}
-
-async function signUpWithEmail(event) {
-  event.preventDefault();
-  setAuthError('');
-  setAuthNotice('');
-
-  const trimmedEmail = email.trim();
-  if (!trimmedEmail || !password) {
-    setAuthError('Please enter both an email address and a password.');
-    return;
-  }
-
-  if (password.length < 6) {
-    setAuthError('Password must be at least 6 characters long.');
-    return;
-  }
-
-  setEmailLoading(true);
-
-  try {
-    // 1. Create Supabase Auth user
-    const { data: authData, error: signUpError } = await supabase.auth.signUp({
-      email: trimmedEmail,
-      password
-    });
-
-    if (signUpError) {
-      console.error('Email signup error:', signUpError);
-      setAuthError(signUpError.message);
+    const trimmedEmail = email.trim();
+    if (!trimmedEmail || !password) {
+      setAuthError('Please enter both your email address and password.');
       return;
     }
 
-    const newUser = authData?.user;
+    setEmailLoading(true);
 
-    if (newUser) {
-      // 2. Insert user into authorized_users as 'pending' for admin approval
-      const { error: insertError } = await supabase
-        .from('authorized_users')
-        .insert([
-          {
-            user_id: newUser.id,
-            email: trimmedEmail,
-            role: 'member',
-            status: 'pending'
-          }
-        ]);
+    try {
+      const { data, error } = await supabase.auth.signInWithPassword({
+        email: trimmedEmail,
+        password
+      });
 
-      if (insertError) {
-        console.warn('Could not provision authorized_users entry:', insertError.message);
+      if (error) {
+        console.error('Email sign-in error:', error);
+        setAuthError(error.message);
+      } else if (data?.user) {
+        // Re-verify workspace authorization status
+        await checkAuthorization(data.session);
       }
+    } catch (err) {
+      console.error('Unexpected sign-in error:', err);
+      setAuthError('An unexpected error occurred during sign in.');
+    } finally {
+      setEmailLoading(false);
+    }
+  }
+
+  async function signUpWithEmail(event) {
+    event.preventDefault();
+    setAuthError('');
+    setAuthNotice('');
+
+    const trimmedEmail = email.trim();
+    if (!trimmedEmail || !password) {
+      setAuthError('Please enter both an email address and a password.');
+      return;
     }
 
-    justSignedUp.current = true;
-    setAuthNotice(
-      'Account created successfully! Check your inbox if email confirmation is required. An administrator must approve your account access before you can log in.'
-    );
+    if (password.length < 6) {
+      setAuthError('Password must be at least 6 characters long.');
+      return;
+    }
 
-    // Sign out until approval is granted
-    await supabase.auth.signOut();
-    setPassword('');
-  } catch (err) {
-    console.error('Unexpected signup error:', err);
-    setAuthError('An unexpected error occurred while creating your account.');
-  } finally {
-    setEmailLoading(false);
+    setEmailLoading(true);
+
+    try {
+      // 1. Create Supabase Auth user
+      const { data: authData, error: signUpError } = await supabase.auth.signUp({
+        email: trimmedEmail,
+        password
+      });
+
+      if (signUpError) {
+        console.error('Email signup error:', signUpError);
+        setAuthError(signUpError.message);
+        return;
+      }
+
+      const newUser = authData?.user;
+
+      if (newUser) {
+        // 2. Insert user into authorized_users as 'pending' for admin approval
+        const { error: insertError } = await supabase
+          .from('authorized_users')
+          .insert([
+            {
+              user_id: newUser.id,
+              email: trimmedEmail,
+              role: 'member',
+              status: 'pending'
+            }
+          ]);
+
+        if (insertError) {
+          console.warn('Could not provision authorized_users entry:', insertError.message);
+        }
+      }
+
+      justSignedUp.current = true;
+      setAuthNotice(
+        'Account created successfully! Check your inbox if email confirmation is required. An administrator must approve your account access before you can log in.'
+      );
+
+      // Sign out until approval is granted
+      await supabase.auth.signOut();
+      setPassword('');
+    } catch (err) {
+      console.error('Unexpected signup error:', err);
+      setAuthError('An unexpected error occurred while creating your account.');
+    } finally {
+      setEmailLoading(false);
+    }
   }
-}
   async function signUpCustomerPortal(event, fullName) {
     setAuthError('');
     setAuthNotice('');
@@ -1195,7 +1195,7 @@ async function signUpWithEmail(event) {
     setActivities([]);
     setTickets([]); setLeads([]); setLeadProducts([]); setEmailLogs([]); setCalendarEvents([]); setQuotes([]); setInvoices([]); setPayments([]); setDocuments([]); setWorkflows([]); setSegments([]);
     setNotifications([]);
-     setQuoteItems([]);
+    setQuoteItems([]);
     setUnreadNotificationCount(0);
     setAuthorizedUsers([]);
     setPortalAccount(null);
@@ -3398,101 +3398,101 @@ async function signUpWithEmail(event) {
         </div>
       </header>
       <RefreshContext.Provider value={{ refreshAll, refreshing }}>
-      <section className="page-content">
-        {page === 'Dashboard' && (
-          <Dashboard revenue={revenue} customers={customers} deals={deals} stats={dashStats} setPage={setPage} formatAmount={formatAmount} onSelectCustomer={setSelectedCustomer} onEditCustomer={setEditingCustomer} onDeleteCustomer={deleteCustomer} />
-        )}
-        {page === 'Customers' && (
-          <Customers customers={customerRows} total={customerTotal} pageIndex={customerPageIndex} loading={customerListLoading} onPage={setCustomerPageIndex}
-            allCustomers={customers}
-            search={search}
-            setSearch={value => { setSearch(value); setCustomerPageIndex(0); }}
-            statusFilter={statusFilter}
-            setStatusFilter={value => { setStatusFilter(value); setCustomerPageIndex(0); }}
-            deals={deals}
-            onImport={importCustomers}
-            onAdd={() => { setCustomerError(''); setShowCustomerForm(true); }}
-            formatAmount={formatAmount}
-            onSelectCustomer={setSelectedCustomer}
-            onDeleteCustomer={deleteCustomer}
-            onEditCustomer={setEditingCustomer}
-          />
-        )}
-        {page === 'Products' && <Products products={products} supportEngineers={supportEngineers} solutionSupport={solutionSupport} onAdd={addProduct} onUpdate={updateProduct} onDelete={deleteProduct} onUpdateFamilySupport={syncSolutionSupport} currentUserId={session.user.id} isAdmin={authorizationProfile?.role === 'admin'} />}
-        {page === 'Technical Support' && <SupportEngineers supportEngineers={supportEngineers} solutionSupport={solutionSupport} onAdd={addSupportEngineer} onUpdate={updateSupportEngineer} onDeactivate={deactivateSupportEngineer} isAdmin={authorizationProfile?.role === 'admin'} />}
-        {page === 'Leads' && <Leads leads={leads} customers={customers} products={products} leadProducts={leadProducts} onAdd={addLead} onUpdate={updateLead} onSyncProducts={syncLeadProducts} onDelete={deleteLead} currentUserId={session.user.id} isAdmin={authorizationProfile?.role === 'admin'} />}
-        {page === 'Email' && <EmailPage emailLogs={emailLogs} customers={customers} integrations={emailIntegrations} loading={emailIntegrationLoading} error={emailIntegrationError} onConnect={connectEmailProvider} onDisconnect={disconnectEmailProvider} onCompose={() => openCompose()} onAdd={async payload => { try { await addEmailLog(payload); showToast('Email logged.'); } catch (e) { alert(e.message); } }} />}
-        {page === 'Calendar' && <CalendarPage events={calendarEvents} customers={customers} onAdd={addCalendarEvent} onUpdate={updateCalendarEvent} onDelete={deleteCalendarEvent} />}
-        {page === 'Quotes' && <Quotes quotes={quotes} products={products} quoteItems={quoteItems} onLoadQuoteItems={loadQuoteItems} onAdd={addQuote} onUpdate={updateQuote} onDelete={deleteQuote} formatAmount={formatAmount} currentUserId={session.user.id} isAdmin={authorizationProfile?.role === 'admin'} />}
-        {page === 'Invoices' && <Invoices invoices={invoices} payments={payments} customers={customers} products={products} onAdd={addInvoice} onUpdate={updateInvoice} onAddPayment={addPayment} formatAmount={formatAmount} currentUserId={session.user.id} isAdmin={authorizationProfile?.role === 'admin'} />}
-        {page === 'Documents' && <Documents documents={documents} customers={customers} onUpload={uploadDocument} onDownload={downloadDocument} onDelete={deleteDocument} />}
-        {page === 'Automation' && <Automation workflows={workflows} onAdd={addWorkflow} onUpdate={updateWorkflow} />}
-        {page === 'Segments' && <Segments segments={segments} customers={customers} onAdd={addSegment} onUpdate={updateSegment} />}
-        {page === 'Forecast' && <Forecast deals={deals} formatAmount={formatAmount} />}
-        {page === 'Pipeline' && (
-          <Pipeline
-            deals={deals}
-            customers={customers}
-            dealSupport={dealSupport}
-            supportEngineers={supportEngineers}
-            moveDeal={moveDeal}
-            deleteDeal={deleteDeal}
-            formatAmount={formatAmount}
-            currentUserId={session.user.id}
-            ownerProfiles={ownerProfiles}
-            isAdmin={authorizationProfile?.role === 'admin'}
-            onEdit={deal => {
-              setEditDealError('');
-              setEditingDeal({
-                ...deal,
-                amount: String(deal.amount ?? ''),
-                product_ids: dealProducts.filter(row => row.deal_id === deal.id).map(row => row.product_id),
-                support_engineer_ids: dealSupport.filter(row => row.deal_id === deal.id).map(row => row.support_engineer_id)
-              });
-            }}
-            onAdd={() => {
-              setDealError('');
-              setNewDeal({ title: '', company: '', amount: '', stage: 'New Lead', customer_id: '', contact_name: '', contact_email: '', contact_phone: '', new_customer_name: '', new_customer_email: '', new_customer_phone: '', new_customer_company: '', closure_start_at: '', closure_end_at: '', support_engineer_ids: [] });
-              setSelectedDealProductIds([]);
-              setExpandedDealVendor(null);
-              setShowDealForm(true);
-            }}
-          />
-        )}
-        {page === 'Activities' && (
-          <Activities activities={activities} counts={activityCounts} tab={activityTab} setTab={tab => { setActivityTab(tab); setActivityPage(0); }} page={activityPage} total={activityTotal} loading={activityListLoading} onPage={setActivityPage} customers={customers} ownerProfiles={ownerProfiles} currentUserEmail={session.user.email} onAdd={() => { setActivityError(''); setNewActivity(a => ({ ...a, customer_id: '' })); setShowActivityForm(true); }} onStatusChange={updateActivityStatus} onDelete={deleteActivity} onEdit={activity => { setEditActivityError(''); setEditingActivity({ ...activity, activity_date: formatDateTimeLocal(activity.activity_date) }); }} onView={setSelectedActivity} currentUserId={session.user.id} isAdmin={authorizationProfile?.role === 'admin'} />
-        )}
-        {page === 'Tickets' && (
-          <Tickets
-            tickets={tickets}
-            total={ticketTotal}
-            page={ticketPage}
-            pageSize={PAGE_SIZE}
-            loading={ticketListLoading}
-            filters={ticketFilters}
-            onFilters={changeTicketFilters}
-            onPage={setTicketPage}
-            counts={ticketCounts}
-            error={ticketError}
-            onAdd={() => { setTicketError(''); setNewTicket(t => ({ ...t, customer_id: '' })); setShowTicketForm(true); }}
-            onStatusChange={updateTicketStatus}
-            onDelete={deleteTicket}
-            onEdit={ticket => { setEditTicketError(''); setEditingTicket(ticket); }}
-            onView={setSelectedTicket}
-            currentUserId={session.user.id}
-            isAdmin={authorizationProfile?.role === 'admin'}
-            canManage={canManageTicket}
-            staffName={staffName}
-            staffOptions={getStaffOptions()}
-            onAssign={assignTicket}
-          />
-        )}
-        {page === 'Chat' && <Chat />}
-        {page === 'Reports' && <AdvancedReports customers={customers} deals={deals} activities={reportData.activities} tickets={reportData.tickets} leads={leads} quotes={quotes} invoices={invoices} payments={payments} formatAmount={formatAmount} />}
-        {page === 'Email Logs' && <EmailLogs emailLogs={emailLogs} customers={customers} onAdd={addEmailLog} />}
-        {page === 'UserManagement' && <UserManagement users={authorizedUsers} loading={usersLoading} error={usersError} onRefresh={fetchAuthorizedUsers} onUpdateUser={updateAuthorizedUser} currentUserId={session?.user?.id} pendingPortalAccounts={pendingPortalAccounts} portalRequestsLoading={portalRequestsLoading} portalRequestsError={portalRequestsError} portalRequestsNotice={portalRequestsNotice} onRefreshPortalRequests={fetchPendingPortalAccounts} onReviewPortalRequest={reviewPortalRequest} portalRequestActionId={portalRequestActionId} />}
-        {page === 'Settings' && <SettingsPage currency={currency} setCurrency={setCurrency} />}
-      </section>
+        <section className="page-content">
+          {page === 'Dashboard' && (
+            <Dashboard revenue={revenue} customers={customers} deals={deals} stats={dashStats} setPage={setPage} formatAmount={formatAmount} onSelectCustomer={setSelectedCustomer} onEditCustomer={setEditingCustomer} onDeleteCustomer={deleteCustomer} />
+          )}
+          {page === 'Customers' && (
+            <Customers customers={customerRows} total={customerTotal} pageIndex={customerPageIndex} loading={customerListLoading} onPage={setCustomerPageIndex}
+              allCustomers={customers}
+              search={search}
+              setSearch={value => { setSearch(value); setCustomerPageIndex(0); }}
+              statusFilter={statusFilter}
+              setStatusFilter={value => { setStatusFilter(value); setCustomerPageIndex(0); }}
+              deals={deals}
+              onImport={importCustomers}
+              onAdd={() => { setCustomerError(''); setShowCustomerForm(true); }}
+              formatAmount={formatAmount}
+              onSelectCustomer={setSelectedCustomer}
+              onDeleteCustomer={deleteCustomer}
+              onEditCustomer={setEditingCustomer}
+            />
+          )}
+          {page === 'Products' && <Products products={products} supportEngineers={supportEngineers} solutionSupport={solutionSupport} onAdd={addProduct} onUpdate={updateProduct} onDelete={deleteProduct} onUpdateFamilySupport={syncSolutionSupport} currentUserId={session.user.id} isAdmin={authorizationProfile?.role === 'admin'} />}
+          {page === 'Technical Support' && <SupportEngineers supportEngineers={supportEngineers} solutionSupport={solutionSupport} onAdd={addSupportEngineer} onUpdate={updateSupportEngineer} onDeactivate={deactivateSupportEngineer} isAdmin={authorizationProfile?.role === 'admin'} />}
+          {page === 'Leads' && <Leads leads={leads} customers={customers} products={products} leadProducts={leadProducts} onAdd={addLead} onUpdate={updateLead} onSyncProducts={syncLeadProducts} onDelete={deleteLead} currentUserId={session.user.id} isAdmin={authorizationProfile?.role === 'admin'} />}
+          {page === 'Email' && <EmailPage emailLogs={emailLogs} customers={customers} integrations={emailIntegrations} loading={emailIntegrationLoading} error={emailIntegrationError} onConnect={connectEmailProvider} onDisconnect={disconnectEmailProvider} onCompose={() => openCompose()} onAdd={async payload => { try { await addEmailLog(payload); showToast('Email logged.'); } catch (e) { alert(e.message); } }} />}
+          {page === 'Calendar' && <CalendarPage events={calendarEvents} customers={customers} onAdd={addCalendarEvent} onUpdate={updateCalendarEvent} onDelete={deleteCalendarEvent} />}
+          {page === 'Quotes' && <Quotes quotes={quotes} products={products} quoteItems={quoteItems} onLoadQuoteItems={loadQuoteItems} onAdd={addQuote} onUpdate={updateQuote} onDelete={deleteQuote} formatAmount={formatAmount} currentUserId={session.user.id} isAdmin={authorizationProfile?.role === 'admin'} />}
+          {page === 'Invoices' && <Invoices invoices={invoices} payments={payments} customers={customers} products={products} onAdd={addInvoice} onUpdate={updateInvoice} onAddPayment={addPayment} formatAmount={formatAmount} currentUserId={session.user.id} isAdmin={authorizationProfile?.role === 'admin'} />}
+          {page === 'Documents' && <Documents documents={documents} customers={customers} onUpload={uploadDocument} onDownload={downloadDocument} onDelete={deleteDocument} />}
+          {page === 'Automation' && <Automation workflows={workflows} onAdd={addWorkflow} onUpdate={updateWorkflow} />}
+          {page === 'Segments' && <Segments segments={segments} customers={customers} onAdd={addSegment} onUpdate={updateSegment} />}
+          {page === 'Forecast' && <Forecast deals={deals} formatAmount={formatAmount} />}
+          {page === 'Pipeline' && (
+            <Pipeline
+              deals={deals}
+              customers={customers}
+              dealSupport={dealSupport}
+              supportEngineers={supportEngineers}
+              moveDeal={moveDeal}
+              deleteDeal={deleteDeal}
+              formatAmount={formatAmount}
+              currentUserId={session.user.id}
+              ownerProfiles={ownerProfiles}
+              isAdmin={authorizationProfile?.role === 'admin'}
+              onEdit={deal => {
+                setEditDealError('');
+                setEditingDeal({
+                  ...deal,
+                  amount: String(deal.amount ?? ''),
+                  product_ids: dealProducts.filter(row => row.deal_id === deal.id).map(row => row.product_id),
+                  support_engineer_ids: dealSupport.filter(row => row.deal_id === deal.id).map(row => row.support_engineer_id)
+                });
+              }}
+              onAdd={() => {
+                setDealError('');
+                setNewDeal({ title: '', company: '', amount: '', stage: 'New Lead', customer_id: '', contact_name: '', contact_email: '', contact_phone: '', new_customer_name: '', new_customer_email: '', new_customer_phone: '', new_customer_company: '', closure_start_at: '', closure_end_at: '', support_engineer_ids: [] });
+                setSelectedDealProductIds([]);
+                setExpandedDealVendor(null);
+                setShowDealForm(true);
+              }}
+            />
+          )}
+          {page === 'Activities' && (
+            <Activities activities={activities} counts={activityCounts} tab={activityTab} setTab={tab => { setActivityTab(tab); setActivityPage(0); }} page={activityPage} total={activityTotal} loading={activityListLoading} onPage={setActivityPage} customers={customers} ownerProfiles={ownerProfiles} currentUserEmail={session.user.email} onAdd={() => { setActivityError(''); setNewActivity(a => ({ ...a, customer_id: '' })); setShowActivityForm(true); }} onStatusChange={updateActivityStatus} onDelete={deleteActivity} onEdit={activity => { setEditActivityError(''); setEditingActivity({ ...activity, activity_date: formatDateTimeLocal(activity.activity_date) }); }} onView={setSelectedActivity} currentUserId={session.user.id} isAdmin={authorizationProfile?.role === 'admin'} />
+          )}
+          {page === 'Tickets' && (
+            <Tickets
+              tickets={tickets}
+              total={ticketTotal}
+              page={ticketPage}
+              pageSize={PAGE_SIZE}
+              loading={ticketListLoading}
+              filters={ticketFilters}
+              onFilters={changeTicketFilters}
+              onPage={setTicketPage}
+              counts={ticketCounts}
+              error={ticketError}
+              onAdd={() => { setTicketError(''); setNewTicket(t => ({ ...t, customer_id: '' })); setShowTicketForm(true); }}
+              onStatusChange={updateTicketStatus}
+              onDelete={deleteTicket}
+              onEdit={ticket => { setEditTicketError(''); setEditingTicket(ticket); }}
+              onView={setSelectedTicket}
+              currentUserId={session.user.id}
+              isAdmin={authorizationProfile?.role === 'admin'}
+              canManage={canManageTicket}
+              staffName={staffName}
+              staffOptions={getStaffOptions()}
+              onAssign={assignTicket}
+            />
+          )}
+          {page === 'Chat' && <Chat />}
+          {page === 'Reports' && <AdvancedReports customers={customers} deals={deals} activities={reportData.activities} tickets={reportData.tickets} leads={leads} quotes={quotes} invoices={invoices} payments={payments} formatAmount={formatAmount} />}
+          {page === 'Email Logs' && <EmailLogs emailLogs={emailLogs} customers={customers} onAdd={addEmailLog} />}
+          {page === 'UserManagement' && <UserManagement users={authorizedUsers} loading={usersLoading} error={usersError} onRefresh={fetchAuthorizedUsers} onUpdateUser={updateAuthorizedUser} currentUserId={session?.user?.id} pendingPortalAccounts={pendingPortalAccounts} portalRequestsLoading={portalRequestsLoading} portalRequestsError={portalRequestsError} portalRequestsNotice={portalRequestsNotice} onRefreshPortalRequests={fetchPendingPortalAccounts} onReviewPortalRequest={reviewPortalRequest} portalRequestActionId={portalRequestActionId} />}
+          {page === 'Settings' && <SettingsPage currency={currency} setCurrency={setCurrency} />}
+        </section>
       </RefreshContext.Provider>
     </main>
     {showCustomerForm && (
@@ -4634,14 +4634,14 @@ const closureTimerText = endAt => {
 
 const ownerColor = userId => {
   if (!userId) return '#98a2b3';
-  
+
   let hash = 0;
   for (let i = 0; i < userId.length; i++) {
     hash = ((hash << 5) - hash) + userId.charCodeAt(i);
   }
-  
+
   const hue = Math.abs(hash) % 360;
-  
+
   return `hsl(${hue}, 65%, 50%)`;
 };
 
@@ -4929,7 +4929,7 @@ function CustomerTable({ customers, deals = [], formatAmount, onSelectCustomer, 
   );
 }
 
-function Customers({ customers, total = customers.length, pageIndex = 0, loading = false, onPage = () => {}, allCustomers, deals, search, setSearch, statusFilter, setStatusFilter, onAdd, onImport, formatAmount, onSelectCustomer, onEditCustomer, onDeleteCustomer }) {
+function Customers({ customers, total = customers.length, pageIndex = 0, loading = false, onPage = () => { }, allCustomers, deals, search, setSearch, statusFilter, setStatusFilter, onAdd, onImport, formatAmount, onSelectCustomer, onEditCustomer, onDeleteCustomer }) {
   const fileRef = useRef(null);
 
   async function handleFile(event) {
@@ -5303,7 +5303,7 @@ function Pipeline({ deals, customers, dealSupport = [], supportEngineers = [], m
 }
 
 
-function Activities({ activities, counts = {}, tab, setTab, page, total = 0, loading = false, onPage = () => {}, customers, ownerProfiles = {}, currentUserEmail, onAdd, onStatusChange, onDelete, onEdit, onView, currentUserId, isAdmin }) {
+function Activities({ activities, counts = {}, tab, setTab, page, total = 0, loading = false, onPage = () => { }, customers, ownerProfiles = {}, currentUserEmail, onAdd, onStatusChange, onDelete, onEdit, onView, currentUserId, isAdmin }) {
   const getCustomerName = id => customers.find(c => c.id === id)?.name || 'No customer linked';
   const filterNames = ['All', 'Upcoming', 'Overdue', 'Completed'];
   const list = activities; // already filtered, sorted and paged by the server
@@ -5358,7 +5358,7 @@ function ActivityDetail({ activity, customer, ownerProfiles = {}, currentUserEma
   );
 }
 
-function Tickets({ tickets, total = 0, page = 0, pageSize = PAGE_SIZE, loading = false, filters, onFilters, onPage = () => {}, counts = {}, error, onAdd, onStatusChange, onDelete, onEdit, onView, currentUserId, isAdmin, canManage, staffName, staffOptions, onAssign }) {
+function Tickets({ tickets, total = 0, page = 0, pageSize = PAGE_SIZE, loading = false, filters, onFilters, onPage = () => { }, counts = {}, error, onAdd, onStatusChange, onDelete, onEdit, onView, currentUserId, isAdmin, canManage, staffName, staffOptions, onAssign }) {
   // Filtering, searching and paging all happen on the server; these just read and change the filters.
   const { query, status, priority, queue } = filters;
   const setQuery = value => onFilters({ query: value });
@@ -6876,7 +6876,29 @@ function Automation({ workflows, onAdd, onUpdate }) { const [show, setShow] = us
 
 function Segments({ segments, customers, onAdd, onUpdate }) { const [show, setShow] = useState(false); const [form, setForm] = useState({ name: '', description: '', rule_json: { status: 'Active' }, active: true }); const [selected, setSelected] = useState(null); const save = async e => { e.preventDefault(); try { await onAdd(form); setShow(false) } catch (err) { alert(err.message) } }; const count = s => customers.filter(c => (c.status || 'Active') === (s.rule_json?.status || 'Active')).length; return <><PageHeading eyebrow="CUSTOMER INTELLIGENCE" title="Segments" description="Group customers for targeted follow-up and reporting." action="New segment" onAction={() => setShow(true)} /><div className="panel"><div className="table-wrap"><table><thead><tr><th>Segment</th><th>Rule</th><th>Customers</th><th>Status</th><th>Actions</th></tr></thead><tbody>{segments.length === 0 ? <tr><td colSpan="5">No segments yet.</td></tr> : segments.map(s => <tr key={s.id}><td><strong>{s.name}</strong><div className="deal-customer">{s.description}</div></td><td>Status = {s.rule_json?.status || 'Active'}</td><td>{count(s)}</td><td>{s.active ? 'Active' : 'Paused'}</td><td><button className="secondary-btn" onClick={() => onUpdate(s.id, { active: !s.active })}>{s.active ? 'Pause' : 'Activate'}</button></td></tr>)}</tbody></table></div></div>{show && <div className="modal-backdrop" onClick={() => setShow(false)}><form className="modal" onSubmit={save} onClick={e => e.stopPropagation()}><div className="modal-heading"><h2>New segment</h2><button type="button" className="icon-btn" onClick={() => setShow(false)}><X size={18} /></button></div><label>Name<input required value={form.name} onChange={e => setForm({ ...form, name: e.target.value })} /></label><label>Description<input value={form.description} onChange={e => setForm({ ...form, description: e.target.value })} /></label><label>Customer status<select value={form.rule_json.status} onChange={e => setForm({ ...form, rule_json: { ...form.rule_json, status: e.target.value } })}>{['Active', 'Inactive', 'Prospect', 'VIP'].map(x => <option key={x}>{x}</option>)}</select></label><div className="modal-actions"><button type="button" className="secondary-btn" onClick={() => setShow(false)}>Cancel</button><button className="primary-btn">Create segment</button></div></form></div>}</> }
 
-function Forecast({ deals, formatAmount }) { const weighted = deals.filter(d => d.stage !== 'Lost' && d.stage !== 'Won').reduce((s, d) => s + (Number(d.amount) || 0) * stageProbability(d.stage), 0); const open = deals.filter(d => !['Lost', 'Won'].includes(d.stage)); return <><PageHeading eyebrow="SALES INTELLIGENCE" title="Sales forecast" description="Weighted forecast based on current pipeline stages." /><div className="stats-grid"><StatCard label="Weighted forecast" value={formatAmount(weighted)} hint="Open pipeline × stage probability" tone="purple" icon="↗" /><StatCard label="Open pipeline" value={formatAmount(open.reduce((s, d) => s + Number(d.amount || 0), 0))} hint={`${open.length} open deals`} tone="orange" icon="◈" /><StatCard label="Won revenue" value={formatAmount(deals.filter(d => d.stage === 'Won').reduce((s, d) => s + Number(d.amount || 0), 0))} hint="Closed won" tone="green" icon="✓" /></div><div className="panel"><h3>Forecast by stage</h3>{PIPELINE_STAGES.filter(s => s !== 'Lost').map(stage => { const list = deals.filter(d => d.stage === stage); const value = list.reduce((s, d) => s + Number(d.amount || 0), 0); return <BarRow key={stage} label={`${stage} (${Math.round(stageProbability(stage) * 100)}%)`} percent={weighted ? value * stageProbability(stage) / weighted * 100 : 0} display={formatAmount(value * stageProbability(stage))} /> })}</div></> }
+function Forecast({ deals, formatAmount }) {
+  const weighted = deals.filter(d => d.stage !== 'Lost' && d.stage !== 'Won').reduce((s, d) => s + (Number(d.amount) || 0) * stageProbability(d.stage), 0);
+  const open = deals.filter(d => !['Lost', 'Won'].includes(d.stage));
+  return <>
+    <PageHeading eyebrow="SALES INTELLIGENCE"
+      title="Sales forecast"
+      description="Weighted forecast based on current pipeline stages." />
+    {/* <div className="stats-grid">
+      <StatCard label="Weighted forecast" value={formatAmount(weighted)} hint="Open pipeline × stage probability" tone="purple" icon="↗" />
+      <StatCard label="Open pipeline" value={formatAmount(open.reduce((s, d) => s + Number(d.amount || 0), 0))} hint={`${open.length} open deals`} tone="orange" icon="◈" />
+      <StatCard label="Won revenue" value={formatAmount(deals.filter(d => d.stage === 'Won').reduce((s, d) => s + Number(d.amount || 0), 0))} hint="Closed won" tone="green" icon="✓" />
+    </div> */}
+    <div className="panel">
+      <h3>Forecast by stage</h3>
+      <h6 className='coming'>Coming soon</h6>
+      {/* {PIPELINE_STAGES.filter(s => s !== 'Lost').map(stage => {
+        const list = deals.filter(d => d.stage === stage);
+        const value = list.reduce((s, d) => s + Number(d.amount || 0), 0);
+        return <BarRow key={stage} label={`${stage} (${Math.round(stageProbability(stage) * 100)}%)`} percent={weighted ? value * stageProbability(stage) / weighted * 100 : 0} display={formatAmount(value * stageProbability(stage))} />
+      })} */}
+    </div>
+  </>
+}
 
 function stageProbability(stage) { return ({ 'New Lead': 0.1, 'Qualified': 0.25, 'Proposal': 0.5, 'Won': 1, 'Lost': 0 })[stage] ?? 0.2; }
 
@@ -7137,7 +7159,7 @@ function Products({ products, supportEngineers, solutionSupport, onAdd, onUpdate
         <div className="solution-family-label">SOLUTION FAMILY</div>
         <h3>{vendor}</h3>
         <p>{vendorProducts.length} {vendorProducts.length === 1 ? 'solution' : 'solutions'} in catalogue</p>
-        <div className="solution-family-support-preview"><strong>Supported by</strong><div>{getFamilySupportNames(vendor).length ? getFamilySupportNames(vendor).slice(0, 3).map(name => <span key={name}>{name}</span>) : <span>Not assigned</span>}</div></div>
+        <div className="solution-family-support-preview"><strong>Supported by:</strong><div>{getFamilySupportNames(vendor).length ? getFamilySupportNames(vendor).slice(0, 3).map(name => <span key={name}>{name}</span>) : <span>Not assigned</span>}</div></div>
         <div className="solution-family-categories">
           {categoriesForVendor.slice(0, 4).map(category => (
             <span key={category}>{category}</span>
@@ -7176,7 +7198,7 @@ function Products({ products, supportEngineers, solutionSupport, onAdd, onUpdate
               <div className="solution-family-label">SOLUTION FAMILY</div>
               <h2>{selectedVendor}</h2>
               <p>{(groupedProducts[selectedVendor] || []).length} solutions available in the catalogue.</p>
-              <div className="solution-family-support-preview"><strong>Supported by</strong><div>{getFamilySupportNames(selectedVendor).length ? getFamilySupportNames(selectedVendor).map(name => <span key={name}>{name}</span>) : <span>Not assigned</span>}</div></div>
+              <div className="solution-family-support-preview"><strong>Supported by:</strong><div>{getFamilySupportNames(selectedVendor).length ? getFamilySupportNames(selectedVendor).map(name => <span key={name}>{name}</span>) : <span>Not assigned</span>}</div></div>
             </div>
             {isAdmin && <button type="button" className="secondary-btn" onClick={() => openFamilySupport(selectedVendor)}>Manage support</button>}
           </div>
