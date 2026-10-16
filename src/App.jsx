@@ -3424,7 +3424,7 @@ async function signUpWithEmail(event) {
         {page === 'Email' && <EmailPage emailLogs={emailLogs} customers={customers} integrations={emailIntegrations} loading={emailIntegrationLoading} error={emailIntegrationError} onConnect={connectEmailProvider} onDisconnect={disconnectEmailProvider} onCompose={() => openCompose()} onAdd={async payload => { try { await addEmailLog(payload); showToast('Email logged.'); } catch (e) { alert(e.message); } }} />}
         {page === 'Calendar' && <CalendarPage events={calendarEvents} customers={customers} onAdd={addCalendarEvent} onUpdate={updateCalendarEvent} onDelete={deleteCalendarEvent} />}
         {page === 'Quotes' && <Quotes quotes={quotes} products={products} quoteItems={quoteItems} onLoadQuoteItems={loadQuoteItems} onAdd={addQuote} onUpdate={updateQuote} onDelete={deleteQuote} formatAmount={formatAmount} currentUserId={session.user.id} isAdmin={authorizationProfile?.role === 'admin'} />}
-        {page === 'Invoices' && <Invoices invoices={invoices} payments={payments} customers={customers} onAdd={addInvoice} onUpdate={updateInvoice} onAddPayment={addPayment} formatAmount={formatAmount} currentUserId={session.user.id} isAdmin={authorizationProfile?.role === 'admin'} />}
+        {page === 'Invoices' && <Invoices invoices={invoices} payments={payments} customers={customers} products={products} onAdd={addInvoice} onUpdate={updateInvoice} onAddPayment={addPayment} formatAmount={formatAmount} currentUserId={session.user.id} isAdmin={authorizationProfile?.role === 'admin'} />}
         {page === 'Documents' && <Documents documents={documents} customers={customers} onUpload={uploadDocument} onDownload={downloadDocument} onDelete={deleteDocument} />}
         {page === 'Automation' && <Automation workflows={workflows} onAdd={addWorkflow} onUpdate={updateWorkflow} />}
         {page === 'Segments' && <Segments segments={segments} customers={customers} onAdd={addSegment} onUpdate={updateSegment} />}
@@ -5699,6 +5699,10 @@ function Leads({ leads, customers, products, leadProducts, onAdd, onUpdate, onSy
 
   const save = async e => {
     e.preventDefault();
+    if (form.payment_terms === 'Custom' && !form.due_date) {
+      alert('Please choose a custom due date.');
+      return;
+    }
     try {
       const payload = { ...form, customer_id: form.customer_id || null };
 
@@ -6457,7 +6461,414 @@ function Quotes({ quotes = [], products = [], quoteItems = [], onLoadQuoteItems,
   </>;
 }
 
-function Invoices({ invoices, payments, customers, onAdd, onUpdate, onAddPayment, formatAmount, currentUserId, isAdmin }) { const [show, setShow] = useState(false); const [pay, setPay] = useState(null); const blank = { invoice_number: `INV-${Date.now().toString().slice(-6)}`, title: '', customer_id: '', amount: 0, due_date: '', status: 'Draft', notes: '' }; const [form, setForm] = useState(blank); const save = async e => { e.preventDefault(); try { await onAdd(form); setShow(false) } catch (err) { alert(err.message) } }; const paymentSave = async e => { e.preventDefault(); try { await onAddPayment({ ...pay, payment_method: pay.payment_method || 'Bank transfer' }); setPay(null) } catch (err) { alert(err.message) } }; return <><PageHeading eyebrow="BILLING" title="Invoices & payments" description="Track invoices, balances and payments." action="New invoice" onAction={() => { setForm({ ...blank, invoice_number: `INV-${Date.now().toString().slice(-6)}` }); setShow(true) }} /><div className="stats-grid"><StatCard label="Invoiced" value={formatAmount(invoices.reduce((s, x) => s + Number(x.amount || 0), 0))} hint={`${invoices.length} invoices`} tone="blue" icon="$" /><StatCard label="Paid" value={formatAmount(payments.reduce((s, x) => s + Number(x.amount || 0), 0))} hint={`${payments.length} payments`} tone="green" icon="✓" /><StatCard label="Outstanding" value={formatAmount(invoices.filter(x => !['Paid', 'Cancelled'].includes(x.status)).reduce((s, x) => s + Number(x.amount || 0), 0))} hint="Open balances" tone="orange" icon="!" /></div><div className="panel"><div className="table-wrap"><table><thead><tr><th>Invoice</th><th>Customer</th><th>Amount</th><th>Status</th><th>Due</th><th>Actions</th></tr></thead><tbody>{invoices.length === 0 ? <tr><td colSpan="6">No invoices yet.</td></tr> : invoices.map(i => <tr key={i.id}><td><strong>{i.invoice_number}</strong><div className="deal-customer">{i.title}</div></td><td>{i.customers?.name || '—'}</td><td>{formatAmount(i.amount)}</td><td>{i.status}</td><td>{i.due_date ? formatDate(i.due_date) : '—'}</td><td><div className="toolbar-actions">{(isAdmin || i.created_by === currentUserId) && <button className="secondary-btn" onClick={() => onUpdate(i.id, { status: i.status === 'Paid' ? 'Sent' : 'Paid' })}>{i.status === 'Paid' ? 'Reopen' : 'Mark paid'}</button>}{i.status !== 'Paid' && <button className="secondary-btn" onClick={() => setPay({ invoice_id: i.id, amount: i.amount, paid_at: new Date().toISOString().slice(0, 16), payment_method: 'Bank transfer' })}>Record payment</button>}</div></td></tr>)}</tbody></table></div></div>{show && <div className="modal-backdrop" onClick={() => setShow(false)}><form className="modal" onSubmit={save} onClick={e => e.stopPropagation()}><div className="modal-heading"><h2>New invoice</h2><button type="button" className="icon-btn" onClick={() => setShow(false)}><X size={18} /></button></div><label>Invoice number<input required value={form.invoice_number} onChange={e => setForm({ ...form, invoice_number: e.target.value })} /></label><label>Title<input required value={form.title} onChange={e => setForm({ ...form, title: e.target.value })} /></label><label>Customer<select value={form.customer_id} onChange={e => setForm({ ...form, customer_id: e.target.value })}><option value="">None</option>{customers.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}</select></label><label>Amount<input type="number" min="0" value={form.amount} onChange={e => setForm({ ...form, amount: Number(e.target.value) })} /></label><label>Due date<input type="date" value={form.due_date || ''} onChange={e => setForm({ ...form, due_date: e.target.value })} /></label><label>Status<select value={form.status} onChange={e => setForm({ ...form, status: e.target.value })}>{['Draft', 'Sent', 'Partially Paid', 'Paid', 'Overdue', 'Cancelled'].map(x => <option key={x}>{x}</option>)}</select></label><label>Notes<textarea value={form.notes || ''} onChange={e => setForm({ ...form, notes: e.target.value })} /></label><div className="modal-actions"><button type="button" className="secondary-btn" onClick={() => setShow(false)}>Cancel</button><button className="primary-btn">Create invoice</button></div></form></div>}{pay && <div className="modal-backdrop" onClick={() => setPay(null)}><form className="modal" onSubmit={paymentSave} onClick={e => e.stopPropagation()}><div className="modal-heading"><h2>Record payment</h2><button type="button" className="icon-btn" onClick={() => setPay(null)}><X size={18} /></button></div><label>Amount<input type="number" min="0" value={pay.amount} onChange={e => setPay({ ...pay, amount: Number(e.target.value) })} /></label><label>Method<select value={pay.payment_method} onChange={e => setPay({ ...pay, payment_method: e.target.value })}>{['Bank transfer', 'Card', 'Cash', 'Online', 'Other'].map(x => <option key={x}>{x}</option>)}</select></label><label>Date<input type="datetime-local" value={pay.paid_at} onChange={e => setPay({ ...pay, paid_at: e.target.value })} /></label><div className="modal-actions"><button type="button" className="secondary-btn" onClick={() => setPay(null)}>Cancel</button><button className="primary-btn">Save payment</button></div></form></div>}</> }
+function Invoices({ invoices, payments, customers, products, onAdd, onUpdate, onAddPayment, formatAmount, currentUserId, isAdmin }) {
+  const [show, setShow] = useState(false);
+  const [pay, setPay] = useState(null);
+  const [preview, setPreview] = useState(null);
+  const blank = {
+    invoice_number: `INV-${Date.now().toString().slice(-6)}`,
+    title: '',
+    customer_id: '',
+    product_id: '',
+    item_type: 'Product',
+    quantity: 1,
+    unit_price: 0,
+    amount: 0,
+    due_date: '',
+    payment_terms: 'Due on receipt',
+    status: 'Draft',
+    notes: ''
+  };
+  const [form, setForm] = useState(blank);
+
+  const setInvoiceField = (field, value) => {
+    setForm(prev => {
+      const next = { ...prev, [field]: value };
+      if (field === 'quantity' || field === 'unit_price') {
+        next.amount = Math.max(0, Number(next.quantity) || 0) * Math.max(0, Number(next.unit_price) || 0);
+      }
+      return next;
+    });
+  };
+
+  const availableInvoiceProducts = products.filter(product => (product.status || 'Active') === 'Active' && (product.type || 'Product') === form.item_type);
+
+  const setInvoiceProduct = productId => {
+    const product = products.find(item => item.id === productId);
+    if (!product) {
+      setForm(prev => ({ ...prev, product_id: '', title: '', unit_price: 0, amount: 0 }));
+      return;
+    }
+
+    const unitPrice = Math.max(0, Number(product.unit_price) || 0);
+    const quantity = Math.max(1, Number(form.quantity) || 1);
+    setForm(prev => ({
+      ...prev,
+      product_id: product.id,
+      title: product.name,
+      item_type: product.type || 'Product',
+      unit_price: unitPrice,
+      amount: quantity * unitPrice
+    }));
+  };
+
+  const setInvoiceItemType = value => {
+    setForm(prev => ({
+      ...prev,
+      item_type: value,
+      product_id: '',
+      title: '',
+      unit_price: 0,
+      amount: 0
+    }));
+  };
+
+  const localDateString = date => {
+    const year = date.getFullYear();
+    const month = String(date.getMonth() + 1).padStart(2, '0');
+    const day = String(date.getDate()).padStart(2, '0');
+    return `${year}-${month}-${day}`;
+  };
+
+  const setPaymentTerms = value => {
+    const today = new Date();
+    let dueDate = '';
+
+    if (value === 'Due on receipt') {
+      dueDate = localDateString(today);
+    } else if (value.startsWith('Net ')) {
+      const days = Number(value.replace('Net ', '')) || 0;
+      today.setDate(today.getDate() + days);
+      dueDate = localDateString(today);
+    }
+
+    setForm(prev => ({
+      ...prev,
+      payment_terms: value,
+      due_date: value === 'Custom' ? '' : dueDate
+    }));
+  };
+
+  const save = async e => {
+    e.preventDefault();
+    try {
+      const payload = {
+        invoice_number: form.invoice_number,
+        title: form.title,
+        customer_id: form.customer_id || null,
+        product_id: form.product_id || null,
+        item_type: form.item_type || 'Product',
+        quantity: Number(form.quantity) || 1,
+        unit_price: Number(form.unit_price) || 0,
+        amount: Number(form.amount) || 0,
+        due_date: form.due_date || null,
+        payment_terms: form.payment_terms || 'Due on receipt',
+        status: form.status,
+        notes: form.notes || ''
+      };
+      await onAdd(payload);
+      setShow(false);
+    } catch (err) {
+      alert(err.message);
+    }
+  };
+
+  const paymentSave = async e => {
+    e.preventDefault();
+    try {
+      await onAddPayment({ ...pay, payment_method: pay.payment_method || 'Bank transfer' });
+      setPay(null);
+    } catch (err) {
+      alert(err.message);
+    }
+  };
+
+  const getCustomer = invoice => {
+    return customers.find(customer => customer.id === invoice.customer_id) || null;
+  };
+
+  return <>
+    <PageHeading
+      eyebrow="BILLING"
+      title="Invoices & payments"
+      description="Track invoices, balances and payments."
+      action="New invoice"
+      onAction={() => {
+        setForm({ ...blank, invoice_number: `INV-${Date.now().toString().slice(-6)}` });
+        setShow(true);
+      }}
+    />
+
+    <div className="stats-grid">
+      <StatCard label="Invoiced" value={formatAmount(invoices.reduce((s, x) => s + Number(x.amount || 0), 0))} hint={`${invoices.length} invoices`} tone="blue" icon="$" />
+      <StatCard label="Paid" value={formatAmount(payments.reduce((s, x) => s + Number(x.amount || 0), 0))} hint={`${payments.length} payments`} tone="green" icon="✓" />
+      <StatCard label="Outstanding" value={formatAmount(invoices.filter(x => !['Paid', 'Cancelled'].includes(x.status)).reduce((s, x) => s + Number(x.amount || 0), 0))} hint="Open balances" tone="orange" icon="!" />
+    </div>
+
+    <div className="panel">
+      <div className="table-wrap">
+        <table>
+          <thead>
+            <tr><th>Invoice</th><th>Customer</th><th>Amount</th><th>Status</th><th>Due</th><th>Actions</th></tr>
+          </thead>
+          <tbody>
+            {invoices.length === 0 ? <tr><td colSpan="6">No invoices yet.</td></tr> : invoices.map(i => (
+              <tr key={i.id}>
+                <td><strong>{i.invoice_number}</strong><div className="deal-customer">{i.title}</div></td>
+                <td>{i.customers?.name || '—'}</td>
+                <td>{formatAmount(i.amount)}</td>
+                <td>{i.status}</td>
+                <td>{i.due_date ? formatDate(i.due_date) : '—'}</td>
+                <td>
+                  <div className="toolbar-actions">
+                    <button type="button" className="secondary-btn" onClick={() => setPreview(i)}>
+                      <FileText size={15} /> View
+                    </button>
+                    {(isAdmin || i.created_by === currentUserId) && <button className="secondary-btn" onClick={() => onUpdate(i.id, { status: i.status === 'Paid' ? 'Sent' : 'Paid' })}>{i.status === 'Paid' ? 'Reopen' : 'Mark paid'}</button>}
+                    {i.status !== 'Paid' && <button className="secondary-btn" onClick={() => setPay({ invoice_id: i.id, amount: i.amount, paid_at: new Date().toISOString().slice(0, 16), payment_method: 'Bank transfer' })}>Record payment</button>}
+                  </div>
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+    </div>
+
+    {show && <div className="modal-backdrop" onClick={() => setShow(false)}>
+      <form className="modal invoice-form-modal" onSubmit={save} onClick={e => e.stopPropagation()}>
+        <div className="modal-heading">
+          <div>
+            <h2>New invoice</h2>
+            <span className="invoice-form-subtitle">Create a simple professional invoice for your customer.</span>
+          </div>
+          <button type="button" className="icon-btn" onClick={() => setShow(false)}><X size={18} /></button>
+        </div>
+
+        <div className="invoice-form-section">
+          <div className="invoice-form-section-title">Invoice details</div>
+          <div className="invoice-form-grid">
+            <label>
+              Invoice number
+              <input required value={form.invoice_number} onChange={e => setForm({ ...form, invoice_number: e.target.value })} />
+            </label>
+
+            <label>
+              Customer
+              <select required value={form.customer_id} onChange={e => setForm({ ...form, customer_id: e.target.value })}>
+                <option value="">Select customer</option>
+                {customers.map(c => <option key={c.id} value={c.id}>{c.name}{c.company ? ` · ${c.company}` : ''}</option>)}
+              </select>
+            </label>
+
+            <label>
+              Invoice date
+              <input type="date" value={new Date().toISOString().slice(0, 10)} readOnly />
+            </label>
+
+            <label className="invoice-payment-terms-field">
+              Payment terms
+              <select value={form.payment_terms} onChange={e => setPaymentTerms(e.target.value)}>
+                <option>Due on receipt</option>
+                <option>Net 15</option>
+                <option>Net 30</option>
+                <option>Net 45</option>
+                <option>Net 60</option>
+                <option>Custom</option>
+              </select>
+              <span className="invoice-payment-term-help">
+                {form.payment_terms === 'Due on receipt'
+                  ? 'Payment is due when the invoice is received.'
+                  : form.payment_terms === 'Custom'
+                    ? 'Set the exact payment due date below.'
+                    : `Payment is due ${form.payment_terms.replace('Net ', '')} days after the invoice date.`}
+              </span>
+            </label>
+
+            <label className={form.payment_terms === 'Custom' ? 'invoice-custom-due-date' : ''}>
+              {form.payment_terms === 'Custom' ? 'Custom due date' : 'Due date'}
+              <input
+                type="date"
+                value={form.due_date || ''}
+                onChange={e => setForm(prev => ({ ...prev, due_date: e.target.value }))}
+                required={form.payment_terms === 'Custom'}
+              />
+              {form.payment_terms === 'Custom' && (
+                <span className="invoice-payment-term-help">Choose a date from the calendar, or enter the date manually.</span>
+              )}
+            </label>
+
+            <label>
+              Status
+              <select value={form.status} onChange={e => setForm({ ...form, status: e.target.value })}>
+                {['Draft', 'Sent', 'Partially Paid', 'Paid', 'Overdue', 'Cancelled'].map(x => <option key={x}>{x}</option>)}
+              </select>
+            </label>
+          </div>
+        </div>
+
+        <div className="invoice-form-section">
+          <div className="invoice-form-section-title">Items</div>
+          <div className="invoice-item-editor">
+            <label>
+              Type
+              <select value={form.item_type} onChange={e => setInvoiceItemType(e.target.value)}>
+                <option value="Product">Product</option>
+                <option value="Service">Service</option>
+              </select>
+            </label>
+
+            <label className="invoice-item-description">
+              Item / service
+              <select required value={form.product_id} onChange={e => setInvoiceProduct(e.target.value)}>
+                <option value="">Select from solutions</option>
+                {availableInvoiceProducts.map(product => (
+                  <option key={product.id} value={product.id}>
+                    {product.name}{product.vendor ? ` · ${product.vendor}` : ''}
+                  </option>
+                ))}
+              </select>
+            </label>
+
+            <label>
+              Qty
+              <input type="number" min="1" step="1" value={form.quantity} onChange={e => setInvoiceField('quantity', e.target.value)} />
+            </label>
+
+            <label>
+              Unit price
+              <input type="number" min="0" step="0.01" value={form.unit_price} onChange={e => setInvoiceField('unit_price', e.target.value)} />
+              <span className="invoice-payment-term-help">Auto-filled from the catalogue, but you can edit it for a custom price.</span>
+            </label>
+
+            <div className="invoice-item-total">
+              <span>Amount</span>
+              <strong>{formatAmount(form.amount)}</strong>
+            </div>
+          </div>
+          {form.item_type && availableInvoiceProducts.length === 0 && (
+            <div className="invoice-item-empty">No active {form.item_type.toLowerCase()} solutions have a selling price in the catalogue yet.</div>
+          )}
+
+          <div className="invoice-form-total">
+            <span>Total</span>
+            <strong>{formatAmount(form.amount)}</strong>
+          </div>
+        </div>
+
+        <div className="invoice-form-section">
+          <div className="invoice-form-section-title">Notes</div>
+          <label>
+            Customer notes
+            <textarea rows="3" placeholder="Thank you for your business." value={form.notes || ''} onChange={e => setForm({ ...form, notes: e.target.value })} />
+          </label>
+        </div>
+
+        <div className="modal-actions">
+          <button type="button" className="secondary-btn" onClick={() => setShow(false)}>Cancel</button>
+          <button className="primary-btn">Create invoice</button>
+        </div>
+      </form>
+    </div>}
+
+    {pay && <div className="modal-backdrop" onClick={() => setPay(null)}>
+      <form className="modal" onSubmit={paymentSave} onClick={e => e.stopPropagation()}>
+        <div className="modal-heading"><h2>Record payment</h2><button type="button" className="icon-btn" onClick={() => setPay(null)}><X size={18} /></button></div>
+        <label>Amount<input type="number" min="0" value={pay.amount} onChange={e => setPay({ ...pay, amount: Number(e.target.value) })} /></label>
+        <label>Method<select value={pay.payment_method} onChange={e => setPay({ ...pay, payment_method: e.target.value })}>{['Bank transfer', 'Card', 'Cash', 'Online', 'Other'].map(x => <option key={x}>{x}</option>)}</select></label>
+        <label>Date<input type="datetime-local" value={pay.paid_at} onChange={e => setPay({ ...pay, paid_at: e.target.value })} /></label>
+        <div className="modal-actions"><button type="button" className="secondary-btn" onClick={() => setPay(null)}>Cancel</button><button className="primary-btn">Save payment</button></div>
+      </form>
+    </div>}
+
+    {preview && (() => {
+      const customer = getCustomer(preview);
+      const invoiceDate = preview.created_at || new Date().toISOString();
+      const amount = Number(preview.amount || 0);
+      return <div className="invoice-preview-backdrop" onClick={() => setPreview(null)}>
+        <div className="invoice-preview-shell" onClick={e => e.stopPropagation()}>
+          <div className="invoice-preview-toolbar">
+            <div>
+              <strong>Invoice preview</strong>
+              <span>Temporary document template</span>
+            </div>
+            <div className="invoice-preview-actions">
+              <button type="button" className="secondary-btn" onClick={() => window.print()}><Download size={15} /> Print / Save PDF</button>
+              <button type="button" className="icon-btn" onClick={() => setPreview(null)}><X size={18} /></button>
+            </div>
+          </div>
+
+          <div className="invoice-print-sheet">
+            <header className="invoice-document-header">
+              <div className="invoice-company-block">
+                <img src="/storhet-logo.png" alt="Storhet Solutions" className="invoice-company-logo" />
+                <div>
+                  <h2>STORHET SOLUTIONS</h2>
+                  <p>Technology Solutions & Services</p>
+                </div>
+              </div>
+              <div className="invoice-title-block">
+                <div className="invoice-document-title">INVOICE</div>
+                <div className="invoice-status-pill">{preview.status || 'Draft'}</div>
+              </div>
+            </header>
+
+            <div className="invoice-document-rule" />
+
+            <section className="invoice-meta-grid">
+              <div>
+                <span className="invoice-label">BILL TO</span>
+                <strong>{customer?.name || preview.customers?.name || 'Customer'}</strong>
+                {customer?.company && <span>{customer.company}</span>}
+                {customer?.email && <span>{customer.email}</span>}
+                {customer?.phone && <span>{customer.phone}</span>}
+              </div>
+              <div className="invoice-details-box">
+                <div><span>Invoice #</span><strong>{preview.invoice_number}</strong></div>
+                <div><span>Invoice Date</span><strong>{formatDate(invoiceDate)}</strong></div>
+                <div><span>Due Date</span><strong>{preview.due_date ? formatDate(preview.due_date) : '—'}</strong></div>
+              </div>
+            </section>
+
+            <table className="invoice-document-table">
+              <thead><tr><th>#</th><th>ITEM &amp; DESCRIPTION</th><th>QTY</th><th>RATE</th><th>AMOUNT</th></tr></thead>
+              <tbody>
+                <tr>
+                  <td>1</td>
+                  <td><strong>{preview.title || 'Professional services'}</strong><span>{preview.item_type || 'Product'} · Storhet Solutions solution delivery</span></td>
+                  <td>{preview.quantity || 1}</td>
+                  <td>{formatAmount(preview.unit_price ?? amount)}</td>
+                  <td>{formatAmount(amount)}</td>
+                </tr>
+              </tbody>
+            </table>
+
+            <section className="invoice-bottom-grid">
+              <div className="invoice-notes-block">
+                <span className="invoice-label">NOTES</span>
+                <p>{preview.notes || 'Thank you for your business.'}</p>
+              </div>
+              <div className="invoice-totals-block">
+                <div><span>Subtotal</span><strong>{formatAmount(amount)}</strong></div>
+                <div><span>Discount</span><strong>{formatAmount(0)}</strong></div>
+                <div className="invoice-total-row"><span>TOTAL</span><strong>{formatAmount(amount)}</strong></div>
+                <div className="invoice-balance-row"><span>BALANCE DUE</span><strong>{formatAmount(amount)}</strong></div>
+              </div>
+            </section>
+
+            <footer className="invoice-document-footer">
+              <div>
+                <strong>Payment / Terms</strong>
+                <p>Please make payment by the stated due date. Payment details can be added here later.</p>
+              </div>
+              <div className="invoice-thank-you">Thank you for doing business with<br /><strong>STORHET SOLUTIONS</strong>.</div>
+            </footer>
+          </div>
+        </div>
+      </div>;
+    })()}
+  </>;
+}
 
 function Documents({ documents, customers, onUpload, onDownload, onDelete }) { const [customerId, setCustomerId] = useState(''); const upload = e => { const f = e.target.files?.[0]; if (!f) return; onUpload(f, customerId).catch(err => alert(err.message)); e.target.value = '' }; return <><PageHeading eyebrow="FILES" title="Documents" description="Store customer and CRM files in Supabase Storage." /><div className="panel"><div className="toolbar"><select value={customerId} onChange={e => setCustomerId(e.target.value)}><option value="">No customer link</option>{customers.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}</select><label className="secondary-btn" style={{ display: 'inline-flex', alignItems: 'center', gap: 8, cursor: 'pointer' }}><Upload size={15} /> Upload file<input type="file" hidden onChange={upload} /></label></div><div className="table-wrap"><table><thead><tr><th>File</th><th>Customer</th><th>Type</th><th>Size</th><th>Created</th><th>Actions</th></tr></thead><tbody>{documents.length === 0 ? <tr><td colSpan="6">No documents yet.</td></tr> : documents.map(d => <tr key={d.id}><td><strong>{d.name}</strong></td><td>{d.customers?.name || '—'}</td><td>{d.mime_type}</td><td>{Math.max(1, Math.round(Number(d.size_bytes || 0) / 1024))} KB</td><td>{formatDate(d.created_at)}</td><td><div className="toolbar-actions"><button className="secondary-btn" onClick={() => onDownload(d)}><Download size={14} /> Download</button><button className="icon-btn" onClick={() => onDelete(d)}><X size={16} /></button></div></td></tr>)}</tbody></table></div></div></> }
 
@@ -6533,6 +6944,8 @@ function Products({ products, supportEngineers, solutionSupport, onAdd, onUpdate
     custom_category: '',
     vendor: '',
     logo_url: '',
+    type: 'Product',
+    unit_price: 0,
     status: 'Active'
   };
   const [form, setForm] = useState(blank);
@@ -6600,6 +7013,8 @@ function Products({ products, supportEngineers, solutionSupport, onAdd, onUpdate
         custom_category: form.category === 'Other' ? form.custom_category.trim() : null,
         vendor: form.vendor.trim() || null,
         logo_url: form.logo_url.trim() || null,
+        type: form.type || 'Product',
+        unit_price: Math.max(0, Number(form.unit_price) || 0),
         status: form.status
       };
 
@@ -6629,6 +7044,8 @@ function Products({ products, supportEngineers, solutionSupport, onAdd, onUpdate
       custom_category: product.custom_category || '',
       vendor: product.vendor || '',
       logo_url: product.logo_url || '',
+      type: product.type || 'Product',
+      unit_price: Number(product.unit_price || 0),
       status: product.status || 'Active'
     });
     setShow(true);
@@ -6700,7 +7117,8 @@ function Products({ products, supportEngineers, solutionSupport, onAdd, onUpdate
 
       <div className="product-category">{getCategoryLabel(product)}</div>
       <h3>{product.name}</h3>
-      {product.vendor && <div className="product-vendor">{product.vendor}</div>}
+      <div className="product-vendor">{product.vendor || 'Storhet'} · {product.type || 'Product'}</div>
+      {Number(product.unit_price || 0) > 0 && <div className="product-price">{formatAmount(product.unit_price)}</div>}
       <p>{product.description || 'No description added.'}</p>
       <small>Added {formatDate(product.created_at)}</small>
     </div>
@@ -6837,6 +7255,28 @@ function Products({ products, supportEngineers, solutionSupport, onAdd, onUpdate
                   value={form.vendor}
                   onChange={e => setForm({ ...form, vendor: e.target.value })}
                   placeholder="e.g. Kong"
+                />
+              </label>
+            </div>
+
+            <div className="product-form-grid">
+              <label>
+                Type
+                <select value={form.type} onChange={e => setForm({ ...form, type: e.target.value })}>
+                  <option value="Product">Product</option>
+                  <option value="Service">Service</option>
+                </select>
+              </label>
+
+              <label>
+                Selling price
+                <input
+                  type="number"
+                  min="0"
+                  step="0.01"
+                  value={form.unit_price}
+                  onChange={e => setForm({ ...form, unit_price: e.target.value })}
+                  placeholder="0.00"
                 />
               </label>
             </div>
