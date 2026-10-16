@@ -4992,14 +4992,137 @@ tbody tr:last-child td {
 }
 
 @media print {
-  body * { visibility: hidden !important; }
+  @page {
+    size: A4 portrait;
+    margin: 8mm 10mm;
+  }
+
+  html,
+  body {
+    width: auto !important;
+    min-height: 0 !important;
+    margin: 0 !important;
+    padding: 0 !important;
+    background: #fff !important;
+    overflow: visible !important;
+  }
+
+  /* Print only the actual invoice document, not the screen preview shell. */
+  body * {
+    visibility: hidden !important;
+  }
+
   .invoice-print-sheet,
-  .invoice-print-sheet * { visibility: visible !important; }
-  .invoice-preview-backdrop { position: static; background: #fff; padding: 0; overflow: visible; }
-  .invoice-preview-shell { width: 100%; max-height: none; overflow: visible; box-shadow: none; background: #fff; }
-  .invoice-preview-toolbar { display: none !important; }
-  .invoice-print-sheet { width: 100%; min-height: 0; margin: 0; box-shadow: none; }
-  @page { size: A4; margin: 0; }
+  .invoice-print-sheet * {
+    visibility: visible !important;
+  }
+
+  .invoice-preview-backdrop {
+    position: static !important;
+    display: block !important;
+    width: auto !important;
+    height: auto !important;
+    min-height: 0 !important;
+    padding: 0 !important;
+    margin: 0 !important;
+    overflow: visible !important;
+    background: #fff !important;
+  }
+
+  .invoice-preview-shell {
+    position: static !important;
+    width: auto !important;
+    max-width: none !important;
+    height: auto !important;
+    max-height: none !important;
+    margin: 0 !important;
+    padding: 0 !important;
+    overflow: visible !important;
+    border-radius: 0 !important;
+    box-shadow: none !important;
+    background: #fff !important;
+  }
+
+  .invoice-preview-toolbar {
+    display: none !important;
+  }
+
+  /* The screen version is 794px wide, but the printed version must use
+     the A4 content width and normal document flow. Do NOT give it a fixed
+     page height — that is what was causing Chrome to fragment the invoice. */
+  .invoice-print-sheet {
+    display: block !important;
+    position: static !important;
+    width: 190mm !important;
+    max-width: 190mm !important;
+    min-width: 0 !important;
+    height: auto !important;
+    min-height: 0 !important;
+    max-height: none !important;
+    box-sizing: border-box !important;
+    margin: 0 auto !important;
+    padding: 9mm 10mm !important;
+    overflow: visible !important;
+    background: #fff !important;
+    box-shadow: none !important;
+    border: 0 !important;
+    page-break-after: auto !important;
+    break-after: auto !important;
+  }
+
+  .invoice-document-header {
+    break-inside: avoid !important;
+    page-break-inside: avoid !important;
+  }
+
+  .invoice-document-rule {
+    margin: 6mm 0 5mm !important;
+  }
+
+  .invoice-meta-grid {
+    margin-bottom: 6mm !important;
+    gap: 7mm !important;
+    break-inside: avoid !important;
+    page-break-inside: avoid !important;
+  }
+
+  .invoice-details-box,
+  .invoice-document-table,
+  .invoice-bottom-grid,
+  .invoice-document-footer {
+    break-inside: avoid !important;
+    page-break-inside: avoid !important;
+  }
+
+  .invoice-document-table th {
+    padding: 7px 8px !important;
+  }
+
+  .invoice-document-table td {
+    padding: 10px 8px !important;
+  }
+
+  .invoice-bottom-grid {
+    margin-top: 6mm !important;
+    gap: 8mm !important;
+  }
+
+  .invoice-document-footer {
+    margin-top: 8mm !important;
+    padding-top: 5mm !important;
+  }
+
+  .invoice-print-sheet * {
+    -webkit-print-color-adjust: exact !important;
+    print-color-adjust: exact !important;
+  }
+
+  .invoice-document-table tr,
+  .invoice-document-table td,
+  .invoice-document-table th {
+    break-inside: avoid !important;
+    page-break-inside: avoid !important;
+  }
 }
 
 
