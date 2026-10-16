@@ -851,16 +851,16 @@ tbody tr:last-child td {
 .settings-panel input,
 .settings-panel select,
 .modal input {
-    display: block;
-    width: 100%;
-    margin-top: 8px;
-    border: 1px solid #e5e6ed;
-    border-radius: 8px;
-    padding: 11px;
-    background: #fff;
-    font: inherit;
-    font-size: 12px;
-    outline-color: #10B981
+  display: block;
+  width:fit-content;
+  margin-top: 8px;
+  border: 1px solid #e5e6ed;
+  border-radius: 8px;
+  padding: 11px;
+  background: #fff;
+  font: inherit;
+  font-size: 12px;
+  outline-color: #10B981
 }
 
 .modal-backdrop {
@@ -3197,6 +3197,24 @@ tbody tr:last-child td {
   margin-top: 30px;
 }
 
+.solution-family-support-preview {
+  display: flex;
+  align-items: center;
+  width: fit-content;
+  padding: 4px 8px;
+  border-radius: 999px;
+  font-size: 10px;
+  font-weight: 700;
+  background: #f0edff;
+  color: #5b48bb;
+  gap: 5px;
+  margin: 4px 0 0;
+
+  span {
+    font-weight: 800;
+  }
+}
+
 .solution-family-section-heading {
   margin-bottom: 15px;
 }
@@ -4217,6 +4235,17 @@ tbody tr:last-child td {
 
 .modal.modal-wide .quote-total-card strong {
   color: #202333;
+}
+
+select {
+  padding: 10px 12px;
+  border: 1px solid #e4e7ee;
+  border-radius: 10px;
+  background: #fff;
+  color: #292d3d;
+  font: inherit;
+  font-size: 12px;
+  margin-left: 5px;
 }
 
 .modal.modal-wide .quote-total-card .grand-total {
