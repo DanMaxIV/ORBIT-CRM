@@ -1,73 +1,15 @@
 import { createContext, useContext, useEffect, useMemo, useState, useRef } from 'react';
 import { supabase } from './lib/supabase';
+import FullCalendar from '@fullcalendar/react';
+import dayGridPlugin from '@fullcalendar/react/daygrid';
+import timeGridPlugin from '@fullcalendar/react/timegrid';
+import listPlugin from '@fullcalendar/react/list';
+import interactionPlugin from '@fullcalendar/react/interaction';
+import '@fullcalendar/react/skeleton.css';
 import { LayoutDashboard, Users, Kanban, CalendarCheck, BarChart3, Settings, Bell, Search, Plus, ArrowUpRight, MoreHorizontal, Menu, X, UserRound, Pencil, Receipt, LogOut, UserCog, MessageCircle, UserPlus, Mail, CalendarDays, FileText, Workflow, TrendingUp, Tags, DollarSign, CreditCard, Upload, Download, Play, Target, CheckCircle2, ArrowLeft, ChevronRight, Building2, RefreshCw } from 'lucide-react';
 
 // Lets every page heading refresh the latest workspace data without prop-drilling.
 const RefreshContext = createContext(null);
-
-// PostgREST returns at most 1,000 rows per request, so any list longer than that was being cut off
-// silently. This pages through the table in chunks so lists (and totals built from them) stay complete.
-// `id` is added as a tie-breaker so rows never repeat or go missing between pages.
-async function fetchAllRows(makeQuery, pageSize = 1000) {
-  const rows = [];
-  for (let from = 0; ; from += pageSize) {
-    const { data, error } = await makeQuery().order('id', { ascending: true }).range(from, from + pageSize - 1);
-    if (error) return { data: null, error };
-    rows.push(...(data || []));
-    if (!data || data.length < pageSize) break;
-  }
-  return { data: rows, error: null };
-}
-
-// Waits for the user to stop typing before an expensive filter re-runs.
-function useDebouncedValue(value, delay = 250) {
-  const [debounced, setDebounced] = useState(value);
-  useEffect(() => {
-    const timer = window.setTimeout(() => setDebounced(value), delay);
-    return () => window.clearTimeout(timer);
-  }, [value, delay]);
-  return debounced;
-}
-
-// ----- page-by-page loading -----
-const PAGE_SIZE = 25;
-
-// Keeps user-typed text from breaking a PostgREST filter string.
-const sanitizeSearch = value => String(value || '').replace(/[,()*%\\:"']/g, ' ').replace(/\s+/g, ' ').trim();
-
-function Pager({ page, pageSize = PAGE_SIZE, total, onPage, loading = false }) {
-  const pages = Math.max(1, Math.ceil(total / pageSize));
-  const from = total === 0 ? 0 : page * pageSize + 1;
-  const to = Math.min(total, (page + 1) * pageSize);
-  if (total <= pageSize && page === 0) return total > 0 ? <div className="pager"><span className="pager-info">Showing all {total}</span></div> : null;
-  return (
-    <div className="pager" role="navigation" aria-label="Pagination">
-      <span className="pager-info">{total === 0 ? 'No results' : `Showing ${from}–${to} of ${total}`}</span>
-      <div className="pager-buttons">
-        <button type="button" className="secondary-btn" onClick={() => onPage(0)} disabled={loading || page <= 0} aria-label="First page">«</button>
-        <button type="button" className="secondary-btn" onClick={() => onPage(page - 1)} disabled={loading || page <= 0}>Previous</button>
-        <span className="pager-page">Page {page + 1} of {pages}</span>
-        <button type="button" className="secondary-btn" onClick={() => onPage(page + 1)} disabled={loading || page + 1 >= pages}>Next</button>
-        <button type="button" className="secondary-btn" onClick={() => onPage(pages - 1)} disabled={loading || page + 1 >= pages} aria-label="Last page">»</button>
-      </div>
-    </div>
-  );
-}
-
-// Datasets that only some pages need. They are fetched the first time the page (or a feature that
-// uses them) is opened instead of all at login.
-const PAGE_DATA = {
-  Leads: ['leads', 'leadProducts'],
-  Reports: ['leads', 'quotes', 'invoices', 'payments'],
-  Quotes: ['quotes', 'quoteItems'],
-  Invoices: ['invoices', 'payments'],
-  Documents: ['documents'],
-  Email: ['emailLogs', 'emailIntegrations'],
-  'Email Logs': ['emailLogs'],
-  Calendar: ['calendarEvents'],
-  Automation: ['workflows'],
-  Segments: ['segments']
-};
 
 function AuthScreen({ onGoogleSignIn, onEmailSignIn, onEmailSignUp, onPortalSignUp, authMode, setAuthMode, email, setEmail, password, setPassword,
   error,
@@ -838,9 +780,7 @@ function App() {
   const [editDealSaving, setEditDealSaving] = useState(false);
   const [editDealError, setEditDealError] = useState('');
   const [search, setSearch] = useState('');
-  const debouncedSearch = useDebouncedValue(search, 250);
   const [globalSearch, setGlobalSearch] = useState('');
-  const debouncedGlobalSearch = useDebouncedValue(globalSearch, 250);
   const [showCustomerForm, setShowCustomerForm] = useState(false);
   const [newCustomer, setNewCustomer] = useState({ name: '', company: '', email: '', status: 'Active' });
   const [selectedCustomer, setSelectedCustomer] = useState(null);
@@ -859,27 +799,6 @@ function App() {
   const [editActivityError, setEditActivityError] = useState('');
   const [selectedActivity, setSelectedActivity] = useState(null);
   const [tickets, setTickets] = useState([]);
-
-  // Server-side paging for the big lists (PAGE_SIZE rows per page).
-  const [ticketPage, setTicketPage] = useState(0);
-  const [ticketTotal, setTicketTotal] = useState(0);
-  const [ticketCounts, setTicketCounts] = useState({});
-  const [ticketListLoading, setTicketListLoading] = useState(false);
-  const [ticketFilters, setTicketFilters] = useState({ query: '', status: 'All', priority: 'All', queue: 'All tickets' });
-  const debouncedTicketQuery = useDebouncedValue(ticketFilters.query, 300);
-  const [activityTab, setActivityTab] = useState('All');
-  const [activityPage, setActivityPage] = useState(0);
-  const [activityTotal, setActivityTotal] = useState(0);
-  const [activityCounts, setActivityCounts] = useState({});
-  const [activityListLoading, setActivityListLoading] = useState(false);
-  const [customerRows, setCustomerRows] = useState([]);
-  const [customerPageIndex, setCustomerPageIndex] = useState(0);
-  const [customerTotal, setCustomerTotal] = useState(0);
-  const [customerListLoading, setCustomerListLoading] = useState(false);
-  const [dashStats, setDashStats] = useState({ overdue: 0, dueToday: 0, openTickets: 0, totalTickets: 0, upcoming: [] });
-  const [customerRelated, setCustomerRelated] = useState({ activities: [], tickets: [] });
-  const [serverSearch, setServerSearch] = useState({ activities: [], tickets: [] });
-  const [reportData, setReportData] = useState({ activities: [], tickets: [] });
   const [leads, setLeads] = useState([]);
   const [leadProducts, setLeadProducts] = useState([]);
   const [emailLogs, setEmailLogs] = useState([]);
@@ -896,7 +815,6 @@ function App() {
   const [selectedInvoice, setSelectedInvoice] = useState(null);
   const [phase2Error, setPhase2Error] = useState('');
   const [emailIntegrations, setEmailIntegrations] = useState([]);
-  const [composeDraft, setComposeDraft] = useState(null);
   const [emailIntegrationLoading, setEmailIntegrationLoading] = useState(false);
   const [emailIntegrationError, setEmailIntegrationError] = useState('');
   const [showTicketForm, setShowTicketForm] = useState(false);
@@ -919,9 +837,6 @@ function App() {
   const searchInputRef = useRef(null);
   const lastRefreshRef = useRef(Date.now());
   const refreshingRef = useRef(false);
-  const loadedDataRef = useRef(new Set());
-  const pageRef = useRef('Dashboard');
-  const pagingRef = useRef({});
   const [refreshing, setRefreshing] = useState(false);
   const [toast, setToast] = useState('');
 
@@ -956,9 +871,9 @@ function App() {
     })}`;
   };
 
-  const filteredCustomers = useMemo(() => customers.filter(c => (statusFilter === 'All' || (c.status || 'Active') === statusFilter) && `${c.name} ${c.company || ''} ${c.email || ''}`.toLowerCase().includes(debouncedSearch.toLowerCase())), [customers, debouncedSearch, statusFilter]);
+  const filteredCustomers = useMemo(() => customers.filter(c => (statusFilter === 'All' || (c.status || 'Active') === statusFilter) && `${c.name} ${c.company || ''} ${c.email || ''}`.toLowerCase().includes(search.toLowerCase())), [customers, search, statusFilter]);
   const globalSearchResults = useMemo(() => {
-    const query = debouncedGlobalSearch.trim().toLowerCase();
+    const query = globalSearch.trim().toLowerCase();
 
     if (!query) return [];
 
@@ -991,7 +906,7 @@ function App() {
       }
     });
 
-    serverSearch.activities.forEach(activity => {
+    activities.forEach(activity => {
       const text = `${activity.title} ${activity.type || ''} ${activity.notes || ''}`.toLowerCase();
 
       if (text.includes(query)) {
@@ -1005,7 +920,7 @@ function App() {
       }
     });
 
-    serverSearch.tickets.forEach(ticket => {
+    tickets.forEach(ticket => {
       const text = `${ticket.title} ${ticket.description || ''} ${ticket.category || ''}`.toLowerCase();
 
       if (text.includes(query)) {
@@ -1023,7 +938,7 @@ function App() {
     quotes.forEach(q => { const text = `${q.quote_number || ''} ${q.title || ''} ${q.customer_name || ''} ${q.company || ''} ${q.email || ''}`.toLowerCase(); if (text.includes(query)) results.push({ type: 'Quote', title: q.quote_number || q.title, subtitle: q.customer_name || q.company || 'Quote', page: 'Quotes', quote: q }); });
     invoices.forEach(i => { const text = `${i.invoice_number || ''} ${i.title || ''} ${i.customers?.name || ''}`.toLowerCase(); if (text.includes(query)) results.push({ type: 'Invoice', title: i.invoice_number || i.title, subtitle: i.customers?.name || 'Invoice', page: 'Invoices', invoice: i }); });
     return results.slice(0, 12);
-  }, [debouncedGlobalSearch, customers, deals, serverSearch, leads, quotes, invoices]);
+  }, [globalSearch, customers, deals, activities, tickets, leads, quotes, invoices]);
   const revenue = deals
     .filter(d => d.stage === 'Won')
     .reduce((sum, d) => sum + (Number(d.amount) || 0), 0);
@@ -1048,106 +963,106 @@ function App() {
     }
   }
   async function signInWithEmail(event) {
-    event.preventDefault();
-    justSignedUp.current = false;
-    setAuthError('');
-    setAuthNotice('');
+  event.preventDefault();
+  justSignedUp.current = false;
+  setAuthError('');
+  setAuthNotice('');
 
-    const trimmedEmail = email.trim();
-    if (!trimmedEmail || !password) {
-      setAuthError('Please enter both your email address and password.');
-      return;
-    }
-
-    setEmailLoading(true);
-
-    try {
-      const { data, error } = await supabase.auth.signInWithPassword({
-        email: trimmedEmail,
-        password
-      });
-
-      if (error) {
-        console.error('Email sign-in error:', error);
-        setAuthError(error.message);
-      } else if (data?.user) {
-        // Re-verify workspace authorization status
-        await checkAuthorization(data.session);
-      }
-    } catch (err) {
-      console.error('Unexpected sign-in error:', err);
-      setAuthError('An unexpected error occurred during sign in.');
-    } finally {
-      setEmailLoading(false);
-    }
+  const trimmedEmail = email.trim();
+  if (!trimmedEmail || !password) {
+    setAuthError('Please enter both your email address and password.');
+    return;
   }
 
-  async function signUpWithEmail(event) {
-    event.preventDefault();
-    setAuthError('');
-    setAuthNotice('');
+  setEmailLoading(true);
 
-    const trimmedEmail = email.trim();
-    if (!trimmedEmail || !password) {
-      setAuthError('Please enter both an email address and a password.');
-      return;
+  try {
+    const { data, error } = await supabase.auth.signInWithPassword({
+      email: trimmedEmail,
+      password
+    });
+
+    if (error) {
+      console.error('Email sign-in error:', error);
+      setAuthError(error.message);
+    } else if (data?.user) {
+      // Re-verify workspace authorization status
+      await checkAuthorization(data.session);
     }
-
-    if (password.length < 6) {
-      setAuthError('Password must be at least 6 characters long.');
-      return;
-    }
-
-    setEmailLoading(true);
-
-    try {
-      // 1. Create Supabase Auth user
-      const { data: authData, error: signUpError } = await supabase.auth.signUp({
-        email: trimmedEmail,
-        password
-      });
-
-      if (signUpError) {
-        console.error('Email signup error:', signUpError);
-        setAuthError(signUpError.message);
-        return;
-      }
-
-      const newUser = authData?.user;
-
-      if (newUser) {
-        // 2. Insert user into authorized_users as 'pending' for admin approval
-        const { error: insertError } = await supabase
-          .from('authorized_users')
-          .insert([
-            {
-              user_id: newUser.id,
-              email: trimmedEmail,
-              role: 'member',
-              status: 'pending'
-            }
-          ]);
-
-        if (insertError) {
-          console.warn('Could not provision authorized_users entry:', insertError.message);
-        }
-      }
-
-      justSignedUp.current = true;
-      setAuthNotice(
-        'Account created successfully! Check your inbox if email confirmation is required. An administrator must approve your account access before you can log in.'
-      );
-
-      // Sign out until approval is granted
-      await supabase.auth.signOut();
-      setPassword('');
-    } catch (err) {
-      console.error('Unexpected signup error:', err);
-      setAuthError('An unexpected error occurred while creating your account.');
-    } finally {
-      setEmailLoading(false);
-    }
+  } catch (err) {
+    console.error('Unexpected sign-in error:', err);
+    setAuthError('An unexpected error occurred during sign in.');
+  } finally {
+    setEmailLoading(false);
   }
+}
+
+async function signUpWithEmail(event) {
+  event.preventDefault();
+  setAuthError('');
+  setAuthNotice('');
+
+  const trimmedEmail = email.trim();
+  if (!trimmedEmail || !password) {
+    setAuthError('Please enter both an email address and a password.');
+    return;
+  }
+
+  if (password.length < 6) {
+    setAuthError('Password must be at least 6 characters long.');
+    return;
+  }
+
+  setEmailLoading(true);
+
+  try {
+    // 1. Create Supabase Auth user
+    const { data: authData, error: signUpError } = await supabase.auth.signUp({
+      email: trimmedEmail,
+      password
+    });
+
+    if (signUpError) {
+      console.error('Email signup error:', signUpError);
+      setAuthError(signUpError.message);
+      return;
+    }
+
+    const newUser = authData?.user;
+
+    if (newUser) {
+      // 2. Insert user into authorized_users as 'pending' for admin approval
+      const { error: insertError } = await supabase
+        .from('authorized_users')
+        .insert([
+          {
+            user_id: newUser.id,
+            email: trimmedEmail,
+            role: 'member',
+            status: 'pending'
+          }
+        ]);
+
+      if (insertError) {
+        console.warn('Could not provision authorized_users entry:', insertError.message);
+      }
+    }
+
+    justSignedUp.current = true;
+    setAuthNotice(
+      'Account created successfully! Check your inbox if email confirmation is required. An administrator must approve your account access before you can log in.'
+    );
+
+    // Sign out until approval is granted
+    await supabase.auth.signOut();
+    setPassword('');
+  } catch (err) {
+    console.error('Unexpected signup error:', err);
+    setAuthError('An unexpected error occurred while creating your account.');
+  } finally {
+    setEmailLoading(false);
+  }
+}
   async function signUpCustomerPortal(event, fullName) {
     setAuthError('');
     setAuthNotice('');
@@ -1195,7 +1110,7 @@ function App() {
     setActivities([]);
     setTickets([]); setLeads([]); setLeadProducts([]); setEmailLogs([]); setCalendarEvents([]); setQuotes([]); setInvoices([]); setPayments([]); setDocuments([]); setWorkflows([]); setSegments([]);
     setNotifications([]);
-    setQuoteItems([]);
+     setQuoteItems([]);
     setUnreadNotificationCount(0);
     setAuthorizedUsers([]);
     setPortalAccount(null);
@@ -1314,12 +1229,12 @@ function App() {
   const fetchCustomers = async () => {
     setLoading(true);
 
-    const { data, error } = await fetchAllRows(() => supabase
+    const { data, error } = await supabase
       .from("customers")
       .select("*")
       .order("created_at", {
         ascending: false,
-      }));
+      });
 
     if (error) {
       console.error("Error fetching customers:", error);
@@ -1330,10 +1245,10 @@ function App() {
     setLoading(false);
   };
   const fetchDeals = async () => {
-    const { data, error } = await fetchAllRows(() => supabase
+    const { data, error } = await supabase
       .from('deals')
       .select('*')
-      .order('created_at', { ascending: false }));
+      .order('created_at', { ascending: false });
 
     if (error) {
       console.error('Error fetching deals:', error);
@@ -1341,142 +1256,36 @@ function App() {
       setDeals(data || []);
     }
   };
-  // ---------- page-by-page loading ----------
-  async function fetchCustomerPage() {
-    const { page: pageIndex, search: term, status } = pagingRef.current.customers;
-    setCustomerListLoading(true);
-    let query = supabase.from('customers').select('*', { count: 'exact' });
-    if (status === 'Active') query = query.or('status.eq.Active,status.is.null');
-    else if (status !== 'All') query = query.eq('status', status);
-    const text = sanitizeSearch(term);
-    if (text) query = query.or(`name.ilike.%${text}%,company.ilike.%${text}%,email.ilike.%${text}%`);
-    const { data, count, error } = await query
-      .order('created_at', { ascending: false }).order('id', { ascending: true })
-      .range(pageIndex * PAGE_SIZE, pageIndex * PAGE_SIZE + PAGE_SIZE - 1);
-    setCustomerListLoading(false);
-    if (error) { console.error('Error fetching customers page:', error); return; }
-    if ((data || []).length === 0 && (count || 0) > 0 && pageIndex > 0) { setCustomerPageIndex(Math.ceil(count / PAGE_SIZE) - 1); return; }
-    setCustomerRows(data || []);
-    setCustomerTotal(count || 0);
-  }
-
-  async function matchingCustomerIds(text) {
-    const { data } = await supabase.from('customers').select('id').or(`name.ilike.%${text}%,company.ilike.%${text}%`).limit(50);
-    return (data || []).map(row => row.id);
-  }
-
-  function changeTicketFilters(patch) {
-    setTicketFilters(current => ({ ...current, ...patch }));
-    setTicketPage(0);
-  }
-
-  async function fetchTicketCounts() {
-    const head = () => supabase.from('tickets').select('id', { count: 'exact', head: true });
-    const [open, progress, done, portalOpen] = await Promise.all([
-      head().eq('status', 'Open'),
-      head().eq('status', 'In Progress'),
-      head().in('status', ['Resolved', 'Closed']),
-      head().eq('source', 'portal').in('status', ['Open', 'In Progress'])
-    ]);
-    setTicketCounts({ Open: open.count || 0, 'In Progress': progress.count || 0, done: done.count || 0, portalOpen: portalOpen.count || 0 });
-  }
-
-  async function fetchTickets() {
-    const { page: pageIndex, filters } = pagingRef.current.tickets;
-    setTicketListLoading(true);
-    let query = supabase.from('tickets').select('*, customers (name, company)', { count: 'exact' });
-    if (filters.status !== 'All') query = query.eq('status', filters.status);
-    if (filters.priority !== 'All') query = query.eq('priority', filters.priority);
-    if (filters.queue === 'Assigned to me') query = query.eq('assigned_to', session?.user?.id);
-    else if (filters.queue === 'Unassigned') query = query.is('assigned_to', null);
-    else if (filters.queue === 'Customer portal') query = query.eq('source', 'portal');
-    const text = sanitizeSearch(filters.query);
-    if (text) {
-      const ids = await matchingCustomerIds(text);
-      const number = Number(text.replace(/^#/, ''));
-      const parts = [`title.ilike.%${text}%`, `description.ilike.%${text}%`, `category.ilike.%${text}%`];
-      if (Number.isInteger(number) && number > 0) parts.push(`ticket_number.eq.${number}`);
-      if (ids.length) parts.push(`customer_id.in.(${ids.join(',')})`);
-      query = query.or(parts.join(','));
-    }
-    const { data, count, error } = await query
-      .order('created_at', { ascending: false }).order('id', { ascending: true })
-      .range(pageIndex * PAGE_SIZE, pageIndex * PAGE_SIZE + PAGE_SIZE - 1);
-    setTicketListLoading(false);
-    if (error) { console.error('Error fetching tickets:', error); return; }
-    if ((data || []).length === 0 && (count || 0) > 0 && pageIndex > 0) { setTicketPage(Math.ceil(count / PAGE_SIZE) - 1); return; }
-    setTickets(data || []);
-    setTicketTotal(count || 0);
-    fetchTicketCounts();
-  }
-
-  const ACTIVITY_OPEN = 'status.is.null,status.not.in.(Completed,Cancelled)';
-  function activityFilterQuery(query, tab) {
-    const nowIso = new Date().toISOString();
-    if (tab === 'Completed') return query.eq('status', 'Completed');
-    if (tab === 'Upcoming') return query.or(ACTIVITY_OPEN).or(`activity_date.is.null,activity_date.gte.${nowIso}`);
-    if (tab === 'Overdue') return query.or(ACTIVITY_OPEN).lt('activity_date', nowIso);
-    return query;
-  }
-
   async function fetchActivities() {
-    const { tab, page: pageIndex } = pagingRef.current.activities;
-    setActivityListLoading(true);
-    const { data, count, error } = await activityFilterQuery(supabase.from('activities').select('*', { count: 'exact' }), tab)
-      .order('activity_date', { ascending: tab !== 'Completed', nullsFirst: false })
-      .order('id', { ascending: true })
-      .range(pageIndex * PAGE_SIZE, pageIndex * PAGE_SIZE + PAGE_SIZE - 1);
-    setActivityListLoading(false);
-    if (error) { console.error('Error fetching activities:', error); return; }
-    if ((data || []).length === 0 && (count || 0) > 0 && pageIndex > 0) { setActivityPage(Math.ceil(count / PAGE_SIZE) - 1); return; }
+    const { data, error } = await supabase
+      .from('activities')
+      .select('*')
+      .order('activity_date', { ascending: true });
+    if (error) {
+      console.error('Error fetching activities:', error);
+      return;
+    }
     setActivities(data || []);
-    setActivityTotal(count || 0);
-    const counts = {};
-    await Promise.all(['All', 'Upcoming', 'Overdue', 'Completed'].map(async name => {
-      const result = await activityFilterQuery(supabase.from('activities').select('id', { count: 'exact', head: true }), name);
-      counts[name] = result.count || 0;
-    }));
-    setActivityCounts(counts);
   }
+  async function fetchTickets() {
+    const { data, error } = await supabase
+      .from('tickets')
+      .select(`
+      *,
+      customers (
+        name,
+        company
+      )
+    `)
+      .order('created_at', { ascending: false });
 
-  // Small, fixed-size queries for the dashboard cards.
-  async function fetchDashboardStats() {
-    const start = new Date(); start.setHours(0, 0, 0, 0);
-    const end = new Date(start); end.setDate(end.getDate() + 1);
-    const nowIso = new Date().toISOString();
-    const head = table => supabase.from(table).select('id', { count: 'exact', head: true });
-    const [overdue, dueToday, openTickets, totalTickets, upcoming] = await Promise.all([
-      head('activities').or(ACTIVITY_OPEN).lt('activity_date', nowIso),
-      head('activities').or(ACTIVITY_OPEN).gte('activity_date', start.toISOString()).lt('activity_date', end.toISOString()),
-      head('tickets').in('status', ['Open', 'In Progress']),
-      head('tickets'),
-      supabase.from('activities').select('*').or(ACTIVITY_OPEN).order('activity_date', { ascending: true, nullsFirst: false }).limit(4)
-    ]);
-    setDashStats({
-      overdue: overdue.count || 0, dueToday: dueToday.count || 0,
-      openTickets: openTickets.count || 0, totalTickets: totalTickets.count || 0,
-      upcoming: upcoming.data || []
-    });
+    if (error) {
+      console.error('Error fetching tickets:', error);
+      return;
+    }
+
+    setTickets(data || []);
   }
-
-  // The customer pop-up shows that customer's own tickets and activities.
-  async function fetchCustomerRelated(customerId) {
-    const [activityResult, ticketResult] = await Promise.all([
-      supabase.from('activities').select('*').eq('customer_id', customerId).order('activity_date', { ascending: false, nullsFirst: false }).limit(100),
-      supabase.from('tickets').select('*, customers (name, company)').eq('customer_id', customerId).order('created_at', { ascending: false }).limit(100)
-    ]);
-    setCustomerRelated({ activities: activityResult.data || [], tickets: ticketResult.data || [] });
-  }
-
-  // Reports are the one place that needs every row, so they load the full lists only while open.
-  async function fetchReportData() {
-    const [activityResult, ticketResult] = await Promise.all([
-      fetchAllRows(() => supabase.from('activities').select('*').order('activity_date', { ascending: true })),
-      fetchAllRows(() => supabase.from('tickets').select('*, customers (name, company)').order('created_at', { ascending: false }))
-    ]);
-    setReportData({ activities: activityResult.data || [], tickets: ticketResult.data || [] });
-  }
-
   async function fetchEmailIntegrations() {
     if (!session?.user?.id) return;
     setEmailIntegrationLoading(true); setEmailIntegrationError('');
@@ -1503,9 +1312,9 @@ function App() {
   }
 
   async function fetchLeads() {
-    const { data, error } = await fetchAllRows(() => supabase.from('leads')
+    const { data, error } = await supabase.from('leads')
       .select('*, customers(name,company)')
-      .order('created_at', { ascending: false }));
+      .order('created_at', { ascending: false });
     if (error) {
       console.error('Error fetching leads:', error);
       return;
@@ -1531,22 +1340,110 @@ function App() {
     }
     setDealProducts(data || []);
   }
-  async function fetchEmailLogs() { const { data, error } = await fetchAllRows(() => supabase.from('email_logs').select('*, customers(name,company)').order('sent_at', { ascending: false })); if (error) { console.error('Error fetching email logs:', error); return; } setEmailLogs(data || []); }
-  async function fetchCalendarEvents() { const { data, error } = await fetchAllRows(() => supabase.from('calendar_events').select('*, customers(name,company)').order('start_at', { ascending: true })); if (error) { console.error('Error fetching calendar events:', error); return; } setCalendarEvents(data || []); }
+  async function fetchEmailLogs() { const { data, error } = await supabase.from('email_logs').select('*, customers(name,company)').order('sent_at', { ascending: false }); if (error) { console.error('Error fetching email logs:', error); return; } setEmailLogs(data || []); }
+  async function createDueCalendarNotifications(calendarRows = []) {
+    if (!session?.user?.id || !calendarRows.length) return;
+
+    const now = Date.now();
+    const EVENT_TIME_GRACE_MS = 2 * 60 * 1000;
+
+    const upcoming = calendarRows.filter(event => {
+      if (!event?.id || !event?.start_at || event.status === 'Cancelled' || event.reminder_minutes == null) return false;
+
+      const start = new Date(event.start_at).getTime();
+      const reminderMinutes = Number(event.reminder_minutes);
+      if (!Number.isFinite(start) || !Number.isFinite(reminderMinutes) || reminderMinutes < 0) return false;
+
+      const reminderAt = start - (reminderMinutes * 60 * 1000);
+
+      // Normal reminders fire once their reminder time has been reached,
+      // as long as the event itself has not already passed.
+      if (reminderMinutes > 0) {
+        return reminderAt <= now && start > now;
+      }
+
+      // "At event time" needs a small grace period because the browser's
+      // polling/check will almost never happen at the exact millisecond of
+      // the event start. This prevents the old `start > now` check from
+      // silently skipping the reminder.
+      return start <= now && start >= (now - EVENT_TIME_GRACE_MS);
+    });
+
+    if (!upcoming.length) return;
+
+    const { data: existing, error: existingError } = await supabase
+      .from('notifications')
+      .select('message')
+      .eq('user_id', session.user.id)
+      .eq('type', 'calendar_reminder')
+      .limit(500);
+
+    if (existingError) {
+      console.error('Failed to check calendar reminders:', existingError);
+      return;
+    }
+
+    const existingMessages = new Set((existing || []).map(item => item.message || ''));
+    const inserts = [];
+
+    upcoming.forEach(event => {
+      const key = `calendar-reminder:${event.id}:${event.reminder_minutes}`;
+      if ([...existingMessages].some(message => message.includes(`[${key}]`))) return;
+
+      const start = new Date(event.start_at);
+      const diffMs = start.getTime() - now;
+      const diffMinutes = Math.max(0, Math.ceil(diffMs / 60000));
+      let whenText = 'starting now';
+
+      if (diffMinutes >= 1440) {
+        const days = Math.ceil(diffMinutes / 1440);
+        whenText = `${days} day${days === 1 ? '' : 's'} to go`;
+      } else if (diffMinutes >= 60) {
+        const hours = Math.ceil(diffMinutes / 60);
+        whenText = `${hours} hour${hours === 1 ? '' : 's'} to go`;
+      } else if (diffMinutes > 0) {
+        whenText = `${diffMinutes} minute${diffMinutes === 1 ? '' : 's'} to go`;
+      }
+
+      inserts.push({
+        user_id: session.user.id,
+        type: 'calendar_reminder',
+        title: `Upcoming: ${event.title || 'Calendar event'}`,
+        message: `${event.title || 'Calendar event'} — ${whenText} [${key}]`,
+        link: 'Calendar'
+      });
+    });
+
+    if (inserts.length) {
+      const { error } = await supabase.from('notifications').insert(inserts);
+      if (error) {
+        console.error('Failed to create calendar reminders:', error);
+      } else {
+        await fetchNotifications();
+      }
+    }
+  }
+
+  async function fetchCalendarEvents() {
+    const { data, error } = await supabase.from('calendar_events').select('*, customers(name,company)').order('start_at', { ascending: true });
+    if (error) { console.error('Error fetching calendar events:', error); return; }
+    setCalendarEvents(data || []);
+    createDueCalendarNotifications(data || []);
+  }
   async function fetchQuotes() {
-    const { data, error } = await fetchAllRows(() => supabase
+    const { data, error } = await supabase
       .from('quotes')
       .select('*')
-      .order('created_at', { ascending: false }));
+      .order('created_at', { ascending: false });
     if (error) { console.error('Error fetching quotes:', error); return; }
     setQuotes(data || []);
   }
 
   async function fetchQuoteItems() {
-    const { data, error } = await fetchAllRows(() => supabase
+    const { data, error } = await supabase
       .from('quote_items')
       .select('*')
-      .order('created_at', { ascending: true }));
+      .order('created_at', { ascending: true });
     if (error) { console.error('Error fetching quote items:', error); return; }
     setQuoteItems(data || []);
   }
@@ -1600,9 +1497,9 @@ function App() {
 
     return data || [];
   }
-  async function fetchInvoices() { const { data, error } = await fetchAllRows(() => supabase.from('invoices').select('*, customers(name,company)').order('created_at', { ascending: false })); if (error) { console.error('Error fetching invoices:', error); return; } setInvoices(data || []); }
-  async function fetchPayments() { const { data, error } = await fetchAllRows(() => supabase.from('payments').select('*').order('paid_at', { ascending: false })); if (error) { console.error('Error fetching payments:', error); return; } setPayments(data || []); }
-  async function fetchDocuments() { const { data, error } = await fetchAllRows(() => supabase.from('documents').select('*, customers(name,company)').order('created_at', { ascending: false })); if (error) { console.error('Error fetching documents:', error); return; } setDocuments(data || []); }
+  async function fetchInvoices() { const { data, error } = await supabase.from('invoices').select('*, customers(name,company)').order('created_at', { ascending: false }); if (error) { console.error('Error fetching invoices:', error); return; } setInvoices(data || []); }
+  async function fetchPayments() { const { data, error } = await supabase.from('payments').select('*').order('paid_at', { ascending: false }); if (error) { console.error('Error fetching payments:', error); return; } setPayments(data || []); }
+  async function fetchDocuments() { const { data, error } = await supabase.from('documents').select('*, customers(name,company)').order('created_at', { ascending: false }); if (error) { console.error('Error fetching documents:', error); return; } setDocuments(data || []); }
   async function fetchWorkflows() { const { data, error } = await supabase.from('workflows').select('*').order('created_at', { ascending: false }); if (error) { console.error('Error fetching workflows:', error); return; } setWorkflows(data || []); }
   async function fetchSegments() { const { data, error } = await supabase.from('customer_segments').select('*').order('created_at', { ascending: false }); if (error) { console.error('Error fetching segments:', error); return; } setSegments(data || []); }
   async function fetchProducts() { const { data, error } = await supabase.from('products').select('*').order('created_at', { ascending: false }); if (error) { console.error('Error fetching products:', error); return; } setProducts(data || []); }
@@ -1713,26 +1610,6 @@ function App() {
     ]);
   }
   async function deleteLead(id) { if (!window.confirm('Delete this lead?')) return; const { error } = await supabase.from('leads').delete().eq('id', id); if (error) { alert(error.message); return; } setLeads(prev => prev.filter(x => x.id !== id)); }
-  // Opens the Compose window from anywhere (Email page, customer pop-up).
-  function openCompose(defaults = {}) {
-    ensureData(['emailIntegrations']);
-    setComposeDraft(defaults);
-  }
-
-  // Sends through the send-email Edge Function, which also records the email in the log.
-  async function sendEmail(payload) {
-    const { data, error } = await supabase.functions.invoke('send-email', { body: payload });
-    if (error) {
-      let message = error.message;
-      try { const details = await error.context?.json(); if (details?.error) message = details.error; } catch { /* keep the default message */ }
-      fetchEmailLogs();
-      throw new Error(message);
-    }
-    if (data?.error) { fetchEmailLogs(); throw new Error(data.error); }
-    fetchEmailLogs();
-    showToast(data?.logged === false ? 'Email sent, but it could not be saved to the log.' : 'Email sent.');
-  }
-
   async function addEmailLog(payload) { const { data, error } = await supabase.from('email_logs').insert([{ ...payload, created_by: session.user.id }]).select('*, customers(name,company)').single(); if (error) throw error; setEmailLogs(prev => [data, ...prev]); return data; }
   async function addCalendarEvent(payload) { const { data, error } = await supabase.from('calendar_events').insert([{ ...payload, created_by: session.user.id }]).select('*, customers(name,company)').single(); if (error) throw error; setCalendarEvents(prev => [...prev, data].sort((a, b) => new Date(a.start_at) - new Date(b.start_at))); return data; }
   async function updateCalendarEvent(id, payload) { const { data, error } = await supabase.from('calendar_events').update(payload).eq('id', id).select('*, customers(name,company)').single(); if (error) throw error; setCalendarEvents(prev => prev.map(x => x.id === id ? data : x)); return data; }
@@ -2120,18 +1997,13 @@ function App() {
     setRefreshing(true);
 
     try {
-      // Core lists, plus any on-demand lists the user has already opened.
-      const loaders = getDataLoaders();
       const jobs = [
-        fetchCustomers(), fetchDeals(), fetchStaffUsers(),
-        ...(pageRef.current === 'Tickets' ? [fetchTickets()] : []),
-        ...(pageRef.current === 'Activities' ? [fetchActivities()] : []),
-        ...(pageRef.current === 'Customers' ? [fetchCustomerPage()] : []),
-        ...(pageRef.current === 'Dashboard' ? [fetchDashboardStats()] : []),
-        ...(pageRef.current === 'Reports' ? [fetchReportData()] : []),
-        fetchDealProducts(), fetchProducts(), fetchSupportEngineers(),
+        fetchCustomers(), fetchDeals(), fetchActivities(), fetchTickets(), fetchStaffUsers(),
+        fetchLeads(), fetchLeadProducts(), fetchDealProducts(), fetchEmailLogs(), fetchCalendarEvents(),
+        fetchQuotes(), fetchQuoteItems(), fetchInvoices(), fetchPayments(), fetchDocuments(),
+        fetchWorkflows(), fetchSegments(), fetchProducts(), fetchSupportEngineers(),
         fetchSolutionSupport(), fetchDealSupport(), fetchNotifications(), fetchOwnerProfiles(),
-        ...Array.from(loadedDataRef.current).map(key => loaders[key]?.())
+        fetchEmailIntegrations()
       ];
 
       if (authorizationProfile?.role === 'admin') {
@@ -2296,96 +2168,40 @@ function App() {
 
     fetchCustomers();
     fetchDeals();
+    fetchActivities();
+    fetchTickets();
     fetchStaffUsers();
-    // Core data every screen and pop-up form needs. Everything else loads when first used (see ensureData).
-    loadedDataRef.current = new Set();
-    fetchDealProducts(); fetchDealSupport(); fetchSolutionSupport(); fetchSupportEngineers(); fetchProducts();
+    fetchEmailIntegrations(); fetchLeads(); fetchLeadProducts(); fetchDealProducts(); fetchDealSupport(); fetchSolutionSupport(); fetchSupportEngineers(); fetchEmailLogs(); fetchCalendarEvents(); fetchQuotes(); fetchQuoteItems(); fetchInvoices(); fetchPayments(); fetchDocuments(); fetchWorkflows(); fetchSegments(); fetchProducts();
   }, [session, authorized]);
 
-  function getDataLoaders() {
-    return {
-      leads: fetchLeads, leadProducts: fetchLeadProducts, quotes: fetchQuotes, quoteItems: fetchQuoteItems,
-      invoices: fetchInvoices, payments: fetchPayments, documents: fetchDocuments, emailLogs: fetchEmailLogs,
-      emailIntegrations: fetchEmailIntegrations, calendarEvents: fetchCalendarEvents,
-      workflows: fetchWorkflows, segments: fetchSegments
+  // Calendar reminders need an active checker. Previously they were only
+  // evaluated when the calendar was fetched/refreshed, which meant a reminder
+  // could be missed completely if no refresh happened at the right time.
+  // Check frequently while Orbit is open so reminders appear in the bell
+  // without requiring a manual refresh.
+  useEffect(() => {
+    if (!session?.user?.id || !authorized) return;
+
+    let running = false;
+
+    const checkCalendarReminders = async () => {
+      if (running || document.visibilityState !== 'visible') return;
+      running = true;
+      try {
+        await fetchCalendarEvents();
+      } finally {
+        running = false;
+      }
     };
-  }
 
-  function ensureData(keys) {
-    const loaders = getDataLoaders();
-    keys.forEach(key => {
-      if (loadedDataRef.current.has(key) || !loaders[key]) return;
-      loadedDataRef.current.add(key);
-      loaders[key]();
-    });
-  }
+    const intervalId = window.setInterval(checkCalendarReminders, 15000);
 
-  // Load what the open page needs.
-  useEffect(() => {
-    if (!session || !authorized) return;
-    ensureData(PAGE_DATA[page] || []);
-  }, [session, authorized, page]);
+    // Check immediately as well, so a reminder is picked up quickly after
+    // opening Orbit or returning to the tab.
+    checkCalendarReminders();
 
-  // Keep the paging inputs where long-lived callbacks (realtime, refresh) can always read the latest values.
-  pageRef.current = page;
-  pagingRef.current = {
-    customers: { page: customerPageIndex, search: debouncedSearch, status: statusFilter },
-    tickets: { page: ticketPage, filters: { ...ticketFilters, query: debouncedTicketQuery } },
-    activities: { tab: activityTab, page: activityPage }
-  };
-
-  useEffect(() => {
-    if (session && authorized && page === 'Customers') fetchCustomerPage();
-  }, [session, authorized, page, customerPageIndex, debouncedSearch, statusFilter, customers]);
-
-  useEffect(() => {
-    if (session && authorized && page === 'Tickets') fetchTickets();
-  }, [session, authorized, page, ticketPage, ticketFilters.status, ticketFilters.priority, ticketFilters.queue, debouncedTicketQuery]);
-
-  useEffect(() => {
-    if (session && authorized && page === 'Activities') fetchActivities();
-  }, [session, authorized, page, activityPage, activityTab]);
-
-  useEffect(() => {
-    if (session && authorized && page === 'Dashboard') fetchDashboardStats();
-  }, [session, authorized, page]);
-
-  useEffect(() => {
-    if (session && authorized && page === 'Reports') fetchReportData();
-  }, [session, authorized, page]);
-
-  useEffect(() => {
-    if (!session || !authorized) return;
-    if (!selectedCustomer?.id) { setCustomerRelated({ activities: [], tickets: [] }); return; }
-    fetchCustomerRelated(selectedCustomer.id);
-  }, [session, authorized, selectedCustomer?.id]);
-
-  // Global search: tickets and activities are searched on the server instead of from a full list.
-  useEffect(() => {
-    const text = sanitizeSearch(debouncedGlobalSearch);
-    if (!session || !authorized || !text) { setServerSearch({ activities: [], tickets: [] }); return; }
-    let cancelled = false;
-    (async () => {
-      const [activityResult, ticketResult] = await Promise.all([
-        supabase.from('activities').select('*').or(`title.ilike.%${text}%,type.ilike.%${text}%,notes.ilike.%${text}%`).limit(8),
-        supabase.from('tickets').select('*, customers (name, company)').or(`title.ilike.%${text}%,description.ilike.%${text}%,category.ilike.%${text}%`).limit(8)
-      ]);
-      if (!cancelled) setServerSearch({ activities: activityResult.data || [], tickets: ticketResult.data || [] });
-    })();
-    return () => { cancelled = true; };
-  }, [session, authorized, debouncedGlobalSearch]);
-
-  // The customer pop-up shows quotes, invoices, payments, emails and documents.
-  useEffect(() => {
-    if (!session || !authorized || !selectedCustomer) return;
-    ensureData(['quotes', 'invoices', 'payments', 'emailLogs', 'documents']);
-  }, [session, authorized, selectedCustomer?.id]);
-
-  // Global search also looks through leads, quotes and invoices, so load them the first time someone searches.
-  useEffect(() => {
-    if (!session || !authorized || !debouncedGlobalSearch.trim()) return;
-    ensureData(['leads', 'quotes', 'invoices']);
-  }, [session, authorized, debouncedGlobalSearch]);
+    return () => window.clearInterval(intervalId);
+  }, [session?.user?.id, authorized]);
 
   // Quietly refresh when the user returns to the CRM tab after it has been idle.
   useEffect(() => {
@@ -3071,7 +2887,6 @@ function App() {
       }).eq('id', editingActivity.id).select('*').single();
       if (error) { console.error('Error updating activity:', error); setEditActivityError(error.message); return; }
       setActivities(prev => prev.map(activity => activity.id === data.id ? data : activity));
-      fetchActivities();
       setEditingActivity(null);
       if (selectedActivity?.id === data.id) setSelectedActivity(data);
     } finally { setEditActivitySaving(false); }
@@ -3081,7 +2896,6 @@ function App() {
     const { data, error } = await supabase.from('activities').update({ status }).eq('id', id).select('*').single();
     if (error) { console.error('Error updating activity:', error); alert(error.message); return; }
     setActivities(prev => prev.map(activity => activity.id === data.id ? data : activity));
-    fetchActivities();
     if (selectedActivity?.id === data.id) setSelectedActivity(data);
   }
   async function deleteActivity(id) {
@@ -3105,7 +2919,6 @@ function App() {
     setActivities((prev) =>
       prev.filter((activity) => activity.id !== id)
     );
-    fetchActivities();
   }
   async function addTicket(e) {
     e.preventDefault();
@@ -3119,7 +2932,7 @@ function App() {
         priority: newTicket.priority, category: newTicket.category, assigned_to: newTicket.assigned_to || session.user.id, portal_visible: newTicket.portal_visible !== false, created_by: session.user.id
       }]).select(`*, customers (name, company)`).single();
       if (error) { console.error('Error adding ticket:', error); setTicketError(error.message); return; }
-      fetchTickets();
+      setTickets(prev => [data, ...prev]);
       setNewTicket({ title: '', description: '', customer_id: '', status: 'Open', priority: 'Medium', category: 'General', assigned_to: '', portal_visible: true });
       setShowTicketForm(false);
     } catch (error) { console.error('Unexpected error:', error); setTicketError('Something went wrong. Please try again.'); }
@@ -3139,7 +2952,6 @@ function App() {
       }).eq('id', editingTicket.id).select(`*, customers (name, company)`).single();
       if (error) { console.error('Error updating ticket:', error); setEditTicketError(error.message); return; }
       setTickets(prev => prev.map(ticket => ticket.id === data.id ? data : ticket));
-      fetchTickets();
       setEditingTicket(null);
       if (selectedTicket?.id === data.id) setSelectedTicket(data);
     } finally { setEditTicketSaving(false); }
@@ -3150,7 +2962,6 @@ function App() {
     const { data, error } = await supabase.from('tickets').update({ status, updated_at: new Date().toISOString() }).eq('id', id).select(`*, customers (name, company)`).single();
     if (error) { console.error('Error updating ticket status:', error); setTicketError(error.message); return; }
     setTickets(prev => prev.map(ticket => ticket.id === id ? data : ticket));
-    fetchTickets();
     if (selectedTicket?.id === id) setSelectedTicket(data);
   }
 
@@ -3166,7 +2977,6 @@ function App() {
       return;
     }
     setTickets(prev => prev.map(ticket => ticket.id === id ? data : ticket));
-    fetchTickets();
     if (selectedTicket?.id === id) setSelectedTicket(data);
     if (userId && userId !== session.user.id) {
       const { error: notifyError } = await supabase.from('notifications').insert({
@@ -3187,7 +2997,6 @@ function App() {
     const { error } = await supabase.from('tickets').delete().eq('id', id);
     if (error) { console.error('Error deleting ticket:', error); setTicketError(error.message); return; }
     setTickets(prev => prev.filter(ticket => ticket.id !== id));
-    fetchTickets();
     if (selectedTicket?.id === id) setSelectedTicket(null);
   }
 
@@ -3398,101 +3207,93 @@ function App() {
         </div>
       </header>
       <RefreshContext.Provider value={{ refreshAll, refreshing }}>
-        <section className="page-content">
-          {page === 'Dashboard' && (
-            <Dashboard revenue={revenue} customers={customers} deals={deals} stats={dashStats} setPage={setPage} formatAmount={formatAmount} onSelectCustomer={setSelectedCustomer} onEditCustomer={setEditingCustomer} onDeleteCustomer={deleteCustomer} />
-          )}
-          {page === 'Customers' && (
-            <Customers customers={customerRows} total={customerTotal} pageIndex={customerPageIndex} loading={customerListLoading} onPage={setCustomerPageIndex}
-              allCustomers={customers}
-              search={search}
-              setSearch={value => { setSearch(value); setCustomerPageIndex(0); }}
-              statusFilter={statusFilter}
-              setStatusFilter={value => { setStatusFilter(value); setCustomerPageIndex(0); }}
-              deals={deals}
-              onImport={importCustomers}
-              onAdd={() => { setCustomerError(''); setShowCustomerForm(true); }}
-              formatAmount={formatAmount}
-              onSelectCustomer={setSelectedCustomer}
-              onDeleteCustomer={deleteCustomer}
-              onEditCustomer={setEditingCustomer}
-            />
-          )}
-          {page === 'Products' && <Products products={products} supportEngineers={supportEngineers} solutionSupport={solutionSupport} onAdd={addProduct} onUpdate={updateProduct} onDelete={deleteProduct} onUpdateFamilySupport={syncSolutionSupport} currentUserId={session.user.id} isAdmin={authorizationProfile?.role === 'admin'} />}
-          {page === 'Technical Support' && <SupportEngineers supportEngineers={supportEngineers} solutionSupport={solutionSupport} onAdd={addSupportEngineer} onUpdate={updateSupportEngineer} onDeactivate={deactivateSupportEngineer} isAdmin={authorizationProfile?.role === 'admin'} />}
-          {page === 'Leads' && <Leads leads={leads} customers={customers} products={products} leadProducts={leadProducts} onAdd={addLead} onUpdate={updateLead} onSyncProducts={syncLeadProducts} onDelete={deleteLead} currentUserId={session.user.id} isAdmin={authorizationProfile?.role === 'admin'} />}
-          {page === 'Email' && <EmailPage emailLogs={emailLogs} customers={customers} integrations={emailIntegrations} loading={emailIntegrationLoading} error={emailIntegrationError} onConnect={connectEmailProvider} onDisconnect={disconnectEmailProvider} onCompose={() => openCompose()} onAdd={async payload => { try { await addEmailLog(payload); showToast('Email logged.'); } catch (e) { alert(e.message); } }} />}
-          {page === 'Calendar' && <CalendarPage events={calendarEvents} customers={customers} onAdd={addCalendarEvent} onUpdate={updateCalendarEvent} onDelete={deleteCalendarEvent} />}
-          {page === 'Quotes' && <Quotes quotes={quotes} products={products} quoteItems={quoteItems} onLoadQuoteItems={loadQuoteItems} onAdd={addQuote} onUpdate={updateQuote} onDelete={deleteQuote} formatAmount={formatAmount} currentUserId={session.user.id} isAdmin={authorizationProfile?.role === 'admin'} />}
-          {page === 'Invoices' && <Invoices invoices={invoices} payments={payments} customers={customers} products={products} onAdd={addInvoice} onUpdate={updateInvoice} onAddPayment={addPayment} formatAmount={formatAmount} currentUserId={session.user.id} isAdmin={authorizationProfile?.role === 'admin'} />}
-          {page === 'Documents' && <Documents documents={documents} customers={customers} onUpload={uploadDocument} onDownload={downloadDocument} onDelete={deleteDocument} />}
-          {page === 'Automation' && <Automation workflows={workflows} onAdd={addWorkflow} onUpdate={updateWorkflow} />}
-          {page === 'Segments' && <Segments segments={segments} customers={customers} onAdd={addSegment} onUpdate={updateSegment} />}
-          {page === 'Forecast' && <Forecast deals={deals} formatAmount={formatAmount} />}
-          {page === 'Pipeline' && (
-            <Pipeline
-              deals={deals}
-              customers={customers}
-              dealSupport={dealSupport}
-              supportEngineers={supportEngineers}
-              moveDeal={moveDeal}
-              deleteDeal={deleteDeal}
-              formatAmount={formatAmount}
-              currentUserId={session.user.id}
-              ownerProfiles={ownerProfiles}
-              isAdmin={authorizationProfile?.role === 'admin'}
-              onEdit={deal => {
-                setEditDealError('');
-                setEditingDeal({
-                  ...deal,
-                  amount: String(deal.amount ?? ''),
-                  product_ids: dealProducts.filter(row => row.deal_id === deal.id).map(row => row.product_id),
-                  support_engineer_ids: dealSupport.filter(row => row.deal_id === deal.id).map(row => row.support_engineer_id)
-                });
-              }}
-              onAdd={() => {
-                setDealError('');
-                setNewDeal({ title: '', company: '', amount: '', stage: 'New Lead', customer_id: '', contact_name: '', contact_email: '', contact_phone: '', new_customer_name: '', new_customer_email: '', new_customer_phone: '', new_customer_company: '', closure_start_at: '', closure_end_at: '', support_engineer_ids: [] });
-                setSelectedDealProductIds([]);
-                setExpandedDealVendor(null);
-                setShowDealForm(true);
-              }}
-            />
-          )}
-          {page === 'Activities' && (
-            <Activities activities={activities} counts={activityCounts} tab={activityTab} setTab={tab => { setActivityTab(tab); setActivityPage(0); }} page={activityPage} total={activityTotal} loading={activityListLoading} onPage={setActivityPage} customers={customers} ownerProfiles={ownerProfiles} currentUserEmail={session.user.email} onAdd={() => { setActivityError(''); setNewActivity(a => ({ ...a, customer_id: '' })); setShowActivityForm(true); }} onStatusChange={updateActivityStatus} onDelete={deleteActivity} onEdit={activity => { setEditActivityError(''); setEditingActivity({ ...activity, activity_date: formatDateTimeLocal(activity.activity_date) }); }} onView={setSelectedActivity} currentUserId={session.user.id} isAdmin={authorizationProfile?.role === 'admin'} />
-          )}
-          {page === 'Tickets' && (
-            <Tickets
-              tickets={tickets}
-              total={ticketTotal}
-              page={ticketPage}
-              pageSize={PAGE_SIZE}
-              loading={ticketListLoading}
-              filters={ticketFilters}
-              onFilters={changeTicketFilters}
-              onPage={setTicketPage}
-              counts={ticketCounts}
-              error={ticketError}
-              onAdd={() => { setTicketError(''); setNewTicket(t => ({ ...t, customer_id: '' })); setShowTicketForm(true); }}
-              onStatusChange={updateTicketStatus}
-              onDelete={deleteTicket}
-              onEdit={ticket => { setEditTicketError(''); setEditingTicket(ticket); }}
-              onView={setSelectedTicket}
-              currentUserId={session.user.id}
-              isAdmin={authorizationProfile?.role === 'admin'}
-              canManage={canManageTicket}
-              staffName={staffName}
-              staffOptions={getStaffOptions()}
-              onAssign={assignTicket}
-            />
-          )}
-          {page === 'Chat' && <Chat />}
-          {page === 'Reports' && <AdvancedReports customers={customers} deals={deals} activities={reportData.activities} tickets={reportData.tickets} leads={leads} quotes={quotes} invoices={invoices} payments={payments} formatAmount={formatAmount} />}
-          {page === 'Email Logs' && <EmailLogs emailLogs={emailLogs} customers={customers} onAdd={addEmailLog} />}
-          {page === 'UserManagement' && <UserManagement users={authorizedUsers} loading={usersLoading} error={usersError} onRefresh={fetchAuthorizedUsers} onUpdateUser={updateAuthorizedUser} currentUserId={session?.user?.id} pendingPortalAccounts={pendingPortalAccounts} portalRequestsLoading={portalRequestsLoading} portalRequestsError={portalRequestsError} portalRequestsNotice={portalRequestsNotice} onRefreshPortalRequests={fetchPendingPortalAccounts} onReviewPortalRequest={reviewPortalRequest} portalRequestActionId={portalRequestActionId} />}
-          {page === 'Settings' && <SettingsPage currency={currency} setCurrency={setCurrency} />}
-        </section>
+      <section className="page-content">
+        {page === 'Dashboard' && (
+          <Dashboard revenue={revenue} customers={customers} deals={deals} activities={activities} tickets={tickets} setPage={setPage} formatAmount={formatAmount} onSelectCustomer={setSelectedCustomer} onEditCustomer={setEditingCustomer} onDeleteCustomer={deleteCustomer} />
+        )}
+        {page === 'Customers' && (
+          <Customers customers={filteredCustomers}
+            allCustomers={customers}
+            search={search}
+            setSearch={setSearch}
+            statusFilter={statusFilter}
+            setStatusFilter={setStatusFilter}
+            deals={deals}
+            onImport={importCustomers}
+            onAdd={() => { setCustomerError(''); setShowCustomerForm(true); }}
+            formatAmount={formatAmount}
+            onSelectCustomer={setSelectedCustomer}
+            onDeleteCustomer={deleteCustomer}
+            onEditCustomer={setEditingCustomer}
+          />
+        )}
+        {page === 'Products' && <Products products={products} supportEngineers={supportEngineers} solutionSupport={solutionSupport} onAdd={addProduct} onUpdate={updateProduct} onDelete={deleteProduct} onUpdateFamilySupport={syncSolutionSupport} currentUserId={session.user.id} isAdmin={authorizationProfile?.role === 'admin'} />}
+        {page === 'Technical Support' && <SupportEngineers supportEngineers={supportEngineers} solutionSupport={solutionSupport} onAdd={addSupportEngineer} onUpdate={updateSupportEngineer} onDeactivate={deactivateSupportEngineer} isAdmin={authorizationProfile?.role === 'admin'} />}
+        {page === 'Leads' && <Leads leads={leads} customers={customers} products={products} leadProducts={leadProducts} onAdd={addLead} onUpdate={updateLead} onSyncProducts={syncLeadProducts} onDelete={deleteLead} currentUserId={session.user.id} isAdmin={authorizationProfile?.role === 'admin'} />}
+        {page === 'Email' && <EmailPage emailLogs={emailLogs} customers={customers} integrations={emailIntegrations} loading={emailIntegrationLoading} error={emailIntegrationError} onConnect={connectEmailProvider} onDisconnect={disconnectEmailProvider} onAdd={async payload => { try { await addEmailLog(payload); showToast('Email logged.'); } catch (e) { alert(e.message); } }} />}
+        {page === 'Calendar' && <CalendarPage events={calendarEvents} customers={customers} onAdd={addCalendarEvent} onUpdate={updateCalendarEvent} onDelete={deleteCalendarEvent} onRefresh={fetchCalendarEvents} />}
+        {page === 'Quotes' && <Quotes quotes={quotes} products={products} quoteItems={quoteItems} onLoadQuoteItems={loadQuoteItems} onAdd={addQuote} onUpdate={updateQuote} onDelete={deleteQuote} formatAmount={formatAmount} currentUserId={session.user.id} isAdmin={authorizationProfile?.role === 'admin'} />}
+        {page === 'Invoices' && <Invoices invoices={invoices} payments={payments} customers={customers} products={products} onAdd={addInvoice} onUpdate={updateInvoice} onAddPayment={addPayment} formatAmount={formatAmount} currentUserId={session.user.id} isAdmin={authorizationProfile?.role === 'admin'} />}
+        {page === 'Documents' && <Documents documents={documents} customers={customers} onUpload={uploadDocument} onDownload={downloadDocument} onDelete={deleteDocument} />}
+        {page === 'Automation' && <Automation workflows={workflows} onAdd={addWorkflow} onUpdate={updateWorkflow} />}
+        {page === 'Segments' && <Segments segments={segments} customers={customers} onAdd={addSegment} onUpdate={updateSegment} />}
+        {page === 'Forecast' && <Forecast deals={deals} formatAmount={formatAmount} />}
+        {page === 'Pipeline' && (
+          <Pipeline
+            deals={deals}
+            customers={customers}
+            dealSupport={dealSupport}
+            supportEngineers={supportEngineers}
+            moveDeal={moveDeal}
+            deleteDeal={deleteDeal}
+            formatAmount={formatAmount}
+            currentUserId={session.user.id}
+            ownerProfiles={ownerProfiles}
+            isAdmin={authorizationProfile?.role === 'admin'}
+            onEdit={deal => {
+              setEditDealError('');
+              setEditingDeal({
+                ...deal,
+                amount: String(deal.amount ?? ''),
+                product_ids: dealProducts.filter(row => row.deal_id === deal.id).map(row => row.product_id),
+                support_engineer_ids: dealSupport.filter(row => row.deal_id === deal.id).map(row => row.support_engineer_id)
+              });
+            }}
+            onAdd={() => {
+              setDealError('');
+              setNewDeal({ title: '', company: '', amount: '', stage: 'New Lead', customer_id: '', contact_name: '', contact_email: '', contact_phone: '', new_customer_name: '', new_customer_email: '', new_customer_phone: '', new_customer_company: '', closure_start_at: '', closure_end_at: '', support_engineer_ids: [] });
+              setSelectedDealProductIds([]);
+              setExpandedDealVendor(null);
+              setShowDealForm(true);
+            }}
+          />
+        )}
+        {page === 'Activities' && (
+          <Activities activities={activities} customers={customers} ownerProfiles={ownerProfiles} currentUserEmail={session.user.email} onAdd={() => { setActivityError(''); setNewActivity(a => ({ ...a, customer_id: '' })); setShowActivityForm(true); }} onStatusChange={updateActivityStatus} onDelete={deleteActivity} onEdit={activity => { setEditActivityError(''); setEditingActivity({ ...activity, activity_date: formatDateTimeLocal(activity.activity_date) }); }} onView={setSelectedActivity} currentUserId={session.user.id} isAdmin={authorizationProfile?.role === 'admin'} />
+        )}
+        {page === 'Tickets' && (
+          <Tickets
+            tickets={tickets}
+            error={ticketError}
+            onAdd={() => { setTicketError(''); setNewTicket(t => ({ ...t, customer_id: '' })); setShowTicketForm(true); }}
+            onStatusChange={updateTicketStatus}
+            onDelete={deleteTicket}
+            onEdit={ticket => { setEditTicketError(''); setEditingTicket(ticket); }}
+            onView={setSelectedTicket}
+            currentUserId={session.user.id}
+            isAdmin={authorizationProfile?.role === 'admin'}
+            canManage={canManageTicket}
+            staffName={staffName}
+            staffOptions={getStaffOptions()}
+            onAssign={assignTicket}
+          />
+        )}
+        {page === 'Chat' && <Chat />}
+        {page === 'Reports' && <AdvancedReports customers={customers} deals={deals} activities={activities} tickets={tickets} leads={leads} quotes={quotes} invoices={invoices} payments={payments} formatAmount={formatAmount} />}
+        {page === 'Email Logs' && <EmailLogs emailLogs={emailLogs} customers={customers} onAdd={addEmailLog} />}
+        {page === 'UserManagement' && <UserManagement users={authorizedUsers} loading={usersLoading} error={usersError} onRefresh={fetchAuthorizedUsers} onUpdateUser={updateAuthorizedUser} currentUserId={session?.user?.id} pendingPortalAccounts={pendingPortalAccounts} portalRequestsLoading={portalRequestsLoading} portalRequestsError={portalRequestsError} portalRequestsNotice={portalRequestsNotice} onRefreshPortalRequests={fetchPendingPortalAccounts} onReviewPortalRequest={reviewPortalRequest} portalRequestActionId={portalRequestActionId} />}
+        {page === 'Settings' && <SettingsPage currency={currency} setCurrency={setCurrency} />}
+      </section>
       </RefreshContext.Provider>
     </main>
     {showCustomerForm && (
@@ -3540,8 +3341,8 @@ function App() {
         currentUserId={session.user.id}
         customer={selectedCustomer}
         deals={deals}
-        activities={customerRelated.activities}
-        tickets={customerRelated.tickets}
+        activities={activities}
+        tickets={tickets}
         quotes={quotes}
         invoices={invoices}
         payments={payments}
@@ -3553,7 +3354,6 @@ function App() {
         onAddDeal={c => { setSelectedCustomer(null); setDealError(''); setNewDeal(d => ({ ...d, customer_id: c.id, company: c.company || '' })); setSelectedDealProductIds([]); setExpandedDealVendor(null); setShowDealForm(true); }}
         onAddActivity={c => { setSelectedCustomer(null); setActivityError(''); setNewActivity(a => ({ ...a, customer_id: c.id })); setShowActivityForm(true); }}
         onAddTicket={c => { setSelectedCustomer(null); setTicketError(''); setNewTicket(t => ({ ...t, customer_id: c.id })); setShowTicketForm(true); }}
-        onEmail={c => { setSelectedCustomer(null); openCompose({ customer_id: c.id, to: c.email || '' }); }}
       />
     )}
     {editingCustomer && (
@@ -4276,7 +4076,6 @@ function App() {
     )}
     {selectedActivity && <ActivityDetail activity={selectedActivity} customer={customers.find(c => c.id === selectedActivity.customer_id)} ownerProfiles={ownerProfiles} currentUserEmail={session?.user?.email} onClose={() => setSelectedActivity(null)} onEdit={activity => { setSelectedActivity(null); setEditActivityError(''); setEditingActivity({ ...activity, activity_date: formatDateTimeLocal(activity.activity_date) }); }} />}
     {editingActivity && <div className="modal-backdrop" onClick={() => setEditingActivity(null)}><form className="modal" onSubmit={updateActivity} onClick={e => e.stopPropagation()}><div className="modal-heading"><h2>Edit Activity</h2><button type="button" className="icon-btn" onClick={() => setEditingActivity(null)}><X size={18} /></button></div>{editActivityError && <p className="form-error">{editActivityError}</p>}<label>Activity title<input type="text" value={editingActivity.title || ''} onChange={e => setEditingActivity({ ...editingActivity, title: e.target.value })} required /></label><label>Activity type<select value={editingActivity.type || 'Task'} onChange={e => setEditingActivity({ ...editingActivity, type: e.target.value })}><option value="Task">Task</option><option value="Call">Call</option><option value="Meeting">Meeting</option><option value="Email">Email</option><option value="Follow-up">Follow-up</option></select></label><label>Due date and time<input type="datetime-local" value={editingActivity.activity_date || ''} onChange={e => setEditingActivity({ ...editingActivity, activity_date: e.target.value })} /></label><div className="activity-form-grid"><label>Priority<select value={editingActivity.priority || 'Medium'} onChange={e => setEditingActivity({ ...editingActivity, priority: e.target.value })}><option value="Low">Low</option><option value="Medium">Medium</option><option value="High">High</option><option value="Urgent">Urgent</option></select></label><label>Assign to<select value={editingActivity.assigned_to || session.user.id} onChange={e => setEditingActivity({ ...editingActivity, assigned_to: e.target.value })}><option value={session.user.id}>{profileName.trim() || session.user.email || 'Me'} (me)</option>{Object.entries(ownerProfiles).filter(([id, name]) => id !== session.user.id).map(([id, name]) => <option key={id} value={id}>{name || 'Team member'}</option>)}</select></label></div><label>Customer<select value={editingActivity.customer_id || ''} onChange={e => setEditingActivity({ ...editingActivity, customer_id: e.target.value })}><option value="">No customer selected</option>{customers.map(customer => <option key={customer.id} value={customer.id}>{customer.name}{customer.company ? ` — ${customer.company}` : ''}</option>)}</select></label><label>Notes<textarea value={editingActivity.notes || ''} onChange={e => setEditingActivity({ ...editingActivity, notes: e.target.value })} rows="4" /></label><label>Status<select value={editingActivity.status || 'Scheduled'} onChange={e => setEditingActivity({ ...editingActivity, status: e.target.value })}><option value="Scheduled">Scheduled</option><option value="In Progress">In Progress</option><option value="Completed">Completed</option><option value="Cancelled">Cancelled</option></select></label><div className="modal-actions"><button type="button" className="secondary-btn" onClick={() => setEditingActivity(null)}>Cancel</button><button type="submit" className="primary-btn" disabled={editActivitySaving}>{editActivitySaving ? 'Saving...' : 'Save changes'}</button></div></form></div>}
-    {composeDraft && <ComposeEmailModal integrations={emailIntegrations} customers={customers} defaults={composeDraft} userId={session.user.id} onSend={sendEmail} onClose={() => setComposeDraft(null)} />}
     {selectedTicket && <TicketDetail ticket={tickets.find(t => t.id === selectedTicket.id) || selectedTicket} onRefresh={fetchTickets} staffName={staffName} staffOptions={getStaffOptions()} currentUserId={session.user.id} canManage={canManageTicket} onStatusChange={updateTicketStatus} onAssign={assignTicket} onClose={() => setSelectedTicket(null)} onEdit={ticket => { setSelectedTicket(null); setEditTicketError(''); setEditingTicket(ticket); }} />}
     {editingTicket && <div className="modal-backdrop" onClick={() => setEditingTicket(null)}><form className="modal" onSubmit={updateTicket} onClick={e => e.stopPropagation()}><div className="modal-heading"><h2>Edit Ticket</h2><button type="button" className="icon-btn" onClick={() => setEditingTicket(null)}><X size={18} /></button></div>{editTicketError && <p className="form-error">{editTicketError}</p>}<label>Ticket title<input type="text" value={editingTicket.title || ''} onChange={e => setEditingTicket({ ...editingTicket, title: e.target.value })} required /></label><label>Description<textarea value={editingTicket.description || ''} onChange={e => setEditingTicket({ ...editingTicket, description: e.target.value })} rows="4" /></label><label>Customer<select value={editingTicket.customer_id || ''} onChange={e => setEditingTicket({ ...editingTicket, customer_id: e.target.value })}><option value="">No customer selected</option>{customers.map(customer => <option key={customer.id} value={customer.id}>{customer.name}{customer.company ? ` — ${customer.company}` : ''}</option>)}</select></label><label>Assign to<select value={editingTicket.assigned_to || ''} onChange={e => setEditingTicket({ ...editingTicket, assigned_to: e.target.value })}><option value="">Unassigned</option>{getStaffOptions().map(u => <option key={u.user_id} value={u.user_id}>{staffName(u.user_id)}</option>)}</select></label>{editingTicket.source !== 'portal' && <label className="portal-check-row"><input type="checkbox" checked={!!editingTicket.portal_visible} onChange={e => setEditingTicket({ ...editingTicket, portal_visible: e.target.checked })} />Show this ticket in the customer's portal (needs a linked customer)</label>}<label>Category<select value={editingTicket.category || 'General'} onChange={e => setEditingTicket({ ...editingTicket, category: e.target.value })}><option value="General">General</option><option value="Technical">Technical</option><option value="Billing">Billing</option><option value="Account">Account</option><option value="Feature Request">Feature Request</option></select></label><label>Priority<select value={editingTicket.priority || 'Medium'} onChange={e => setEditingTicket({ ...editingTicket, priority: e.target.value })}><option value="Low">Low</option><option value="Medium">Medium</option><option value="High">High</option><option value="Urgent">Urgent</option></select></label><label>Status<select value={editingTicket.status || 'Open'} onChange={e => setEditingTicket({ ...editingTicket, status: e.target.value })}><option value="Open">Open</option><option value="In Progress">In Progress</option><option value="Resolved">Resolved</option><option value="Closed">Closed</option></select></label><div className="modal-actions"><button type="button" className="secondary-btn" onClick={() => setEditingTicket(null)}>Cancel</button><button type="submit" className="primary-btn" disabled={editTicketSaving}>{editTicketSaving ? 'Saving...' : 'Save changes'}</button></div></form></div>}
     {showTicketForm && (
@@ -4634,14 +4433,14 @@ const closureTimerText = endAt => {
 
 const ownerColor = userId => {
   if (!userId) return '#98a2b3';
-
+  
   let hash = 0;
   for (let i = 0; i < userId.length; i++) {
     hash = ((hash << 5) - hash) + userId.charCodeAt(i);
   }
-
+  
   const hue = Math.abs(hash) % 360;
-
+  
   return `hsl(${hue}, 65%, 50%)`;
 };
 
@@ -4697,7 +4496,7 @@ function StatCard({ label, value, change, hint, icon, tone }) {
   );
 }
 
-function Dashboard({ revenue, customers, deals, stats, setPage, formatAmount, onSelectCustomer, onEditCustomer, onDeleteCustomer }) {
+function Dashboard({ revenue, customers, deals, activities, tickets, setPage, formatAmount, onSelectCustomer, onEditCustomer, onDeleteCustomer }) {
   const [range, setRange] = useState(6);
 
   const monthlyRevenue = useMemo(() => {
@@ -4736,12 +4535,15 @@ function Dashboard({ revenue, customers, deals, stats, setPage, formatAmount, on
   const wonDeals = deals.filter(d => d.stage === 'Won');
   const openDeals = deals.filter(d => d.stage !== 'Won');
   const winRate = deals.length ? (wonDeals.length / deals.length) * 100 : 0;
-  const overdueCount = stats.overdue;
-  const dueTodayCount = stats.dueToday;
-  const openTickets = stats.openTickets;
+  const overdueCount = activities.filter(isOverdue).length;
+  const dueTodayCount = activities.filter(a => { if (!isOpenActivity(a) || !a.activity_date) return false; const d = new Date(a.activity_date); const today = new Date(); return d.getFullYear() === today.getFullYear() && d.getMonth() === today.getMonth() && d.getDate() === today.getDate(); }).length;
+  const openTickets = tickets.filter(t => t.status === 'Open' || t.status === 'In Progress').length;
   const avgDeal = wonDeals.length ? sumAmount(wonDeals) / wonDeals.length : 0;
 
-  const upcoming = stats.upcoming;
+  const upcoming = useMemo(() => activities
+    .filter(isOpenActivity)
+    .sort((a, b) => new Date(a.activity_date || 8.64e15) - new Date(b.activity_date || 8.64e15))
+    .slice(0, 4), [activities]);
 
   const maxRevenue = Math.max(...monthlyRevenue.map(item => item.revenue), 0);
   const step = maxRevenue > 0 ? maxRevenue / 4 : 0;
@@ -4763,7 +4565,7 @@ function Dashboard({ revenue, customers, deals, stats, setPage, formatAmount, on
       <StatCard label="Win rate" value={`${winRate.toFixed(1)}%`} hint={`${wonDeals.length} of ${deals.length} deals won`} tone="green" icon="◉" />
       <StatCard label="Overdue activities" value={overdueCount} hint={overdueCount ? 'Needs attention' : 'You are on track'} tone="orange" icon="◷" />
       <StatCard label="Due today" value={dueTodayCount} hint="Activity reminders" tone="blue" icon="!" />
-      <StatCard label="Open tickets" value={openTickets} hint={`${stats.totalTickets} tickets in total`} tone="blue" icon="✉" />
+      <StatCard label="Open tickets" value={openTickets} hint={`${tickets.length} tickets in total`} tone="blue" icon="✉" />
       <StatCard label="Average deal size" value={formatAmount(avgDeal)} hint="Across won deals" tone="purple" icon="◆" />
       <StatCard label="Deals won" value={wonDeals.length} hint={`${formatAmount(sumAmount(wonDeals))} closed`} tone="green" icon="✓" />
     </div>
@@ -4929,7 +4731,7 @@ function CustomerTable({ customers, deals = [], formatAmount, onSelectCustomer, 
   );
 }
 
-function Customers({ customers, total = customers.length, pageIndex = 0, loading = false, onPage = () => { }, allCustomers, deals, search, setSearch, statusFilter, setStatusFilter, onAdd, onImport, formatAmount, onSelectCustomer, onEditCustomer, onDeleteCustomer }) {
+function Customers({ customers, allCustomers, deals, search, setSearch, statusFilter, setStatusFilter, onAdd, onImport, formatAmount, onSelectCustomer, onEditCustomer, onDeleteCustomer }) {
   const fileRef = useRef(null);
 
   async function handleFile(event) {
@@ -4948,14 +4750,11 @@ function Customers({ customers, total = customers.length, pageIndex = 0, loading
     })));
   }
 
-  // Export covers every matching customer, not just the visible page.
-  const exportRows = allCustomers.filter(c => (statusFilter === 'All' || (c.status || 'Active') === statusFilter) && `${c.name} ${c.company || ''} ${c.email || ''}`.toLowerCase().includes(search.toLowerCase()));
-
   function exportCustomers() {
     downloadCSV(
       'customers.csv',
       ['name', 'company', 'email', 'status', 'lifetime_value'],
-      exportRows.map(c => [c.name, c.company || '', c.email, c.status || 'Active', lifetimeValue(c, deals)])
+      customers.map(c => [c.name, c.company || '', c.email, c.status || 'Active', lifetimeValue(c, deals)])
     );
   }
 
@@ -4967,13 +4766,13 @@ function Customers({ customers, total = customers.length, pageIndex = 0, loading
       <div className="panel">
         <div className="panel-heading">
           <div>
-            <h3>All customers <span className="count-badge">{total}</span></h3>
+            <h3>All customers <span className="count-badge">{customers.length}</span></h3>
             <p>Search, filter and manage your contacts.</p>
           </div>
           <div className="toolbar-actions">
             <input ref={fileRef} type="file" accept=".csv,text/csv" onChange={handleFile} hidden />
             <button className="secondary-btn" type="button" onClick={() => fileRef.current?.click()}><Users size={15} /> Import CSV</button>
-            <button className="secondary-btn" type="button" onClick={exportCustomers} disabled={exportRows.length === 0}>Export CSV</button>
+            <button className="secondary-btn" type="button" onClick={exportCustomers} disabled={customers.length === 0}>Export CSV</button>
           </div>
         </div>
         <div className="toolbar">
@@ -5007,7 +4806,6 @@ function Customers({ customers, total = customers.length, pageIndex = 0, loading
           onEditCustomer={onEditCustomer}
           onDeleteCustomer={onDeleteCustomer}
         />
-        <Pager page={pageIndex} total={total} onPage={onPage} loading={loading} />
       </div>
     </>
   );
@@ -5093,7 +4891,7 @@ function PortalSharingPanel({ customer, deals, quotes, invoices, documents, curr
   );
 }
 
-function CustomerDetail({ currentUserId, customer, deals, activities, tickets, quotes = [], invoices = [], payments = [], emailLogs = [], documents = [], formatAmount, onClose, onEdit, onAddDeal, onAddActivity, onAddTicket, onEmail }) {
+function CustomerDetail({ currentUserId, customer, deals, activities, tickets, quotes = [], invoices = [], payments = [], emailLogs = [], documents = [], formatAmount, onClose, onEdit, onAddDeal, onAddActivity, onAddTicket }) {
   const myDeals = deals.filter(d => d.customer_id === customer.id);
   const myActivities = activities.filter(a => a.customer_id === customer.id);
   const myTickets = tickets.filter(t => t.customer_id === customer.id);
@@ -5150,7 +4948,6 @@ function CustomerDetail({ currentUserId, customer, deals, activities, tickets, q
           <button type="button" className="primary-btn" onClick={() => onAddDeal(customer)}><Plus size={15} /> New deal</button>
           <button type="button" className="secondary-btn" onClick={() => onAddActivity(customer)}>Log activity</button>
           <button type="button" className="secondary-btn" onClick={() => onAddTicket(customer)}>Create ticket</button>
-          {onEmail && <button type="button" className="secondary-btn" onClick={() => onEmail(customer)}>Send email</button>}
         </div>
 
         <h3 className="detail-title">Customer history</h3>
@@ -5303,11 +5100,13 @@ function Pipeline({ deals, customers, dealSupport = [], supportEngineers = [], m
 }
 
 
-function Activities({ activities, counts = {}, tab, setTab, page, total = 0, loading = false, onPage = () => { }, customers, ownerProfiles = {}, currentUserEmail, onAdd, onStatusChange, onDelete, onEdit, onView, currentUserId, isAdmin }) {
+function Activities({ activities, customers, ownerProfiles = {}, currentUserEmail, onAdd, onStatusChange, onDelete, onEdit, onView, currentUserId, isAdmin }) {
+  const [tab, setTab] = useState('All');
   const getCustomerName = id => customers.find(c => c.id === id)?.name || 'No customer linked';
-  const filterNames = ['All', 'Upcoming', 'Overdue', 'Completed'];
-  const list = activities; // already filtered, sorted and paged by the server
-  return <><PageHeading eyebrow="PRODUCTIVITY" title="Activities" description="Keep track of meetings, calls, and follow-ups." action="New activity" onAction={onAdd} /><div className="panel"><div className="panel-heading"><div><h3>Schedule</h3><p>Your tasks, calls and follow-ups.</p></div></div><div className="filter-tabs" role="tablist" aria-label="Filter activities">{filterNames.map(name => <button key={name} type="button" className={`filter-tab ${tab === name ? 'active' : ''} ${name === 'Overdue' && counts.Overdue ? 'danger' : ''}`} onClick={() => setTab(name)}>{name} ({counts[name]})</button>)}</div>{list.length === 0 ? <div className="empty-state"><p>{(counts.All || 0) === 0 ? 'No activities yet.' : `No ${tab.toLowerCase()} activities.`}</p>{(counts.All || 0) === 0 && <button type="button" className="primary-btn" onClick={onAdd}>Create your first activity</button>}</div> : list.map(activity => { const canEdit = isAdmin || activity.created_by === currentUserId; const date = activity.activity_date ? new Date(activity.activity_date) : null; return <div className="activity-row large" key={activity.id}><div className="date-box"><strong>{date ? date.getDate() : '--'}</strong><span>{date ? date.toLocaleDateString('en-US', { month: 'short' }).toUpperCase() : '---'}</span></div><div className="activity-content"><strong>{activity.title} {isOverdue(activity) && <span className="status overdue">Overdue</span>}</strong><p>{activity.type || 'Task'} · {getCustomerName(activity.customer_id)}</p><div className="activity-meta-badges"><span className={`priority-pill priority-${String(activity.priority || 'Medium').toLowerCase()}`}>{activity.priority || 'Medium'} priority</span><span className="assignee-pill">Assigned: {(activity.assigned_to === currentUserId ? (ownerProfiles[currentUserId] || currentUserEmail || 'Me') : (ownerProfiles[activity.assigned_to] || (activity.assigned_to ? 'Team member' : 'Unassigned')))}</span></div><small>Due: {formatDateTime(activity.activity_date)}</small>{activity.notes && <p className="activity-notes">{activity.notes}</p>}</div><div className="activity-actions"><button type="button" className="secondary-btn" onClick={() => onView(activity)}>View</button>{canEdit && <button type="button" className="secondary-btn" onClick={() => onEdit(activity)}><Pencil size={14} /> Edit</button>}{canEdit && isOpenActivity(activity) && <button type="button" className="secondary-btn" onClick={() => onStatusChange(activity.id, 'Completed')}>Mark done</button>}<select value={activity.status || 'Scheduled'} onChange={e => onStatusChange(activity.id, e.target.value)} disabled={!canEdit}><option value="Scheduled">Scheduled</option><option value="In Progress">In Progress</option><option value="Completed">Completed</option><option value="Cancelled">Cancelled</option></select>{canEdit && <button type="button" className="icon-btn" title="Delete activity" onClick={() => onDelete(activity.id)}><X size={16} /></button>}</div></div> })}<Pager page={page} total={total} onPage={onPage} loading={loading} /></div></>;
+  const filters = { All: () => true, Upcoming: a => isOpenActivity(a) && !isOverdue(a), Overdue: isOverdue, Completed: a => a.status === 'Completed' };
+  const counts = Object.fromEntries(Object.entries(filters).map(([k, f]) => [k, activities.filter(f).length]));
+  const list = activities.filter(filters[tab]).sort((a, b) => { const diff = new Date(a.activity_date || 8.64e15) - new Date(b.activity_date || 8.64e15); return tab === 'Completed' ? -diff : diff; });
+  return <><PageHeading eyebrow="PRODUCTIVITY" title="Activities" description="Keep track of meetings, calls, and follow-ups." action="New activity" onAction={onAdd} /><div className="panel"><div className="panel-heading"><div><h3>Schedule</h3><p>Your tasks, calls and follow-ups.</p></div></div><div className="filter-tabs" role="tablist" aria-label="Filter activities">{Object.keys(filters).map(name => <button key={name} type="button" className={`filter-tab ${tab === name ? 'active' : ''} ${name === 'Overdue' && counts.Overdue ? 'danger' : ''}`} onClick={() => setTab(name)}>{name} ({counts[name]})</button>)}</div>{list.length === 0 ? <div className="empty-state"><p>{activities.length === 0 ? 'No activities yet.' : `No ${tab.toLowerCase()} activities.`}</p>{activities.length === 0 && <button type="button" className="primary-btn" onClick={onAdd}>Create your first activity</button>}</div> : list.map(activity => { const canEdit = isAdmin || activity.created_by === currentUserId; const date = activity.activity_date ? new Date(activity.activity_date) : null; return <div className="activity-row large" key={activity.id}><div className="date-box"><strong>{date ? date.getDate() : '--'}</strong><span>{date ? date.toLocaleDateString('en-US', { month: 'short' }).toUpperCase() : '---'}</span></div><div className="activity-content"><strong>{activity.title} {isOverdue(activity) && <span className="status overdue">Overdue</span>}</strong><p>{activity.type || 'Task'} · {getCustomerName(activity.customer_id)}</p><div className="activity-meta-badges"><span className={`priority-pill priority-${String(activity.priority || 'Medium').toLowerCase()}`}>{activity.priority || 'Medium'} priority</span><span className="assignee-pill">Assigned: {(activity.assigned_to === currentUserId ? (ownerProfiles[currentUserId] || currentUserEmail || 'Me') : (ownerProfiles[activity.assigned_to] || (activity.assigned_to ? 'Team member' : 'Unassigned')))}</span></div><small>Due: {formatDateTime(activity.activity_date)}</small>{activity.notes && <p className="activity-notes">{activity.notes}</p>}</div><div className="activity-actions"><button type="button" className="secondary-btn" onClick={() => onView(activity)}>View</button>{canEdit && <button type="button" className="secondary-btn" onClick={() => onEdit(activity)}><Pencil size={14} /> Edit</button>}{canEdit && isOpenActivity(activity) && <button type="button" className="secondary-btn" onClick={() => onStatusChange(activity.id, 'Completed')}>Mark done</button>}<select value={activity.status || 'Scheduled'} onChange={e => onStatusChange(activity.id, e.target.value)} disabled={!canEdit}><option value="Scheduled">Scheduled</option><option value="In Progress">In Progress</option><option value="Completed">Completed</option><option value="Cancelled">Cancelled</option></select>{canEdit && <button type="button" className="icon-btn" title="Delete activity" onClick={() => onDelete(activity.id)}><X size={16} /></button>}</div></div> })}</div></>;
 }
 
 function ActivityDetail({ activity, customer, ownerProfiles = {}, currentUserEmail, onClose, onEdit }) {
@@ -5358,30 +5157,32 @@ function ActivityDetail({ activity, customer, ownerProfiles = {}, currentUserEma
   );
 }
 
-function Tickets({ tickets, total = 0, page = 0, pageSize = PAGE_SIZE, loading = false, filters, onFilters, onPage = () => { }, counts = {}, error, onAdd, onStatusChange, onDelete, onEdit, onView, currentUserId, isAdmin, canManage, staffName, staffOptions, onAssign }) {
-  // Filtering, searching and paging all happen on the server; these just read and change the filters.
-  const { query, status, priority, queue } = filters;
-  const setQuery = value => onFilters({ query: value });
-  const setStatus = value => onFilters({ status: value });
-  const setPriority = value => onFilters({ priority: value });
-  const setQueue = value => onFilters({ queue: value });
-  const hasFilters = !!query.trim() || status !== 'All' || priority !== 'All' || queue !== 'All tickets';
-  const filtered = tickets;
-  const count = key => counts[key] || 0;
-  const portalOpen = counts.portalOpen || 0;
+function Tickets({ tickets, error, onAdd, onStatusChange, onDelete, onEdit, onView, currentUserId, isAdmin, canManage, staffName, staffOptions, onAssign }) {
+  const [query, setQuery] = useState('');
+  const [status, setStatus] = useState('All');
+  const [priority, setPriority] = useState('All');
+  const [queue, setQueue] = useState('All tickets');
+  const q = query.trim().toLowerCase();
+  const matchesQueue = t => queue === 'All tickets'
+    || (queue === 'Assigned to me' && t.assigned_to === currentUserId)
+    || (queue === 'Unassigned' && !t.assigned_to)
+    || (queue === 'Customer portal' && t.source === 'portal');
+  const filtered = tickets.filter(t => (status === 'All' || t.status === status) && (priority === 'All' || t.priority === priority) && matchesQueue(t) && (!q || `${t.title} ${t.description || ''} ${t.customers?.name || ''} ${t.category || ''} ${t.ticket_number || ''}`.toLowerCase().includes(q)));
+  const count = s => tickets.filter(t => t.status === s).length;
+  const portalOpen = tickets.filter(t => t.source === 'portal' && (t.status === 'Open' || t.status === 'In Progress')).length;
   return <>
     <PageHeading eyebrow="SUPPORT" title="Tickets" description="Manage customer issues and support requests, including tickets raised from the customer portal." action="Create Ticket" onAction={onAdd} />
     <div className="stats-grid">
       <StatCard label="Open" value={count('Open')} hint="Waiting for a response" tone="orange" icon="!" />
       <StatCard label="In progress" value={count('In Progress')} hint="Being worked on" tone="blue" icon="◷" />
-      <StatCard label="Resolved" value={count('done')} hint="Resolved or closed" tone="green" icon="✓" />
+      <StatCard label="Resolved" value={count('Resolved') + count('Closed')} hint="Resolved or closed" tone="green" icon="✓" />
       <StatCard label="From customer portal" value={portalOpen} hint="Open portal tickets" tone="purple" icon="✉" />
     </div>
     <div className="panel">
       <div className="panel-heading">
         <div>
           <h3>All Tickets</h3>
-          <p>{total} {total === 1 ? 'ticket' : 'tickets'}{loading ? ' · loading…' : ''}</p>
+          <p>{filtered.length} of {tickets.length} tickets</p>
         </div>
       </div>
       {error && <div className="form-error">{error}</div>}
@@ -5393,7 +5194,7 @@ function Tickets({ tickets, total = 0, page = 0, pageSize = PAGE_SIZE, loading =
         <select value={priority} onChange={e => setPriority(e.target.value)}>
           {['All', 'Low', 'Medium', 'High', 'Urgent'].map(x => <option key={x} value={x}>{x === 'All' ? 'All priorities' : x}</option>)}</select>
       </div>
-      {tickets.length === 0 && !hasFilters && !loading ?
+      {tickets.length === 0 ?
         <div className="empty-state">
           <p>No tickets yet.</p>
           <button type="button" className="secondary-btn" onClick={onAdd}>Create your first ticket</button>
@@ -5413,7 +5214,7 @@ function Tickets({ tickets, total = 0, page = 0, pageSize = PAGE_SIZE, loading =
             <td>{formatDate(ticket.created_at)}</td>
             <td><div className="toolbar-actions"><button type="button" className="secondary-btn" onClick={() => onView(ticket)}>View</button>{editable && <button type="button" className="secondary-btn" onClick={() => onEdit(ticket)}><Pencil size={14} /> Edit</button>}{(isAdmin || ticket.created_by === currentUserId) && <button type="button" className="icon-btn" title="Delete ticket" onClick={() => onDelete(ticket.id)}><X size={16} /></button>}</div></td>
           </tr>;
-        })}</tbody></table></div>}<Pager page={page} pageSize={pageSize} total={total} onPage={onPage} loading={loading} /></div></>;
+        })}</tbody></table></div>}</div></>;
 }
 function TicketDetail({ onRefresh, ticket, staffName, staffOptions, currentUserId, canManage, onClose, onEdit, onStatusChange, onAssign }) {
   const [comments, setComments] = useState([]);
@@ -5699,10 +5500,6 @@ function Leads({ leads, customers, products, leadProducts, onAdd, onUpdate, onSy
 
   const save = async e => {
     e.preventDefault();
-    if (form.payment_terms === 'Custom' && !form.due_date) {
-      alert('Please choose a custom due date.');
-      return;
-    }
     try {
       const payload = { ...form, customer_id: form.customer_id || null };
 
@@ -5855,137 +5652,11 @@ function Leads({ leads, customers, products, leadProducts, onAdd, onUpdate, onSy
   </>;
 }
 
-function ComposeEmailModal({ integrations, customers, defaults = {}, userId, onSend, onClose }) {
-  const accounts = integrations.filter(x => x.status === 'connected');
-  const [provider, setProvider] = useState(accounts[0]?.provider || '');
-  const [customerId, setCustomerId] = useState(defaults.customer_id || '');
-  const [to, setTo] = useState(defaults.to || '');
-  const [cc, setCc] = useState('');
-  const [bcc, setBcc] = useState('');
-  const [showCc, setShowCc] = useState(false);
-  const [subject, setSubject] = useState(defaults.subject || '');
-  const [body, setBody] = useState(defaults.body || '');
-  const [signature, setSignature] = useState('');
-  const [useSignature, setUseSignature] = useState(true);
-  const [showSignature, setShowSignature] = useState(false);
-  const [signatureSaving, setSignatureSaving] = useState(false);
-  const [sending, setSending] = useState(false);
-  const [error, setError] = useState('');
-
-  // The connected accounts may finish loading after the window opens.
-  useEffect(() => {
-    if (!provider && accounts[0]) setProvider(accounts[0].provider);
-  }, [integrations]);
-
-  useEffect(() => {
-    let cancelled = false;
-    supabase.from('user_profiles').select('email_signature').eq('user_id', userId).maybeSingle()
-      .then(({ data }) => { if (!cancelled && data?.email_signature) setSignature(data.email_signature); });
-    return () => { cancelled = true; };
-  }, [userId]);
-
-  const pickCustomer = id => {
-    setCustomerId(id);
-    const customer = customers.find(c => c.id === id);
-    if (customer?.email) setTo(customer.email);
-  };
-
-  async function saveSignature() {
-    setSignatureSaving(true);
-    const { error: saveError } = await supabase.from('user_profiles').upsert({ user_id: userId, email_signature: signature.trim() || null, updated_at: new Date().toISOString() });
-    setSignatureSaving(false);
-    if (saveError) setError(`Could not save your signature: ${saveError.message}`);
-    else { setError(''); setShowSignature(false); }
-  }
-
-  const submit = async event => {
-    event.preventDefault();
-    setError('');
-    if (!provider) { setError('Connect a Gmail or Outlook account first.'); return; }
-    if (!to.trim()) { setError('Enter at least one recipient.'); return; }
-    setSending(true);
-    try {
-      const finalBody = useSignature && signature.trim() ? `${body.trimEnd()}\n\n-- \n${signature.trim()}` : body;
-      await onSend({ provider, to: to.trim(), cc: cc.trim(), bcc: bcc.trim(), subject: subject.trim(), body: finalBody, customer_id: customerId || null });
-      onClose();
-    } catch (err) {
-      setError(err.message || 'The email could not be sent.');
-    } finally {
-      setSending(false);
-    }
-  };
-
-  return (
-    <div className="modal-backdrop">
-      <form className="modal modal-wide compose-modal" onSubmit={submit}>
-        <div className="modal-heading">
-          <div><h2>New email</h2><p>Sent from your connected account and saved to the customer's history.</p></div>
-          <button type="button" className="icon-btn" onClick={onClose} disabled={sending} aria-label="Close compose email"><X size={18} /></button>
-        </div>
-        {accounts.length === 0 ? (
-          <>
-            <p className="detail-empty">Connect Gmail or Outlook on the Email page before sending email from here.</p>
-            <div className="modal-actions"><button type="button" className="primary-btn" onClick={onClose}>Close</button></div>
-          </>
-        ) : (
-          <>
-            {error && <div className="form-error" role="alert">{error}</div>}
-            <div className="compose-row">
-              <label>From
-                <select value={provider} onChange={e => setProvider(e.target.value)}>
-                  {accounts.map(a => <option key={a.id} value={a.provider}>{a.email_address || a.provider} ({a.provider === 'gmail' ? 'Gmail' : 'Outlook'})</option>)}
-                </select>
-              </label>
-              <label>Customer (optional)
-                <select value={customerId} onChange={e => pickCustomer(e.target.value)}>
-                  <option value="">Not linked to a customer</option>
-                  {customers.map(c => <option key={c.id} value={c.id}>{c.name}{c.company ? ` — ${c.company}` : ''}</option>)}
-                </select>
-              </label>
-            </div>
-            <label>To
-              <input type="text" value={to} onChange={e => setTo(e.target.value)} placeholder="name@company.com (separate several with commas)" required />
-            </label>
-            {showCc ? (
-              <div className="compose-row">
-                <label>Cc<input type="text" value={cc} onChange={e => setCc(e.target.value)} placeholder="Optional" /></label>
-                <label>Bcc<input type="text" value={bcc} onChange={e => setBcc(e.target.value)} placeholder="Optional" /></label>
-              </div>
-            ) : (
-              <button type="button" className="text-btn compose-link" onClick={() => setShowCc(true)}>+ Add Cc / Bcc</button>
-            )}
-            <label>Subject
-              <input value={subject} onChange={e => setSubject(e.target.value)} maxLength={300} required />
-            </label>
-            <label>Message
-              <textarea rows="9" value={body} onChange={e => setBody(e.target.value)} required />
-            </label>
-            <div className="compose-signature">
-              <label className="compose-check"><input type="checkbox" checked={useSignature} onChange={e => setUseSignature(e.target.checked)} />Add my signature</label>
-              <button type="button" className="text-btn" onClick={() => setShowSignature(v => !v)}>{showSignature ? 'Hide signature' : signature ? 'Edit signature' : 'Create signature'}</button>
-            </div>
-            {showSignature && (
-              <div className="compose-signature-editor">
-                <textarea rows="4" value={signature} onChange={e => setSignature(e.target.value)} placeholder={'Your name\nYour title · Company\nPhone'} maxLength={1000} />
-                <button type="button" className="secondary-btn" onClick={saveSignature} disabled={signatureSaving}>{signatureSaving ? 'Saving…' : 'Save signature'}</button>
-              </div>
-            )}
-            <div className="modal-actions">
-              <button type="button" className="secondary-btn" onClick={onClose} disabled={sending}>Cancel</button>
-              <button type="submit" className="primary-btn" disabled={sending}>{sending ? 'Sending…' : 'Send email'}</button>
-            </div>
-          </>
-        )}
-      </form>
-    </div>
-  );
-}
-
-function EmailPage({ emailLogs, customers, integrations, loading, error, onConnect, onDisconnect, onAdd, onCompose }) {
+function EmailPage({ emailLogs, customers, integrations, loading, error, onConnect, onDisconnect, onAdd }) {
   const [showLog, setShowLog] = useState(false);
   useEffect(() => { const handler = () => setShowLog(true); window.addEventListener('orbit-open-email-log', handler); return () => window.removeEventListener('orbit-open-email-log', handler); }, []);
   return <>
-    <PageHeading eyebrow="COMMUNICATIONS" title="Email" description="Connect Gmail or Outlook, send email from inside the CRM, and keep customer communication in one place." action="Compose email" onAction={onCompose} />
+    <PageHeading eyebrow="COMMUNICATIONS" title="Email" description="Connect Gmail or Outlook and keep customer communication in your CRM." />
     <div className="stats-grid">
       <StatCard label="Connected accounts" value={integrations.filter(x => x.status === 'connected').length} hint="Gmail and Outlook" tone="blue" icon="@" />
       <StatCard label="Email logs" value={emailLogs.length} hint="CRM communication history" tone="green" icon="✉" />
@@ -6070,70 +5741,388 @@ function EmailLogs({ emailLogs, customers, onAdd, openExternally = false, onClos
     }
   </>
 }
-function CalendarPage({ events, customers, onAdd, onUpdate, onDelete }) {
-  const [show, setShow] = useState(false); const [editing, setEditing] = useState(null);
-  const blank = { title: '', description: '', start_at: '', end_at: '', event_type: 'Meeting', customer_id: '', location: '', status: 'Scheduled' };
+function CalendarPage({ events = [], customers = [], onAdd, onUpdate, onDelete, onRefresh }) {
+  const [show, setShow] = useState(false);
+  const [editing, setEditing] = useState(null);
+  const [saving, setSaving] = useState(false);
+  const blank = {
+    title: '',
+    description: '',
+    start_at: '',
+    end_at: '',
+    event_type: 'Meeting',
+    customer_id: '',
+    location: '',
+    status: 'Scheduled',
+    reminder_minutes: ''
+  };
   const [form, setForm] = useState(blank);
+
+  const localDateTime = value => {
+    if (!value) return '';
+    const date = new Date(value);
+    if (Number.isNaN(date.getTime())) return '';
+    const pad = n => String(n).padStart(2, '0');
+    return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}T${pad(date.getHours())}:${pad(date.getMinutes())}`;
+  };
+
+  const toIso = value => {
+    if (!value) return null;
+    const date = new Date(value);
+    return Number.isNaN(date.getTime()) ? null : date.toISOString();
+  };
+
+  const calendarEvents = useMemo(() => events.map(event => {
+    const type = String(event.event_type || 'Other').toLowerCase();
+    const colorMap = {
+      meeting: '#10b981',
+      demo: '#10b981',
+      'follow-up': '#6366f1',
+      call: '#0ea5e9',
+      reminder: '#f59e0b',
+      task: '#8b5cf6',
+      other: '#64748b'
+    };
+    const color = colorMap[type] || '#64748b';
+    return {
+      id: event.id,
+      title: event.title || 'Untitled event',
+      start: event.start_at,
+      // Calendar events are single-day by default. If an old/accidental record
+      // contains an end date on another day, do not let it become a long
+      // multi-day bar in Month view. Same-day end times are still respected.
+      end: (() => {
+        if (!event.end_at) return undefined;
+        const startDate = new Date(event.start_at);
+        const endDate = new Date(event.end_at);
+        if (Number.isNaN(startDate.getTime()) || Number.isNaN(endDate.getTime())) return undefined;
+        return startDate.toDateString() === endDate.toDateString() ? event.end_at : undefined;
+      })(),
+      allDay: false,
+      color,
+      textColor: '#ffffff',
+      extendedProps: { original: event }
+    };
+  }), [events]);
+
+  const hasEventOnDate = date => {
+    const target = new Date(date);
+    target.setHours(0, 0, 0, 0);
+    return events.some(event => {
+      if (!event?.start_at) return false;
+      const start = new Date(event.start_at);
+      if (Number.isNaN(start.getTime())) return false;
+      start.setHours(0, 0, 0, 0);
+      return start.getTime() === target.getTime();
+    });
+  };
+
+  const openNew = startValue => {
+    setEditing(null);
+    setForm({ ...blank, start_at: startValue || '' });
+    setShow(true);
+  };
+
+  const openEdit = event => {
+    const original = event.extendedProps?.original || event;
+    setEditing(original);
+    setForm({
+      ...blank,
+      ...original,
+      customer_id: original.customer_id || '',
+      event_type: original.event_type || 'Meeting',
+      status: original.status || 'Scheduled',
+      reminder_minutes: original.reminder_minutes == null ? '' : String(original.reminder_minutes),
+      start_at: localDateTime(original.start_at || event.start),
+      end_at: (() => {
+        const start = new Date(original.start_at || event.start);
+        const end = new Date(original.end_at || event.end);
+        if (Number.isNaN(start.getTime()) || Number.isNaN(end.getTime())) return '';
+        return start.toDateString() === end.toDateString() ? localDateTime(original.end_at || event.end) : '';
+      })()
+    });
+    setShow(true);
+  };
+
+  const close = () => {
+    if (saving) return;
+    setShow(false);
+    setEditing(null);
+    setForm(blank);
+  };
+
   const save = async e => {
     e.preventDefault();
+    if (!form.title.trim() || !form.start_at) return;
+
+    setSaving(true);
     try {
-      if (editing) await onUpdate(editing.id, form);
-      else await onAdd(form);
-      setShow(false);
-      setEditing(null);
-      setForm(blank)
-    } catch (err) { alert(err.message) }
+      const payload = {
+        title: form.title.trim(),
+        description: form.description?.trim() || '',
+        start_at: toIso(form.start_at),
+        end_at: form.end_at ? toIso(form.end_at) : null,
+        event_type: form.event_type || 'Meeting',
+        customer_id: form.customer_id || null,
+        location: form.location?.trim() || '',
+        status: form.status || 'Scheduled',
+        reminder_minutes: form.reminder_minutes === '' ? null : Number(form.reminder_minutes)
+      };
+
+      if (editing) await onUpdate(editing.id, payload);
+      else await onAdd(payload);
+      close();
+    } catch (err) {
+      alert(err.message || 'Unable to save event.');
+    } finally {
+      setSaving(false);
+    }
   };
-  const open = x => {
-    setEditing(x);
-    setForm({ ...x, start_at: formatDateTimeLocal(x.start_at), end_at: formatDateTimeLocal(x.end_at) }); setShow(true)
+
+  const updateCalendarPosition = async info => {
+    const original = info.event.extendedProps?.original;
+    if (!original) return;
+
+    try {
+      await onUpdate(original.id, {
+        title: original.title,
+        description: original.description || '',
+        start_at: info.event.start?.toISOString() || original.start_at,
+        end_at: (() => {
+          const start = info.event.start;
+          const end = info.event.end;
+          if (!start || !end) return null;
+          return start.toDateString() === end.toDateString() ? end.toISOString() : null;
+        })(),
+        event_type: original.event_type || 'Meeting',
+        customer_id: original.customer_id || null,
+        location: original.location || '',
+        status: original.status || 'Scheduled',
+        reminder_minutes: original.reminder_minutes == null ? null : Number(original.reminder_minutes)
+      });
+    } catch (err) {
+      info.revert();
+      alert(err.message || 'Unable to update the event.');
+    }
   };
+
+  const dateClickValue = (date, allDay = false) => {
+    const pad = n => String(n).padStart(2, '0');
+    const nextDate = new Date(date);
+    if (allDay) nextDate.setHours(9, 0, 0, 0);
+    return `${nextDate.getFullYear()}-${pad(nextDate.getMonth() + 1)}-${pad(nextDate.getDate())}T${pad(nextDate.getHours())}:${pad(nextDate.getMinutes())}`;
+  };
+
+  const openFromSelection = selection => {
+    const start = new Date(selection.start);
+    const end = selection.end ? new Date(selection.end) : null;
+    if (selection.allDay) {
+      start.setHours(9, 0, 0, 0);
+      if (end) {
+        end.setDate(end.getDate() - 1);
+        end.setHours(10, 0, 0, 0);
+      }
+    }
+    openNew(dateClickValue(start), end ? dateClickValue(end) : '');
+  };
+
+  const reminderOptions = [
+    { value: '', label: 'No reminder' },
+    { value: '0', label: 'At event time' },
+    { value: '5', label: '5 minutes before' },
+    { value: '15', label: '15 minutes before' },
+    { value: '30', label: '30 minutes before' },
+    { value: '60', label: '1 hour before' },
+    { value: '1440', label: '1 day before' },
+    { value: '4320', label: '3 days before' }
+  ];
+
+  const eventContent = info => {
+    const original = info.event.extendedProps?.original || {};
+    return (
+      <div className="orbit-event-inner">
+        <span className="orbit-event-dot" />
+        <span className="orbit-event-copy">
+          {info.timeText && <span className="orbit-event-time">{info.timeText}</span>}
+          <span className="orbit-event-title">{info.event.title}</span>
+        </span>
+      </div>
+    );
+  };
+
   return <>
-    <PageHeading eyebrow="PRODUCTIVITY" title="Calendar" description="Manage meetings, calls and customer appointments." action="New event" onAction={() => { setEditing(null); setForm(blank); setShow(true) }} />
-    <div className="panel">
-      <div className="table-wrap">
-        <table>
-          <thead>
-            <tr>
-              <th>Event</th>
-              <th>Customer</th>
-              <th>When</th>
-              <th>Type</th>
-              <th>Status</th>
-              <th>Actions</th>
-            </tr>
-          </thead>
-          <tbody>{events.length === 0 ?
-            <tr>
-              <td colSpan="6">No calendar events yet.</td>
-            </tr> : events.map(x => <tr key={x.id}>
-              <td>
-                <strong>{x.title}</strong>
-                <div className="deal-customer">{x.location || ''}</div>
-              </td>
-              <td>{x.customers?.name || '—'}</td>
-              <td>{formatDateTime(x.start_at)}</td>
-              <td>{x.event_type}</td><td>{x.status}</td>
-              <td>
-                <div className="toolbar-actions">
-                  <button className="secondary-btn" onClick={() => open(x)}>Edit</button>
-                  <button className="icon-btn" onClick={() => onDelete(x.id)}><X size={16} /></button>
-                </div>
-              </td>
-            </tr>
-            )}
-          </tbody>
-        </table>
+
+
+    <PageHeading
+      eyebrow="PRODUCTIVITY"
+      title="Calendar"
+      description="Manage meetings, calls, follow-ups and reminders."
+      action="New event"
+      onAction={() => openNew()}
+    />
+
+    <div className="orbit-calendar-panel panel">
+      <div className="orbit-calendar-shell">
+        <FullCalendar
+          plugins={[dayGridPlugin, timeGridPlugin, listPlugin, interactionPlugin]}
+          initialView="dayGridMonth"
+          headerToolbar={{
+            left: 'prev,next today',
+            center: 'title',
+            right: 'dayGridMonth,timeGridWeek,timeGridDay,listWeek'
+          }}
+          buttons={{
+            prev: { text: '‹' },
+            next: { text: '›' },
+            today: { text: 'Today' },
+            dayGridMonth: { text: 'Month' },
+            timeGridWeek: { text: 'Week' },
+            timeGridDay: { text: 'Day' },
+            listWeek: { text: 'List' }
+          }}
+          headerToolbarClass="orbit-fc-header"
+          toolbarSectionClass="orbit-fc-toolbar-section"
+          toolbarTitleClass="orbit-fc-title"
+          buttonGroupClass="orbit-fc-button-group"
+          buttonClass={info => `orbit-fc-button${info.isSelected ? ' orbit-fc-button-active' : ''}`}
+          className="orbit-fullcalendar"
+          viewClass="orbit-fc-view"
+          dayHeaderClass="orbit-fc-day-header"
+          dayHeaderInnerClass="orbit-fc-day-header-inner"
+          dayHeaderRowClass="orbit-fc-day-header-row"
+          dayHeaderDividerClass="orbit-fc-day-header-divider"
+          dayCellClass={info => `orbit-fc-day-cell${hasEventOnDate(info.date) ? ' orbit-fc-day-cell-has-event' : ''}${info.isToday ? ' orbit-fc-day-cell-today' : ''}${info.isOther ? ' orbit-fc-day-cell-other' : ''}`}
+          dayCellTopClass="orbit-fc-day-top"
+          dayCellTopInnerClass="orbit-fc-day-number"
+          dayCellInnerClass="orbit-fc-day-events"
+          dayCellBottomClass="orbit-fc-day-bottom"
+          dayRowClass="orbit-fc-day-row"
+          eventClass={info => {
+            const type = String(info.event.extendedProps?.original?.event_type || 'Other')
+              .toLowerCase()
+              .replace(/\s+/g, '-');
+            return `orbit-fc-event orbit-calendar-event-${type}`;
+          }}
+          eventInnerClass="orbit-fc-event-inner"
+          eventTimeClass="orbit-fc-event-time"
+          eventTitleClass="orbit-fc-event-title"
+          dayLaneClass="orbit-fc-day-lane"
+          slotHeaderClass="orbit-fc-slot-header"
+          slotHeaderInnerClass="orbit-fc-slot-header-inner"
+          slotLaneClass="orbit-fc-slot-lane"
+          listDayHeaderClass="orbit-fc-list-day-header"
+          listDayHeaderInnerClass="orbit-fc-list-day-header-inner"
+          views={{
+            dayGrid: { className: 'orbit-fc-daygrid-view', eventClass: 'orbit-fc-event' },
+            timeGrid: { className: 'orbit-fc-timegrid-view', rowEventClass: 'orbit-fc-event' },
+            list: { className: 'orbit-fc-list-view', listItemEventClass: 'orbit-fc-list-event' }
+          }}
+          height="auto"
+          dayMaxEvents={3}
+          dayMaxEventRows={3}
+          fixedWeekCount={false}
+          nowIndicator
+          slotMinTime="07:00:00"
+          slotMaxTime="20:00:00"
+          scrollTime="08:00:00"
+          eventContent={eventContent}
+          editable
+          selectable
+          selectMirror
+          unselectAuto
+          events={calendarEvents}
+          dateClick={info => openNew(dateClickValue(info.date, info.allDay))}
+          select={openFromSelection}
+          eventClick={info => openEdit(info.event)}
+          eventDrop={updateCalendarPosition}
+          eventResize={updateCalendarPosition}
+          eventTimeFormat={{ hour:'numeric', minute:'2-digit', meridiem:'short' }}
+          eventDisplay="block"
+        />
+        <div className="orbit-calendar-legend">
+          <span className="orbit-calendar-legend-item"><span className="orbit-calendar-legend-dot" style={{ background:'#10b981' }} />Meeting / Demo</span>
+          <span className="orbit-calendar-legend-item"><span className="orbit-calendar-legend-dot" style={{ background:'#6366f1' }} />Follow-up</span>
+          <span className="orbit-calendar-legend-item"><span className="orbit-calendar-legend-dot" style={{ background:'#0ea5e9' }} />Call</span>
+          <span className="orbit-calendar-legend-item"><span className="orbit-calendar-legend-dot" style={{ background:'#f59e0b' }} />Reminder</span>
+          <span className="orbit-calendar-legend-item"><span className="orbit-calendar-legend-dot" style={{ background:'#8b5cf6' }} />Task</span>
+        </div>
       </div>
     </div>
-    {show && <div className="modal-backdrop" onClick={() => setShow(false)}><form className="modal" onSubmit={save} onClick={e => e.stopPropagation()}>
-      <div className="modal-heading">
-        <h2>{editing ? 'Edit event' : 'New event'}</h2>
-        <button type="button" className="icon-btn" onClick={() => setShow(false)}><X size={18} /></button>
-      </div>
-      <label>Title<input required value={form.title} onChange={e => setForm({ ...form, title: e.target.value })} /></label>
-      <label>Customer<select value={form.customer_id} onChange={e => setForm({ ...form, customer_id: e.target.value })}><option value="">None</option>{customers.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}</select></label><label>Start<input type="datetime-local" required value={form.start_at || ''} onChange={e => setForm({ ...form, start_at: e.target.value })} /></label><label>End<input type="datetime-local" value={form.end_at || ''} onChange={e => setForm({ ...form, end_at: e.target.value })} /></label><label>Type<select value={form.event_type} onChange={e => setForm({ ...form, event_type: e.target.value })}>{['Meeting', 'Call', 'Demo', 'Task', 'Other'].map(x => <option key={x}>{x}</option>)}</select></label><label>Location<input value={form.location || ''} onChange={e => setForm({ ...form, location: e.target.value })} /></label><label>Description<textarea value={form.description || ''} onChange={e => setForm({ ...form, description: e.target.value })} /></label><div className="modal-actions"><button type="button" className="secondary-btn" onClick={() => setShow(false)}>Cancel</button><button className="primary-btn">Save event</button></div></form></div>}</>
+
+    {show && <div className="modal-backdrop" onClick={close}>
+      <form className="modal calendar-event-modal" onSubmit={save} onClick={e => e.stopPropagation()}>
+        <div className="modal-heading">
+          <div>
+            <div className="eyebrow">CALENDAR</div>
+            <h2>{editing ? 'Edit event' : 'New event'}</h2>
+          </div>
+          <button type="button" className="icon-btn" onClick={close}><X size={18} /></button>
+        </div>
+
+        <label>Title
+          <input required value={form.title} onChange={e => setForm({ ...form, title:e.target.value })} placeholder="e.g. Follow up with Kenya" />
+        </label>
+
+        <label>Customer
+          <select value={form.customer_id} onChange={e => setForm({ ...form, customer_id:e.target.value })}>
+            <option value="">No customer / general event</option>
+            {customers.map(customer => <option key={customer.id} value={customer.id}>{customer.name}{customer.company ? ` — ${customer.company}` : ''}</option>)}
+          </select>
+        </label>
+
+        <div className="calendar-form-grid">
+          <label>Start
+            <input type="datetime-local" required value={form.start_at || ''} onChange={e => setForm({ ...form, start_at:e.target.value })} />
+          </label>
+          <label>End
+            <input type="datetime-local" value={form.end_at || ''} onChange={e => setForm({ ...form, end_at:e.target.value })} />
+          </label>
+        </div>
+
+        <div className="calendar-form-grid">
+          <label>Type
+            <select value={form.event_type} onChange={e => setForm({ ...form, event_type:e.target.value })}>
+              {['Meeting','Follow-up','Call','Reminder','Task','Demo','Other'].map(type => <option key={type}>{type}</option>)}
+            </select>
+          </label>
+          <label>Status
+            <select value={form.status} onChange={e => setForm({ ...form, status:e.target.value })}>
+              {['Scheduled','Completed','Cancelled'].map(status => <option key={status}>{status}</option>)}
+            </select>
+          </label>
+        </div>
+
+        <label>Reminder
+          <select value={form.reminder_minutes == null ? '' : String(form.reminder_minutes)} onChange={e => setForm({ ...form, reminder_minutes:e.target.value })}>
+            {reminderOptions.map(option => <option key={option.value} value={option.value}>{option.label}</option>)}
+          </select>
+          <span className="calendar-form-help">The reminder will appear in your Orbit notification bell.</span>
+        </label>
+
+        <label>Location
+          <input value={form.location || ''} onChange={e => setForm({ ...form, location:e.target.value })} placeholder="Office, Zoom, customer site, etc." />
+        </label>
+
+        <label>Description
+          <textarea rows="5" value={form.description || ''} onChange={e => setForm({ ...form, description:e.target.value })} placeholder="Add notes, follow-up details or instructions..." />
+        </label>
+
+        <div className="modal-actions">
+          {editing && <button type="button" className="secondary-btn calendar-delete-btn" onClick={async () => {
+            if (!window.confirm('Delete this event?')) return;
+            try { await onDelete(editing.id); close(); }
+            catch (err) { alert(err.message || 'Unable to delete event.'); }
+          }} disabled={saving}>Delete</button>}
+          <div className="calendar-modal-actions-right">
+            <button type="button" className="secondary-btn" onClick={close} disabled={saving}>Cancel</button>
+            <button type="submit" className="primary-btn" disabled={saving}>{saving ? 'Saving…' : editing ? 'Save changes' : 'Save event'}</button>
+          </div>
+        </div>
+      </form>
+    </div>}
+  </>;
 }
+
 function Quotes({ quotes = [], products = [], quoteItems = [], onLoadQuoteItems, onAdd, onUpdate, onDelete, formatAmount, currentUserId, isAdmin }) {
   const [show, setShow] = useState(false);
   const [editing, setEditing] = useState(null);
@@ -6522,29 +6511,22 @@ function Invoices({ invoices, payments, customers, products, onAdd, onUpdate, on
     }));
   };
 
-  const localDateString = date => {
-    const year = date.getFullYear();
-    const month = String(date.getMonth() + 1).padStart(2, '0');
-    const day = String(date.getDate()).padStart(2, '0');
-    return `${year}-${month}-${day}`;
-  };
-
   const setPaymentTerms = value => {
     const today = new Date();
     let dueDate = '';
 
     if (value === 'Due on receipt') {
-      dueDate = localDateString(today);
+      dueDate = today.toISOString().slice(0, 10);
     } else if (value.startsWith('Net ')) {
       const days = Number(value.replace('Net ', '')) || 0;
       today.setDate(today.getDate() + days);
-      dueDate = localDateString(today);
+      dueDate = today.toISOString().slice(0, 10);
     }
 
     setForm(prev => ({
       ...prev,
       payment_terms: value,
-      due_date: value === 'Custom' ? '' : dueDate
+      due_date: value === 'Custom' ? prev.due_date : dueDate
     }));
   };
 
@@ -6561,7 +6543,6 @@ function Invoices({ invoices, payments, customers, products, onAdd, onUpdate, on
         unit_price: Number(form.unit_price) || 0,
         amount: Number(form.amount) || 0,
         due_date: form.due_date || null,
-        payment_terms: form.payment_terms || 'Due on receipt',
         status: form.status,
         notes: form.notes || ''
       };
@@ -6679,22 +6660,14 @@ function Invoices({ invoices, payments, customers, products, onAdd, onUpdate, on
                 {form.payment_terms === 'Due on receipt'
                   ? 'Payment is due when the invoice is received.'
                   : form.payment_terms === 'Custom'
-                    ? 'Set the exact payment due date below.'
+                    ? 'Choose the exact due date below.'
                     : `Payment is due ${form.payment_terms.replace('Net ', '')} days after the invoice date.`}
               </span>
             </label>
 
-            <label className={form.payment_terms === 'Custom' ? 'invoice-custom-due-date' : ''}>
-              {form.payment_terms === 'Custom' ? 'Custom due date' : 'Due date'}
-              <input
-                type="date"
-                value={form.due_date || ''}
-                onChange={e => setForm(prev => ({ ...prev, due_date: e.target.value }))}
-                required={form.payment_terms === 'Custom'}
-              />
-              {form.payment_terms === 'Custom' && (
-                <span className="invoice-payment-term-help">Choose a date from the calendar, or enter the date manually.</span>
-              )}
+            <label>
+              Due date
+              <input type="date" value={form.due_date || ''} onChange={e => setForm({ ...form, due_date: e.target.value })} />
             </label>
 
             <label>
@@ -6736,8 +6709,8 @@ function Invoices({ invoices, payments, customers, products, onAdd, onUpdate, on
 
             <label>
               Unit price
-              <input type="number" min="0" step="0.01" value={form.unit_price} onChange={e => setInvoiceField('unit_price', e.target.value)} />
-              <span className="invoice-payment-term-help">Auto-filled from the catalogue, but you can edit it for a custom price.</span>
+              <input type="number" min="0" step="0.01" value={form.unit_price} readOnly />
+              <span className="invoice-payment-term-help">Pulled from the selected solution.</span>
             </label>
 
             <div className="invoice-item-total">
@@ -7151,7 +7124,7 @@ function Products({ products, supportEngineers, solutionSupport, onAdd, onUpdate
         <div className="solution-family-label">SOLUTION FAMILY</div>
         <h3>{vendor}</h3>
         <p>{vendorProducts.length} {vendorProducts.length === 1 ? 'solution' : 'solutions'} in catalogue</p>
-        <div className="solution-family-support-preview"><strong>Supported by:</strong><div>{getFamilySupportNames(vendor).length ? getFamilySupportNames(vendor).slice(0, 3).map(name => <span key={name}>{name}</span>) : <span>Not assigned</span>}</div></div>
+        <div className="solution-family-support-preview"><strong>Supported by</strong><div>{getFamilySupportNames(vendor).length ? getFamilySupportNames(vendor).slice(0, 3).map(name => <span key={name}>{name}</span>) : <span>Not assigned</span>}</div></div>
         <div className="solution-family-categories">
           {categoriesForVendor.slice(0, 4).map(category => (
             <span key={category}>{category}</span>
@@ -7190,7 +7163,7 @@ function Products({ products, supportEngineers, solutionSupport, onAdd, onUpdate
               <div className="solution-family-label">SOLUTION FAMILY</div>
               <h2>{selectedVendor}</h2>
               <p>{(groupedProducts[selectedVendor] || []).length} solutions available in the catalogue.</p>
-              <div className="solution-family-support-preview"><strong>Supported by:</strong><div>{getFamilySupportNames(selectedVendor).length ? getFamilySupportNames(selectedVendor).map(name => <span key={name}>{name}</span>) : <span>Not assigned</span>}</div></div>
+              <div className="solution-family-support-preview"><strong>Supported by</strong><div>{getFamilySupportNames(selectedVendor).length ? getFamilySupportNames(selectedVendor).map(name => <span key={name}>{name}</span>) : <span>Not assigned</span>}</div></div>
             </div>
             {isAdmin && <button type="button" className="secondary-btn" onClick={() => openFamilySupport(selectedVendor)}>Manage support</button>}
           </div>
