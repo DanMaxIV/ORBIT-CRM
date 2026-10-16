@@ -632,6 +632,10 @@ body {
 .table-wrap {
     overflow-x: auto
 }
+.table-actions{
+  display: flex;
+  gap: 4px;
+}
 
 table {
     width: 100%;
@@ -5487,3 +5491,37 @@ tbody tr:last-child td {
 .invoice-custom-due-date input {
   margin-top: 6px;
 }
+
+
+/* Page-by-page loading */
+.pager { display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap; padding: 16px 4px 4px; border-top: 1px solid #eceef4; margin-top: 14px; }
+.pager-info { color: #747b91; font-size: 13px; }
+.pager-buttons { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.pager-buttons .secondary-btn { padding: 7px 12px; }
+.pager-page { font-size: 13px; color: #5b6473; padding: 0 6px; }
+@media (max-width: 620px) { .pager { flex-direction: column; align-items: stretch; } .pager-buttons { justify-content: space-between; } }
+
+/* Compose email */
+.compose-modal select,
+.compose-modal textarea {
+  display: block;
+  width: 100%;
+  margin-top: 8px;
+  border: 1px solid #e5e6ed;
+  border-radius: 8px;
+  padding: 11px;
+  background: #fff;
+  font: inherit;
+  font-size: 12px;
+}
+.compose-modal textarea { resize: vertical; min-height: 120px; }
+.compose-row { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; }
+.compose-link { margin: 4px 0 0; }
+.compose-signature { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-top: 6px; }
+.modal .compose-check { display: flex; align-items: center; gap: 8px; margin: 0; font-size: 12px; font-weight: 600; color: #5b6473; }
+.modal .compose-check input { display: inline-block; width: auto; margin: 0; }
+.compose-signature-editor { display: flex; flex-direction: column; align-items: flex-start; gap: 8px; margin-top: 8px; }
+.compose-signature-editor textarea { min-height: 80px; margin-top: 0; }
+.compose-modal .modal-actions { display: flex; justify-content: flex-end; gap: 10px; margin-top: 16px; }
+.compose-modal .modal-actions .primary-btn { width: auto; margin-top: 0; }
+@media (max-width: 620px) { .compose-row { grid-template-columns: 1fr; } }
