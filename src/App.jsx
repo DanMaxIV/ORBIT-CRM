@@ -770,7 +770,7 @@ function App() {
   const [profileSaving, setProfileSaving] = useState(false);
   const [ownerProfiles, setOwnerProfiles] = useState({});
   const [showDealForm, setShowDealForm] = useState(false);
-  const [newDeal, setNewDeal] = useState({ title: '', company: '', amount: '', stage: 'New Lead', customer_id: '', contact_name: '', contact_email: '', contact_phone: '', new_customer_name: '', new_customer_email: '', new_customer_phone: '', new_customer_company: '', closure_start_at: '', closure_end_at: '' });
+  const [newDeal, setNewDeal] = useState({ title: '', company: '', amount: '', stage: 'New Lead', customer_id: '', contact_name: '', contact_email: '', contact_phone: '', new_customer_name: '', new_customer_email: '', new_customer_phone: '', new_customer_company: '', new_customer_job_title: '', new_customer_birthday: '', closure_start_at: '', closure_end_at: '' });
   const [dealProducts, setDealProducts] = useState([]);
   const [expandedDealVendor, setExpandedDealVendor] = useState(null);
   const [selectedDealProductIds, setSelectedDealProductIds] = useState([]);
@@ -782,7 +782,7 @@ function App() {
   const [search, setSearch] = useState('');
   const [globalSearch, setGlobalSearch] = useState('');
   const [showCustomerForm, setShowCustomerForm] = useState(false);
-  const [newCustomer, setNewCustomer] = useState({ name: '', company: '', email: '', status: 'Active' });
+  const [newCustomer, setNewCustomer] = useState({ name: '', company: '', email: '', phone: '', job_title: '', birthday: '', status: 'Active' });
   const [selectedCustomer, setSelectedCustomer] = useState(null);
   const [openCustomerMenu, setOpenCustomerMenu] = useState(null);
   const [editingCustomer, setEditingCustomer] = useState(null);
@@ -1539,6 +1539,14 @@ async function signUpWithEmail(event) {
       throw new Error('Lead was created, but the Pipeline record could not be confirmed.');
     }
 
+    if (payload.job_title || payload.birthday) {
+      const { error: contactError } = await supabase
+        .from('leads')
+        .update({ job_title: payload.job_title?.trim() || null, birthday: payload.birthday || null })
+        .eq('id', result.lead_id);
+      if (contactError) throw contactError;
+    }
+
     const { data: lead, error: leadError } = await supabase
       .from('leads')
       .select('*, customers(name,company)')
@@ -2249,6 +2257,9 @@ async function signUpWithEmail(event) {
         name: r.name,
         company: r.company || null,
         email: r.email,
+        phone: r.phone || null,
+        job_title: r.job_title || null,
+        birthday: r.birthday || null,
         status: CUSTOMER_STATUSES.includes(r.status) ? r.status : 'Active'
       });
     });
@@ -2300,6 +2311,9 @@ async function signUpWithEmail(event) {
             name: newCustomer.name.trim(),
             company: newCustomer.company.trim() || null,
             email: newCustomer.email.trim(),
+            phone: newCustomer.phone.trim() || null,
+            job_title: newCustomer.job_title.trim() || null,
+            birthday: newCustomer.birthday || null,
             status: newCustomer.status || 'Active'
           }
         ])
@@ -2318,6 +2332,9 @@ async function signUpWithEmail(event) {
         name: '',
         company: '',
         email: '',
+        phone: '',
+        job_title: '',
+        birthday: '',
         status: 'Active'
       });
 
@@ -2371,6 +2388,9 @@ async function signUpWithEmail(event) {
         name: editingCustomer.name.trim(),
         company: editingCustomer.company?.trim() || null,
         email: editingCustomer.email.trim(),
+        phone: editingCustomer.phone?.trim() || null,
+        job_title: editingCustomer.job_title?.trim() || null,
+        birthday: editingCustomer.birthday || null,
         status: editingCustomer.status || 'Active'
       })
       .eq('id', editingCustomer.id)
@@ -2430,6 +2450,8 @@ async function signUpWithEmail(event) {
           email: newDeal.new_customer_email.trim(),
           phone: newDeal.new_customer_phone.trim() || null,
           company: newDeal.new_customer_company.trim() || newDeal.company.trim() || null,
+          job_title: newDeal.new_customer_job_title.trim() || null,
+          birthday: newDeal.new_customer_birthday || null,
           status: 'Active'
         }).select().single();
         if (customerError) throw customerError;
@@ -2508,6 +2530,8 @@ async function signUpWithEmail(event) {
         new_customer_email: '',
         new_customer_phone: '',
         new_customer_company: '',
+        new_customer_job_title: '',
+        new_customer_birthday: '',
         closure_start_at: '',
         closure_end_at: '',
         support_engineer_ids: []
@@ -2583,6 +2607,8 @@ async function signUpWithEmail(event) {
                 email,
                 phone: lead.phone?.trim() || null,
                 company: lead.company?.trim() || deal.company?.trim() || null,
+                job_title: lead.job_title?.trim() || null,
+                birthday: lead.birthday || null,
                 status: 'Active'
               })
               .select()
@@ -3209,7 +3235,7 @@ async function signUpWithEmail(event) {
       <RefreshContext.Provider value={{ refreshAll, refreshing }}>
       <section className="page-content">
         {page === 'Dashboard' && (
-          <Dashboard revenue={revenue} customers={customers} deals={deals} activities={activities} tickets={tickets} setPage={setPage} formatAmount={formatAmount} onSelectCustomer={setSelectedCustomer} onEditCustomer={setEditingCustomer} onDeleteCustomer={deleteCustomer} />
+          <Dashboard revenue={revenue} customers={customers} leads={leads} deals={deals} activities={activities} tickets={tickets} setPage={setPage} formatAmount={formatAmount} onSelectCustomer={setSelectedCustomer} onEditCustomer={setEditingCustomer} onDeleteCustomer={deleteCustomer} />
         )}
         {page === 'Customers' && (
           <Customers customers={filteredCustomers}
@@ -3261,7 +3287,7 @@ async function signUpWithEmail(event) {
             }}
             onAdd={() => {
               setDealError('');
-              setNewDeal({ title: '', company: '', amount: '', stage: 'New Lead', customer_id: '', contact_name: '', contact_email: '', contact_phone: '', new_customer_name: '', new_customer_email: '', new_customer_phone: '', new_customer_company: '', closure_start_at: '', closure_end_at: '', support_engineer_ids: [] });
+              setNewDeal({ title: '', company: '', amount: '', stage: 'New Lead', customer_id: '', contact_name: '', contact_email: '', contact_phone: '', new_customer_name: '', new_customer_email: '', new_customer_phone: '', new_customer_company: '', new_customer_job_title: '', new_customer_birthday: '', closure_start_at: '', closure_end_at: '', support_engineer_ids: [] });
               setSelectedDealProductIds([]);
               setExpandedDealVendor(null);
               setShowDealForm(true);
@@ -3318,6 +3344,9 @@ async function signUpWithEmail(event) {
             />
           </label>
           <label>Email<input type="email" value={newCustomer.email} onChange={e => setNewCustomer({ ...newCustomer, email: e.target.value })} required /> </label>
+          <label>Phone<input value={newCustomer.phone} onChange={e => setNewCustomer({ ...newCustomer, phone: e.target.value })} placeholder="+234..." /></label>
+          <JobTitleField value={newCustomer.job_title} onChange={value => setNewCustomer({ ...newCustomer, job_title: value })} />
+          <BirthdayField value={newCustomer.birthday} onChange={value => setNewCustomer({ ...newCustomer, birthday: value })} />
           <label>
             Status
             <select value={newCustomer.status} onChange={e => setNewCustomer({ ...newCustomer, status: e.target.value })}>
@@ -3420,6 +3449,12 @@ async function signUpWithEmail(event) {
             />
           </label>
 
+          <label>
+            Phone
+            <input type="text" value={editingCustomer.phone || ''} onChange={e => setEditingCustomer({ ...editingCustomer, phone: e.target.value })} />
+          </label>
+          <JobTitleField value={editingCustomer.job_title} onChange={value => setEditingCustomer({ ...editingCustomer, job_title: value })} />
+          <BirthdayField value={editingCustomer.birthday} onChange={value => setEditingCustomer({ ...editingCustomer, birthday: value })} />
           <label>
             Status
             <select
@@ -3559,6 +3594,8 @@ async function signUpWithEmail(event) {
               <label>Customer email<input required type="email" value={newDeal.new_customer_email} onChange={e => setNewDeal({ ...newDeal, new_customer_email: e.target.value })} placeholder="name@company.com" /></label>
               <label>Customer phone<input value={newDeal.new_customer_phone} onChange={e => setNewDeal({ ...newDeal, new_customer_phone: e.target.value })} placeholder="+234..." /></label>
               <label>Company name<input value={newDeal.new_customer_company} onChange={e => setNewDeal({ ...newDeal, new_customer_company: e.target.value, company: e.target.value || newDeal.company })} placeholder="Company (optional)" /></label>
+              <JobTitleField value={newDeal.new_customer_job_title} onChange={value => setNewDeal({ ...newDeal, new_customer_job_title: value })} label="Job title" />
+              <BirthdayField value={newDeal.new_customer_birthday} onChange={value => setNewDeal({ ...newDeal, new_customer_birthday: value })} label="Birthday" />
             </div>
           )}
           <div className="product-selector">
@@ -4377,6 +4414,42 @@ function PageHeading({ eyebrow, title, description, action, onAction, refresh = 
 }
 const PIPELINE_STAGES = ['New Lead', 'Qualified', 'Proposal', 'Won'];
 const CUSTOMER_STATUSES = ['Lead', 'Active', 'Inactive'];
+const JOB_TITLE_SUGGESTIONS = [
+  'CEO', 'CIO', 'CTO', 'CSO', 'CFO', 'COO', 'CISO', 'CDO',
+  'Chief Technology Officer', 'Chief Information Officer', 'Chief Security Officer',
+  'IT Director', 'Head of IT', 'Head of Technology', 'Head of Information Security',
+  'IT Manager', 'Procurement Manager', 'Procurement Director', 'Operations Manager',
+  'Finance Director', 'Managing Director', 'Founder', 'Director', 'Manager'
+];
+
+function JobTitleField({ value, onChange, label = 'Job title' }) {
+  return <label>{label}<input list="orbit-job-title-options" value={value || ''} onChange={e => onChange(e.target.value)} placeholder="e.g. CTO" autoComplete="organization-title" /><datalist id="orbit-job-title-options">{JOB_TITLE_SUGGESTIONS.map(title => <option key={title} value={title} />)}</datalist></label>;
+}
+
+function BirthdayField({ value, onChange, label = 'Birthday' }) {
+  return <label>{label}<input type="date" value={value || ''} onChange={e => onChange(e.target.value)} /></label>;
+}
+
+function birthdayIsToday(value, now = new Date()) {
+  if (!value) return false;
+  const parts = String(value).slice(0, 10).split('-');
+  if (parts.length !== 3) return false;
+  return Number(parts[1]) === now.getMonth() + 1 && Number(parts[2]) === now.getDate();
+}
+
+function formatBirthday(value) {
+  if (!value) return '—';
+  const date = new Date(`${String(value).slice(0, 10)}T00:00:00`);
+  return Number.isNaN(date.getTime()) ? '—' : date.toLocaleDateString('en-US', { month: 'long', day: 'numeric' });
+}
+
+function birthdayGreeting(customer) {
+  const firstName = (customer?.name || 'there').trim().split(/\s+/)[0] || 'there';
+  const job = customer?.job_title ? `, ${customer.job_title}` : '';
+  const company = customer?.company ? ` at ${customer.company}` : '';
+  return `Happy Birthday, ${firstName}${job}! 🎉\n\nWishing you a wonderful birthday and a successful year ahead. We truly appreciate the relationship we have with you${company} and look forward to continuing to work together.\n\nHave a fantastic day!`;
+}
+
 
 const isOpenActivity = a => a.status !== 'Completed' && a.status !== 'Cancelled';
 const isOverdue = a => isOpenActivity(a) && !!a.activity_date && new Date(a.activity_date) < new Date();
@@ -4496,7 +4569,7 @@ function StatCard({ label, value, change, hint, icon, tone }) {
   );
 }
 
-function Dashboard({ revenue, customers, deals, activities, tickets, setPage, formatAmount, onSelectCustomer, onEditCustomer, onDeleteCustomer }) {
+function Dashboard({ revenue, customers, leads = [], deals, activities, tickets, setPage, formatAmount, onSelectCustomer, onEditCustomer, onDeleteCustomer }) {
   const [range, setRange] = useState(6);
 
   const monthlyRevenue = useMemo(() => {
@@ -4618,6 +4691,7 @@ function Dashboard({ revenue, customers, deals, activities, tickets, setPage, fo
         ))}
       </div>
     </div>
+    <BirthdayReminders customers={customers} leads={leads} />
     <div className="panel">
       <div className="panel-heading">
         <div><h3>Recent customers</h3><p>Your newest customer relationships</p></div>
@@ -4633,6 +4707,56 @@ function Dashboard({ revenue, customers, deals, activities, tickets, setPage, fo
       />
     </div>
   </>;
+}
+
+function BirthdayReminders({ customers = [], leads = [] }) {
+  const today = new Date();
+  const contacts = [
+    ...customers.map(contact => ({ ...contact, contactType: 'Customer' })),
+    ...leads.filter(lead => !lead.customer_id).map(contact => ({ ...contact, contactType: 'Lead' }))
+  ];
+  const birthdayCustomers = contacts.filter(customer => birthdayIsToday(customer.birthday, today));
+  const [copiedId, setCopiedId] = useState(null);
+
+  const copyGreeting = async customer => {
+    const message = birthdayGreeting(customer);
+    try {
+      await navigator.clipboard.writeText(message);
+      setCopiedId(customer.id);
+      window.setTimeout(() => setCopiedId(null), 1800);
+    } catch {
+      window.prompt('Copy birthday greeting:', message);
+    }
+  };
+
+  const openEmail = customer => {
+    if (!customer.email) return;
+    const subject = encodeURIComponent(`Happy Birthday, ${customer.name || 'there'}! 🎉`);
+    const body = encodeURIComponent(birthdayGreeting(customer));
+    window.location.href = `mailto:${customer.email}?subject=${subject}&body=${body}`;
+  };
+
+  return <div className="panel birthday-panel">
+    <div className="panel-heading">
+      <div><h3>🎂 Birthday greetings</h3><p>{birthdayCustomers.length ? `${birthdayCustomers.length} contact${birthdayCustomers.length > 1 ? 's' : ''} celebrating today.` : 'No customer birthdays today.'}</p></div>
+      {birthdayCustomers.length > 0 && <span className="count-badge">Today</span>}
+    </div>
+    {birthdayCustomers.length === 0 ? (
+      <div className="birthday-empty">When a contact has a birthday today, Orbit will surface them here with a ready-to-send greeting.</div>
+    ) : birthdayCustomers.map(customer => (
+      <div className="birthday-row" key={customer.id}>
+        <div className="birthday-avatar">🎉</div>
+        <div className="birthday-person">
+          <strong>{customer.name}</strong>
+          <span>{customer.job_title || 'Contact'}{customer.company ? ` · ${customer.company}` : ''}{customer.contactType === 'Lead' ? ' · Lead' : ''}</span>
+        </div>
+        <div className="birthday-actions">
+          <button type="button" className="secondary-btn" onClick={() => copyGreeting(customer)}>{copiedId === customer.id ? 'Copied ✓' : 'Copy greeting'}</button>
+          {customer.email && <button type="button" className="primary-btn" onClick={() => openEmail(customer)}>Email</button>}
+        </div>
+      </div>
+    ))}
+  </div>;
 }
 
 function Activity({ icon, title, text, time }) {
@@ -4698,6 +4822,7 @@ function CustomerTable({ customers, deals = [], formatAmount, onSelectCustomer, 
                   <div className="customer-contact-cell">
                     <span>{c.email || '—'}</span>
                     <span>{c.phone || '—'}</span>
+                    {c.job_title && <small>{c.job_title}</small>}
                   </div>
                 </td>
                 <td>{openDeals.length}</td>
@@ -4746,6 +4871,9 @@ function Customers({ customers, allCustomers, deals, search, setSearch, statusFi
       name: read(r, 'name'),
       company: read(r, 'company'),
       email: read(r, 'email'),
+      phone: read(r, 'phone'),
+      job_title: read(r, 'job_title'),
+      birthday: read(r, 'birthday'),
       status: read(r, 'status')
     })));
   }
@@ -4753,8 +4881,8 @@ function Customers({ customers, allCustomers, deals, search, setSearch, statusFi
   function exportCustomers() {
     downloadCSV(
       'customers.csv',
-      ['name', 'company', 'email', 'status', 'lifetime_value'],
-      customers.map(c => [c.name, c.company || '', c.email, c.status || 'Active', lifetimeValue(c, deals)])
+      ['name', 'company', 'email', 'phone', 'job_title', 'birthday', 'status', 'lifetime_value'],
+      customers.map(c => [c.name, c.company || '', c.email, c.phone || '', c.job_title || '', c.birthday || '', c.status || 'Active', lifetimeValue(c, deals)])
     );
   }
 
@@ -4762,7 +4890,7 @@ function Customers({ customers, allCustomers, deals, search, setSearch, statusFi
 
   return (
     <>
-      <PageHeading eyebrow="RELATIONSHIPS" title="Customers" description="Customers are created when you add a new deal from the Pipeline." />
+      <PageHeading eyebrow="RELATIONSHIPS" title="Customers" description="Manage customer contacts, job titles, birthdays and relationships." action="New customer" onAction={onAdd} />
       <div className="panel">
         <div className="panel-heading">
           <div>
@@ -4931,6 +5059,9 @@ function CustomerDetail({ currentUserId, customer, deals, activities, tickets, q
 
         <div className="detail-grid">
           <div><small>Email</small><p>{customer.email ? <a href={`mailto:${customer.email}`}>{customer.email}</a> : '—'}</p></div>
+          <div><small>Phone</small><p>{customer.phone || '—'}</p></div>
+          <div><small>Job title</small><p>{customer.job_title || '—'}</p></div>
+          <div><small>Birthday</small><p>{formatBirthday(customer.birthday)}</p></div>
           <div><small>Company</small><p>{customer.company || '—'}</p></div>
           <div><small>Customer since</small><p>{formatDate(customer.created_at)}</p></div>
           <div><small>Lifetime value</small><p>{formatAmount(lifetimeValue(customer, deals))}</p></div>
@@ -5444,7 +5575,7 @@ function Leads({ leads, customers, products, leadProducts, onAdd, onUpdate, onSy
   const [editing, setEditing] = useState(null);
   const [expandedVendor, setExpandedVendor] = useState(null);
   const [selectedProductIds, setSelectedProductIds] = useState([]);
-  const [form, setForm] = useState({ name: '', email: '', phone: '', company: '', source: 'Website', status: 'New', customer_id: '' });
+  const [form, setForm] = useState({ name: '', email: '', phone: '', company: '', job_title: '', birthday: '', source: 'Website', status: 'New', customer_id: '' });
   const [q, setQ] = useState('');
 
   const primaryVendors = ['F5', 'Kong', 'IRONSCALES', 'SolarWinds', 'Utimaco'];
@@ -5459,7 +5590,7 @@ function Leads({ leads, customers, products, leadProducts, onAdd, onUpdate, onSy
   const productIdsForLead = leadId => leadProducts.filter(row => row.lead_id === leadId).map(row => row.product_id);
 
   const resetForm = () => {
-    setForm({ name: '', email: '', phone: '', company: '', source: 'Website', status: 'New', customer_id: '' });
+    setForm({ name: '', email: '', phone: '', company: '', job_title: '', birthday: '', source: 'Website', status: 'New', customer_id: '' });
     setSelectedProductIds([]);
     setExpandedVendor(null);
     setEditing(null);
@@ -5477,6 +5608,8 @@ function Leads({ leads, customers, products, leadProducts, onAdd, onUpdate, onSy
       email: x.email || '',
       phone: x.phone || '',
       company: x.company || '',
+      job_title: x.job_title || '',
+      birthday: x.birthday || '',
       source: x.source || 'Website',
       status: x.status || 'New',
       customer_id: x.customer_id || ''
@@ -5596,6 +5729,8 @@ function Leads({ leads, customers, products, leadProducts, onAdd, onUpdate, onSy
         {[['name', 'Name'], ['email', 'Email'], ['phone', 'Phone'], ['company', 'Company']].map(([k, l]) =>
           <label key={k}>{l}<input value={form[k]} onChange={e => setForm({ ...form, [k]: e.target.value })} required={k === 'name' || k === 'email'} /></label>
         )}
+        <JobTitleField value={form.job_title} onChange={value => setForm({ ...form, job_title: value })} />
+        <BirthdayField value={form.birthday} onChange={value => setForm({ ...form, birthday: value })} />
 
         <label>Source<select value={form.source} onChange={e => setForm({ ...form, source: e.target.value })}>{['Website', 'Referral', 'Social', 'Campaign', 'Cold outreach', 'Other'].map(x => <option key={x}>{x}</option>)}</select></label>
         <label>Status<select value={form.status} onChange={e => setForm({ ...form, status: e.target.value })}>{['New', 'Contacted', 'Qualified', 'Unqualified', 'Converted'].map(x => <option key={x}>{x}</option>)}</select></label>
