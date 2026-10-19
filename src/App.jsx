@@ -83,16 +83,16 @@ function AuthScreen({ onGoogleSignIn, onEmailSignIn, onEmailSignUp, onPortalSign
 
   // A valid, still-open invitation skips the usual sign-in screen entirely.
   if (inviteChecking) {
-    return <div className="auth-page"><div className="auth-card auth-loading"><div className="auth-brand"><div className="brand-mark"><OrbitLogo /></div><span>orbit<span className="brand-accent">CRM</span></span></div><p>Checking your invitation…</p></div></div>;
+    return <div className="auth-page"><div className="auth-card auth-loading"><div className="auth-brand"><div className="brand-mark"><OrbitLogo /></div><span>storhet<span className="brand-accent">CRM</span></span></div><p>Checking your invitation…</p></div></div>;
   }
   if (inviteError) {
-    return <div className="auth-page"><div className="auth-card"><div className="auth-brand"><div className="brand-mark"><OrbitLogo /></div><span>orbit<span className="brand-accent">CRM</span></span></div><div className="auth-error" role="alert">{inviteError}</div><p className="authSignUp"><button type="button" className="auth-toggle-btn" onClick={() => window.location.href = window.location.pathname}>Go to sign in</button></p></div></div>;
+    return <div className="auth-page"><div className="auth-card"><div className="auth-brand"><div className="brand-mark"><OrbitLogo /></div><span>storhet<span className="brand-accent">CRM</span></span></div><div className="auth-error" role="alert">{inviteError}</div><p className="authSignUp"><button type="button" className="auth-toggle-btn" onClick={() => window.location.href = window.location.pathname}>Go to sign in</button></p></div></div>;
   }
   if (invite) {
     return (
       <div className="auth-page">
         <div className="auth-card">
-          <div className="auth-brand"><div className="brand-mark"><OrbitLogo /></div><span>orbit<span className="brand-accent">CRM</span></span></div>
+          <div className="auth-brand"><div className="brand-mark"><OrbitLogo /></div><span>storhet<span className="brand-accent">CRM</span></span></div>
           <h1>You're invited</h1>
           <p className="invite-welcome">{invite.company || invite.customer_name} has invited you to their customer portal.</p>
           {error && <div className="auth-error" role="alert">{error}</div>}
@@ -120,7 +120,7 @@ function AuthScreen({ onGoogleSignIn, onEmailSignIn, onEmailSignUp, onPortalSign
         <div className="auth-brand">
           <div className="brand-mark"><OrbitLogo /></div>
           <span>
-            orbit<span className="brand-accent">CRM</span>
+            storhet<span className="brand-accent">CRM</span>
           </span>
         </div>
         <div className="auth-heading">
@@ -365,7 +365,7 @@ function PortalStatusScreen({ account, email, onSignOut }) {
   return (
     <div className="auth-page">
       <div className="auth-card portal-status-card">
-        <div className="auth-brand"><div className="brand-mark"><OrbitLogo /></div><span>orbit<span className="brand-accent">CRM</span></span></div>
+        <div className="auth-brand"><div className="brand-mark"><OrbitLogo /></div><span>storhet<span className="brand-accent">CRM</span></span></div>
         <div className="portal-status-icon">{needsVerification ? '✉' : isActive ? 'O' : isRejected ? '×' : '✓'}</div>
         <div className="auth-heading">
           <h1>{needsVerification ? 'Check your email' : isActive ? 'Finish setting up your portal' : isRejected ? 'Portal access rejected' : 'Portal access pending'}</h1>
@@ -634,11 +634,11 @@ function CustomerPortalHome({ user, account, onSignOut }) {
   const [ticketsLoading, setTicketsLoading] = useState(true);
   const [ticketsError, setTicketsError] = useState('');
   const [currency, setCurrency] = useState(() => {
-    try { return localStorage.getItem('orbit_portal_currency') || localStorage.getItem('orbit_currency') || 'NGN'; } catch { return 'NGN'; }
+    try { return localStorage.getItem('storhet_portal_currency') || localStorage.getItem('storhet_currency') || 'NGN'; } catch { return 'NGN'; }
   });
 
   useEffect(() => {
-    try { localStorage.setItem('orbit_portal_currency', currency); } catch { /* storage unavailable */ }
+    try { localStorage.setItem('storhet_portal_currency', currency); } catch { /* storage unavailable */ }
   }, [currency]);
 
   async function loadTickets({ silent = false } = {}) {
@@ -743,7 +743,7 @@ function CustomerPortalHome({ user, account, onSignOut }) {
   return (
     <div className="customer-portal-shell">
       <header className="customer-portal-topbar">
-        <div className="auth-brand"><div className="brand-mark"><OrbitLogo /></div><span>orbit<span className="brand-accent">CRM</span></span></div>
+        <div className="auth-brand"><div className="brand-mark"><OrbitLogo /></div><span>storhet<span className="brand-accent">CRM</span></span></div>
         <div className="customer-portal-top-actions">
           <select className="portal-currency" value={currency} onChange={event => setCurrency(event.target.value)} aria-label="Display currency">
             {Object.keys(EXCHANGE_RATES).map(code => <option key={code} value={code}>{code}</option>)}
@@ -819,7 +819,7 @@ const VALID_PAGES = [...navSections.flatMap(section => section.items.map(([name]
 // and each browser tab can be on a different page.
 function getRememberedPage() {
   try {
-    const stored = sessionStorage.getItem('orbit_crm_page');
+    const stored = sessionStorage.getItem('storhet_crm_page');
     return VALID_PAGES.includes(stored) ? stored : 'Dashboard';
   } catch {
     return 'Dashboard'; // private browsing or storage disabled
@@ -862,7 +862,7 @@ function App() {
   const [page, setPage] = useState(getRememberedPage);
 
   useEffect(() => {
-    try { sessionStorage.setItem('orbit_crm_page', page); } catch { /* storage unavailable */ }
+    try { sessionStorage.setItem('storhet_crm_page', page); } catch { /* storage unavailable */ }
   }, [page]);
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [customers, setCustomers] = useState([]);
@@ -988,10 +988,10 @@ function App() {
   const [toast, setToast] = useState('');
 
   const [currency, setCurrency] = useState(() => {
-    try { return localStorage.getItem('orbit_currency') || 'NGN'; } catch { return 'NGN'; }
+    try { return localStorage.getItem('storhet_currency') || 'NGN'; } catch { return 'NGN'; }
   });
   useEffect(() => {
-    try { localStorage.setItem('orbit_currency', currency); } catch { /* storage unavailable */ }
+    try { localStorage.setItem('storhet_currency', currency); } catch { /* storage unavailable */ }
   }, [currency]);
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
@@ -3363,7 +3363,7 @@ async function signUpWithEmail(event) {
           <div className="auth-brand">
             <div className="brand-mark"><OrbitLogo /></div>
             <span>
-              orbit<span className="brand-accent">CRM</span>
+              storhet<span className="brand-accent">CRM</span>
             </span>
           </div>
           <p>
@@ -3412,7 +3412,7 @@ async function signUpWithEmail(event) {
     <aside className={`sidebar ${sidebarOpen ? 'sidebar-open' : ''}`}>
       <div className="brand">
         <div className="brand-mark"><OrbitLogo /></div>
-        <span>orbit<span className="brand-accent">CRM</span></span>
+        <span>storhet<span className="brand-accent">CRM</span></span>
         <button className="icon-btn close-mobile" onClick={() => setSidebarOpen(false)}><X size={18} /></button>
       </div>
       <div className="workspace-label">WORKSPACE</div>
@@ -6195,7 +6195,7 @@ function ComposeEmailModal({ integrations, customers, defaults = {}, userId, onS
 
 function EmailPage({ emailLogs, customers, integrations, loading, error, onConnect, onDisconnect, onAdd, onCompose }) {
   const [showLog, setShowLog] = useState(false);
-  useEffect(() => { const handler = () => setShowLog(true); window.addEventListener('orbit-open-email-log', handler); return () => window.removeEventListener('orbit-open-email-log', handler); }, []);
+  useEffect(() => { const handler = () => setShowLog(true); window.addEventListener('storhet-open-email-log', handler); return () => window.removeEventListener('storhet-open-email-log', handler); }, []);
   return <>
     <PageHeading eyebrow="COMMUNICATIONS" title="Email" description="Connect Gmail or Outlook, send email from inside the CRM, and keep customer communication in one place." action="Compose email" onAction={onCompose} />
     <div className="stats-grid">
@@ -6738,7 +6738,6 @@ function SupportEngineers({ supportEngineers, solutionSupport, onAdd, onUpdate, 
     {show && <div className="modal-backdrop" onClick={close}><form className="modal" onSubmit={save} onClick={e => e.stopPropagation()}><div className="modal-heading"><div><h2>{editing ? 'Edit support engineer' : 'Add support engineer'}</h2><p>Manage the technical people available to Storhet.</p></div><button type="button" className="icon-btn" onClick={close}><X size={18} /></button></div>{error && <div className="form-error">{error}</div>}<label>Name *<input required value={form.name} onChange={e => setForm({ ...form, name: e.target.value })} placeholder="e.g. Michel Agboola" /></label><label>Email<input type="email" value={form.email} onChange={e => setForm({ ...form, email: e.target.value })} placeholder="engineer@storhet.com" /></label><label>Role<input value={form.role} onChange={e => setForm({ ...form, role: e.target.value })} placeholder="e.g. System Engineer" /></label><label>Status<select value={form.status} onChange={e => setForm({ ...form, status: e.target.value })}><option value="Active">Active</option><option value="Inactive">Inactive</option></select></label><div className="product-selector"><div className="product-selector-heading"><div><strong>Supported solution families</strong><span>{form.solutionFamilies.length} selected</span></div></div><div className="product-vendor-children">{primaryVendors.map(family => { const selected = form.solutionFamilies.includes(family); return <label key={family} className={`product-option ${selected ? 'selected' : ''}`}><input type="checkbox" checked={selected} onChange={() => toggleFamily(family)} /><span>{family}</span></label>; })}</div></div><div className="modal-actions"><button type="button" className="secondary-btn" onClick={close}>Cancel</button><button type="submit" className="primary-btn" disabled={saving}>{saving ? 'Saving...' : editing ? 'Save changes' : 'Add engineer'}</button></div></form></div>}
   </>;
 }
-
 function Products({ products, supportEngineers, solutionSupport, onAdd, onUpdate, onDelete, onUpdateFamilySupport, currentUserId, isAdmin }) {
   const [show, setShow] = useState(false);
   const [selectedVendor, setSelectedVendor] = useState(null);
@@ -7107,7 +7106,6 @@ function Products({ products, supportEngineers, solutionSupport, onAdd, onUpdate
     </>
   );
 }
-
 function SettingsPage({ currency, setCurrency }) {
   const [selectedCurrency, setSelectedCurrency] = useState(currency);
   const [saved, setSaved] = useState(false);
@@ -7652,12 +7650,12 @@ function OrbitLogo({ className = "w-8 h-8" }) {
       fill="none"
     >
       <defs>
-        <linearGradient id="orbitGrad1" x1="0%" y1="100%" x2="100%" y2="0%">
+        <linearGradient id="storhetGrad1" x1="0%" y1="100%" x2="100%" y2="0%">
           <stop offset="0%" stopColor="#10B981" />
           <stop offset="100%" stopColor="#059669" />
         </linearGradient>
 
-        <linearGradient id="orbitGrad2" x1="0%" y1="0%" x2="100%" y2="100%">
+        <linearGradient id="storhetGrad2" x1="0%" y1="0%" x2="100%" y2="100%">
           <stop offset="0%" stopColor="#6366F1" />
           <stop offset="100%" stopColor="#3B82F6" />
         </linearGradient>
@@ -7670,12 +7668,12 @@ function OrbitLogo({ className = "w-8 h-8" }) {
 
       <ellipse
         cx="50" cy="50" rx="38" ry="14"
-        stroke="url(#orbitGrad2)" strokeWidth="4.5" strokeLinecap="round"
+        stroke="url(#storhetGrad2)" strokeWidth="4.5" strokeLinecap="round"
         transform="rotate(-28 50 50)"
       />
       <ellipse
         cx="50" cy="50" rx="38" ry="14"
-        stroke="url(#orbitGrad1)" strokeWidth="5" strokeLinecap="round"
+        stroke="url(#storhetGrad1)" strokeWidth="5" strokeLinecap="round"
         transform="rotate(32 50 50)"
       />
       <circle cx="50" cy="50" r="15" fill="url(#coreGrad)" />
