@@ -1,118 +1,25 @@
 import { createContext, useContext, useEffect, useMemo, useState, useRef } from 'react';
 import { supabase } from './lib/supabase';
+import FullCalendar from '@fullcalendar/react';
+import dayGridPlugin from '@fullcalendar/react/daygrid';
+import timeGridPlugin from '@fullcalendar/react/timegrid';
+import listPlugin from '@fullcalendar/react/list';
+import interactionPlugin from '@fullcalendar/react/interaction';
+import '@fullcalendar/react/skeleton.css';
 import { LayoutDashboard, Users, Kanban, CalendarCheck, BarChart3, Settings, Bell, Search, Plus, ArrowUpRight, MoreHorizontal, Menu, X, UserRound, Pencil, Receipt, LogOut, UserCog, MessageCircle, UserPlus, Mail, CalendarDays, FileText, Workflow, TrendingUp, Tags, DollarSign, CreditCard, Upload, Download, Play, Target, CheckCircle2, ArrowLeft, ChevronRight, Building2, RefreshCw } from 'lucide-react';
 
 // Lets every page heading refresh the latest workspace data without prop-drilling.
 const RefreshContext = createContext(null);
 
-// PostgREST returns at most 1,000 rows per request, so any list longer than that was being cut off
-// silently. This pages through the table in chunks so lists (and totals built from them) stay complete.
-// `id` is added as a tie-breaker so rows never repeat or go missing between pages.
-async function fetchAllRows(makeQuery, pageSize = 1000) {
-  const rows = [];
-  for (let from = 0; ; from += pageSize) {
-    const { data, error } = await makeQuery().order('id', { ascending: true }).range(from, from + pageSize - 1);
-    if (error) return { data: null, error };
-    rows.push(...(data || []));
-    if (!data || data.length < pageSize) break;
-  }
-  return { data: rows, error: null };
-}
-
-// Waits for the user to stop typing before an expensive filter re-runs.
-function useDebouncedValue(value, delay = 250) {
-  const [debounced, setDebounced] = useState(value);
-  useEffect(() => {
-    const timer = window.setTimeout(() => setDebounced(value), delay);
-    return () => window.clearTimeout(timer);
-  }, [value, delay]);
-  return debounced;
-}
-
-// ----- page-by-page loading -----
-const PAGE_SIZE = 25;
-
-// Keeps user-typed text from breaking a PostgREST filter string.
-const sanitizeSearch = value => String(value || '').replace(/[,()*%\\:"']/g, ' ').replace(/\s+/g, ' ').trim();
-
-function Pager({ page, pageSize = PAGE_SIZE, total, onPage, loading = false }) {
-  const pages = Math.max(1, Math.ceil(total / pageSize));
-  const from = total === 0 ? 0 : page * pageSize + 1;
-  const to = Math.min(total, (page + 1) * pageSize);
-  if (total <= pageSize && page === 0) return total > 0 ? <div className="pager"><span className="pager-info">Showing all {total}</span></div> : null;
-  return (
-    <div className="pager" role="navigation" aria-label="Pagination">
-      <span className="pager-info">{total === 0 ? 'No results' : `Showing ${from}–${to} of ${total}`}</span>
-      <div className="pager-buttons">
-        <button type="button" className="secondary-btn" onClick={() => onPage(0)} disabled={loading || page <= 0} aria-label="First page">«</button>
-        <button type="button" className="secondary-btn" onClick={() => onPage(page - 1)} disabled={loading || page <= 0}>Previous</button>
-        <span className="pager-page">Page {page + 1} of {pages}</span>
-        <button type="button" className="secondary-btn" onClick={() => onPage(page + 1)} disabled={loading || page + 1 >= pages}>Next</button>
-        <button type="button" className="secondary-btn" onClick={() => onPage(pages - 1)} disabled={loading || page + 1 >= pages} aria-label="Last page">»</button>
-      </div>
-    </div>
-  );
-}
-
-// Datasets that only some pages need. They are fetched the first time the page (or a feature that
-// uses them) is opened instead of all at login.
-const PAGE_DATA = {
-  Leads: ['leads', 'leadProducts'],
-  Reports: ['leads', 'quotes', 'invoices', 'payments'],
-  Quotes: ['quotes', 'quoteItems'],
-  Invoices: ['invoices', 'payments'],
-  Documents: ['documents'],
-  Email: ['emailLogs', 'emailIntegrations'],
-  'Email Logs': ['emailLogs'],
-  Calendar: ['calendarEvents'],
-  Automation: ['workflows'],
-  Segments: ['segments']
-};
-
 function AuthScreen({ onGoogleSignIn, onEmailSignIn, onEmailSignUp, onPortalSignUp, authMode, setAuthMode, email, setEmail, password, setPassword,
   error,
   notice,
-  loading,
-  invite, inviteChecking, inviteError, onPortalInviteSignUp
+  loading
 }) {
 
   const [showSignupModal, setShowSignupModal] = useState(false);
   const [showPortalSignup, setShowPortalSignup] = useState(false);
   const [portalFullName, setPortalFullName] = useState('');
-  const [invitePassword, setInvitePassword] = useState('');
-
-  // A valid, still-open invitation skips the usual sign-in screen entirely.
-  if (inviteChecking) {
-    return <div className="auth-page"><div className="auth-card auth-loading"><div className="auth-brand"><div className="brand-mark"><OrbitLogo /></div><span>storhet<span className="brand-accent">CRM</span></span></div><p>Checking your invitation…</p></div></div>;
-  }
-  if (inviteError) {
-    return <div className="auth-page"><div className="auth-card"><div className="auth-brand"><div className="brand-mark"><OrbitLogo /></div><span>storhet<span className="brand-accent">CRM</span></span></div><div className="auth-error" role="alert">{inviteError}</div><p className="authSignUp"><button type="button" className="auth-toggle-btn" onClick={() => window.location.href = window.location.pathname}>Go to sign in</button></p></div></div>;
-  }
-  if (invite) {
-    return (
-      <div className="auth-page">
-        <div className="auth-card">
-          <div className="auth-brand"><div className="brand-mark"><OrbitLogo /></div><span>storhet<span className="brand-accent">CRM</span></span></div>
-          <h1>You're invited</h1>
-          <p className="invite-welcome">{invite.company || invite.customer_name} has invited you to their customer portal.</p>
-          {error && <div className="auth-error" role="alert">{error}</div>}
-          <form onSubmit={event => { event.preventDefault(); onPortalInviteSignUp(event, portalFullName, invitePassword); }}>
-            <label>Full name
-              <input type="text" autoComplete="name" placeholder="Your full name" value={portalFullName} onChange={e => setPortalFullName(e.target.value)} required />
-            </label>
-            <label>Email address
-              <input type="email" value={invite.email} readOnly disabled />
-            </label>
-            <label>Password
-              <input type="password" autoComplete="new-password" placeholder="At least 6 characters" value={invitePassword} onChange={e => setInvitePassword(e.target.value)} minLength={6} required />
-            </label>
-            <button type="submit" className="primary-btn" disabled={loading}>{loading ? 'Creating account…' : 'Create account'}</button>
-          </form>
-          <p className="invite-expiry">This invitation expires {new Date(invite.expires_at).toLocaleDateString()}.</p>
-        </div>
-      </div>
-    );
-  }
 
   return (
     <div className="auth-page">
@@ -120,7 +27,7 @@ function AuthScreen({ onGoogleSignIn, onEmailSignIn, onEmailSignUp, onPortalSign
         <div className="auth-brand">
           <div className="brand-mark"><OrbitLogo /></div>
           <span>
-            storhet<span className="brand-accent">CRM</span>
+            orbit<span className="brand-accent">CRM</span>
           </span>
         </div>
         <div className="auth-heading">
@@ -365,7 +272,7 @@ function PortalStatusScreen({ account, email, onSignOut }) {
   return (
     <div className="auth-page">
       <div className="auth-card portal-status-card">
-        <div className="auth-brand"><div className="brand-mark"><OrbitLogo /></div><span>storhet<span className="brand-accent">CRM</span></span></div>
+        <div className="auth-brand"><div className="brand-mark"><OrbitLogo /></div><span>orbit<span className="brand-accent">CRM</span></span></div>
         <div className="portal-status-icon">{needsVerification ? '✉' : isActive ? 'O' : isRejected ? '×' : '✓'}</div>
         <div className="auth-heading">
           <h1>{needsVerification ? 'Check your email' : isActive ? 'Finish setting up your portal' : isRejected ? 'Portal access rejected' : 'Portal access pending'}</h1>
@@ -634,11 +541,11 @@ function CustomerPortalHome({ user, account, onSignOut }) {
   const [ticketsLoading, setTicketsLoading] = useState(true);
   const [ticketsError, setTicketsError] = useState('');
   const [currency, setCurrency] = useState(() => {
-    try { return localStorage.getItem('storhet_portal_currency') || localStorage.getItem('storhet_currency') || 'NGN'; } catch { return 'NGN'; }
+    try { return localStorage.getItem('orbit_portal_currency') || localStorage.getItem('orbit_currency') || 'NGN'; } catch { return 'NGN'; }
   });
 
   useEffect(() => {
-    try { localStorage.setItem('storhet_portal_currency', currency); } catch { /* storage unavailable */ }
+    try { localStorage.setItem('orbit_portal_currency', currency); } catch { /* storage unavailable */ }
   }, [currency]);
 
   async function loadTickets({ silent = false } = {}) {
@@ -743,7 +650,7 @@ function CustomerPortalHome({ user, account, onSignOut }) {
   return (
     <div className="customer-portal-shell">
       <header className="customer-portal-topbar">
-        <div className="auth-brand"><div className="brand-mark"><OrbitLogo /></div><span>storhet<span className="brand-accent">CRM</span></span></div>
+        <div className="auth-brand"><div className="brand-mark"><OrbitLogo /></div><span>orbit<span className="brand-accent">CRM</span></span></div>
         <div className="customer-portal-top-actions">
           <select className="portal-currency" value={currency} onChange={event => setCurrency(event.target.value)} aria-label="Display currency">
             {Object.keys(EXCHANGE_RATES).map(code => <option key={code} value={code}>{code}</option>)}
@@ -812,20 +719,6 @@ const navSections = [
   { title: 'System', items: [['Settings', Settings]] }
 ];
 
-const VALID_PAGES = [...navSections.flatMap(section => section.items.map(([name]) => name)), 'UserManagement'];
-
-// Remembers the page the user was on so a browser refresh doesn't bounce them back to Dashboard.
-// sessionStorage, not localStorage, so it clears when the tab actually closes rather than lingering forever,
-// and each browser tab can be on a different page.
-function getRememberedPage() {
-  try {
-    const stored = sessionStorage.getItem('storhet_crm_page');
-    return VALID_PAGES.includes(stored) ? stored : 'Dashboard';
-  } catch {
-    return 'Dashboard'; // private browsing or storage disabled
-  }
-}
-
 const EXCHANGE_RATES = {
   NGN: { symbol: '₦', rate: 1400 },
   USD: { symbol: '$', rate: 1 },
@@ -859,11 +752,7 @@ function App() {
   const [portalRequestsNotice, setPortalRequestsNotice] = useState('');
   const [portalRequestActionId, setPortalRequestActionId] = useState(null);
 
-  const [page, setPage] = useState(getRememberedPage);
-
-  useEffect(() => {
-    try { sessionStorage.setItem('storhet_crm_page', page); } catch { /* storage unavailable */ }
-  }, [page]);
+  const [page, setPage] = useState('Dashboard');
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [customers, setCustomers] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -891,9 +780,7 @@ function App() {
   const [editDealSaving, setEditDealSaving] = useState(false);
   const [editDealError, setEditDealError] = useState('');
   const [search, setSearch] = useState('');
-  const debouncedSearch = useDebouncedValue(search, 250);
   const [globalSearch, setGlobalSearch] = useState('');
-  const debouncedGlobalSearch = useDebouncedValue(globalSearch, 250);
   const [showCustomerForm, setShowCustomerForm] = useState(false);
   const [newCustomer, setNewCustomer] = useState({ name: '', company: '', email: '', status: 'Active' });
   const [selectedCustomer, setSelectedCustomer] = useState(null);
@@ -912,27 +799,6 @@ function App() {
   const [editActivityError, setEditActivityError] = useState('');
   const [selectedActivity, setSelectedActivity] = useState(null);
   const [tickets, setTickets] = useState([]);
-
-  // Server-side paging for the big lists (PAGE_SIZE rows per page).
-  const [ticketPage, setTicketPage] = useState(0);
-  const [ticketTotal, setTicketTotal] = useState(0);
-  const [ticketCounts, setTicketCounts] = useState({});
-  const [ticketListLoading, setTicketListLoading] = useState(false);
-  const [ticketFilters, setTicketFilters] = useState({ query: '', status: 'All', priority: 'All', queue: 'All tickets' });
-  const debouncedTicketQuery = useDebouncedValue(ticketFilters.query, 300);
-  const [activityTab, setActivityTab] = useState('All');
-  const [activityPage, setActivityPage] = useState(0);
-  const [activityTotal, setActivityTotal] = useState(0);
-  const [activityCounts, setActivityCounts] = useState({});
-  const [activityListLoading, setActivityListLoading] = useState(false);
-  const [customerRows, setCustomerRows] = useState([]);
-  const [customerPageIndex, setCustomerPageIndex] = useState(0);
-  const [customerTotal, setCustomerTotal] = useState(0);
-  const [customerListLoading, setCustomerListLoading] = useState(false);
-  const [dashStats, setDashStats] = useState({ overdue: 0, dueToday: 0, openTickets: 0, totalTickets: 0, upcoming: [] });
-  const [customerRelated, setCustomerRelated] = useState({ activities: [], tickets: [] });
-  const [serverSearch, setServerSearch] = useState({ activities: [], tickets: [] });
-  const [reportData, setReportData] = useState({ activities: [], tickets: [] });
   const [leads, setLeads] = useState([]);
   const [leadProducts, setLeadProducts] = useState([]);
   const [emailLogs, setEmailLogs] = useState([]);
@@ -949,7 +815,6 @@ function App() {
   const [selectedInvoice, setSelectedInvoice] = useState(null);
   const [phase2Error, setPhase2Error] = useState('');
   const [emailIntegrations, setEmailIntegrations] = useState([]);
-  const [composeDraft, setComposeDraft] = useState(null);
   const [emailIntegrationLoading, setEmailIntegrationLoading] = useState(false);
   const [emailIntegrationError, setEmailIntegrationError] = useState('');
   const [showTicketForm, setShowTicketForm] = useState(false);
@@ -972,26 +837,14 @@ function App() {
   const searchInputRef = useRef(null);
   const lastRefreshRef = useRef(Date.now());
   const refreshingRef = useRef(false);
-  const loadedDataRef = useRef(new Set());
-  const pageRef = useRef('Dashboard');
-  const pagingRef = useRef({});
   const [refreshing, setRefreshing] = useState(false);
-  const [inviteToken, setInviteToken] = useState(null);
-  const [inviteInfo, setInviteInfo] = useState(null);
-  const [inviteChecking, setInviteChecking] = useState(false);
-  const [inviteError, setInviteError] = useState('');
-  const [pendingInvitations, setPendingInvitations] = useState([]);
-  const [invitationsLoading, setInvitationsLoading] = useState(false);
-  const [invitationsError, setInvitationsError] = useState('');
-  const [invitationActionId, setInvitationActionId] = useState(null);
-  const [invitingCustomer, setInvitingCustomer] = useState(null);
   const [toast, setToast] = useState('');
 
   const [currency, setCurrency] = useState(() => {
-    try { return localStorage.getItem('storhet_currency') || 'NGN'; } catch { return 'NGN'; }
+    try { return localStorage.getItem('orbit_currency') || 'NGN'; } catch { return 'NGN'; }
   });
   useEffect(() => {
-    try { localStorage.setItem('storhet_currency', currency); } catch { /* storage unavailable */ }
+    try { localStorage.setItem('orbit_currency', currency); } catch { /* storage unavailable */ }
   }, [currency]);
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
@@ -1000,49 +853,6 @@ function App() {
     if (connected) { showToast(`${connected === 'gmail' ? 'Gmail' : 'Outlook'} connected successfully.`); fetchEmailIntegrations(); window.history.replaceState({}, document.title, window.location.pathname); }
     if (emailError) { setEmailIntegrationError(emailError); setPage('Email'); window.history.replaceState({}, document.title, window.location.pathname); }
   }, [session]);
-
-  // A staff-sent portal invite link (?invite=<token>) is checked once, before sign-in.
-  useEffect(() => {
-    const token = new URLSearchParams(window.location.search).get('invite');
-    if (!token) return;
-    setInviteToken(token);
-    setInviteChecking(true);
-    supabase.rpc('portal_invitation_lookup', { p_token: token }).then(({ data, error }) => {
-      setInviteChecking(false);
-      if (error || !data || data.length === 0) {
-        setInviteError('This invitation link is invalid or has expired. Please ask for a new one.');
-        return;
-      }
-      setInviteInfo({ ...data[0], token });
-    });
-  }, []);
-
-  async function signUpPortalInvite(event, fullName, invitePassword) {
-    event.preventDefault();
-    setAuthError('');
-    setAuthNotice('');
-    if (!fullName.trim() || !invitePassword) { setAuthError('Please enter your name and a password.'); return; }
-    if (invitePassword.length < 6) { setAuthError('Password must be at least 6 characters long.'); return; }
-    setEmailLoading(true);
-    try {
-      const { error } = await supabase.auth.signUp({
-        email: inviteInfo.email,
-        password: invitePassword,
-        options: {
-          emailRedirectTo: `${window.location.origin}/?portal=1`,
-          data: { account_type: 'customer_portal', full_name: fullName.trim(), invite_token: inviteInfo.token }
-        }
-      });
-      if (error) throw error;
-      setAuthNotice('Account created. Verify your email if prompted, you will be taken straight into your portal.');
-      setPortalSignUpName(fullName.trim());
-    } catch (err) {
-      console.error('Invited portal sign-up error:', err);
-      setAuthError(err.message || 'Unable to create your account.');
-    } finally {
-      setEmailLoading(false);
-    }
-  }
 
   const showToast = (message) => {
     setToast(message);
@@ -1061,9 +871,9 @@ function App() {
     })}`;
   };
 
-  const filteredCustomers = useMemo(() => customers.filter(c => (statusFilter === 'All' || (c.status || 'Active') === statusFilter) && `${c.name} ${c.company || ''} ${c.email || ''}`.toLowerCase().includes(debouncedSearch.toLowerCase())), [customers, debouncedSearch, statusFilter]);
+  const filteredCustomers = useMemo(() => customers.filter(c => (statusFilter === 'All' || (c.status || 'Active') === statusFilter) && `${c.name} ${c.company || ''} ${c.email || ''}`.toLowerCase().includes(search.toLowerCase())), [customers, search, statusFilter]);
   const globalSearchResults = useMemo(() => {
-    const query = debouncedGlobalSearch.trim().toLowerCase();
+    const query = globalSearch.trim().toLowerCase();
 
     if (!query) return [];
 
@@ -1096,7 +906,7 @@ function App() {
       }
     });
 
-    serverSearch.activities.forEach(activity => {
+    activities.forEach(activity => {
       const text = `${activity.title} ${activity.type || ''} ${activity.notes || ''}`.toLowerCase();
 
       if (text.includes(query)) {
@@ -1110,7 +920,7 @@ function App() {
       }
     });
 
-    serverSearch.tickets.forEach(ticket => {
+    tickets.forEach(ticket => {
       const text = `${ticket.title} ${ticket.description || ''} ${ticket.category || ''}`.toLowerCase();
 
       if (text.includes(query)) {
@@ -1128,7 +938,7 @@ function App() {
     quotes.forEach(q => { const text = `${q.quote_number || ''} ${q.title || ''} ${q.customer_name || ''} ${q.company || ''} ${q.email || ''}`.toLowerCase(); if (text.includes(query)) results.push({ type: 'Quote', title: q.quote_number || q.title, subtitle: q.customer_name || q.company || 'Quote', page: 'Quotes', quote: q }); });
     invoices.forEach(i => { const text = `${i.invoice_number || ''} ${i.title || ''} ${i.customers?.name || ''}`.toLowerCase(); if (text.includes(query)) results.push({ type: 'Invoice', title: i.invoice_number || i.title, subtitle: i.customers?.name || 'Invoice', page: 'Invoices', invoice: i }); });
     return results.slice(0, 12);
-  }, [debouncedGlobalSearch, customers, deals, serverSearch, leads, quotes, invoices]);
+  }, [globalSearch, customers, deals, activities, tickets, leads, quotes, invoices]);
   const revenue = deals
     .filter(d => d.stage === 'Won')
     .reduce((sum, d) => sum + (Number(d.amount) || 0), 0);
@@ -1378,33 +1188,14 @@ async function signUpWithEmail(event) {
         // Create/refresh the portal registration after email verification.
         // The database function always leaves self-registrations pending; only
         // an authorized CRM admin can approve access.
-        const metaInviteToken = currentSession.user.user_metadata?.invite_token;
         if (
           currentSession.user.email_confirmed_at &&
-          metaInviteToken && !account
-        ) {
-          const { error: inviteCompletionError } = await supabase.rpc('complete_customer_portal_invitation_signup', {
-            p_token: metaInviteToken,
-            p_full_name: currentSession.user.user_metadata?.full_name || portalSignUpName || null
-          });
-          if (inviteCompletionError) throw inviteCompletionError;
-        } else if (
-          currentSession.user.email_confirmed_at &&
-          !metaInviteToken &&
           (!account || account.registration_source === 'signup')
         ) {
           const { error: completionError } = await supabase.rpc('complete_customer_portal_signup', {
             p_full_name: currentSession.user.user_metadata?.full_name || account?.full_name || portalSignUpName || null
           });
           if (completionError) throw completionError;
-          const refreshed = await supabase
-            .from('customer_portal_accounts')
-            .select('user_id, customer_id, email, full_name, status, registration_source')
-            .eq('user_id', currentSession.user.id)
-            .maybeSingle();
-          if (refreshed.error) throw refreshed.error;
-          account = refreshed.data;
-        } else if (metaInviteToken && !account) {
           const refreshed = await supabase
             .from('customer_portal_accounts')
             .select('user_id, customer_id, email, full_name, status, registration_source')
@@ -1438,12 +1229,12 @@ async function signUpWithEmail(event) {
   const fetchCustomers = async () => {
     setLoading(true);
 
-    const { data, error } = await fetchAllRows(() => supabase
+    const { data, error } = await supabase
       .from("customers")
       .select("*")
       .order("created_at", {
         ascending: false,
-      }));
+      });
 
     if (error) {
       console.error("Error fetching customers:", error);
@@ -1454,10 +1245,10 @@ async function signUpWithEmail(event) {
     setLoading(false);
   };
   const fetchDeals = async () => {
-    const { data, error } = await fetchAllRows(() => supabase
+    const { data, error } = await supabase
       .from('deals')
       .select('*')
-      .order('created_at', { ascending: false }));
+      .order('created_at', { ascending: false });
 
     if (error) {
       console.error('Error fetching deals:', error);
@@ -1465,142 +1256,36 @@ async function signUpWithEmail(event) {
       setDeals(data || []);
     }
   };
-  // ---------- page-by-page loading ----------
-  async function fetchCustomerPage() {
-    const { page: pageIndex, search: term, status } = pagingRef.current.customers;
-    setCustomerListLoading(true);
-    let query = supabase.from('customers').select('*', { count: 'exact' });
-    if (status === 'Active') query = query.or('status.eq.Active,status.is.null');
-    else if (status !== 'All') query = query.eq('status', status);
-    const text = sanitizeSearch(term);
-    if (text) query = query.or(`name.ilike.%${text}%,company.ilike.%${text}%,email.ilike.%${text}%`);
-    const { data, count, error } = await query
-      .order('created_at', { ascending: false }).order('id', { ascending: true })
-      .range(pageIndex * PAGE_SIZE, pageIndex * PAGE_SIZE + PAGE_SIZE - 1);
-    setCustomerListLoading(false);
-    if (error) { console.error('Error fetching customers page:', error); return; }
-    if ((data || []).length === 0 && (count || 0) > 0 && pageIndex > 0) { setCustomerPageIndex(Math.ceil(count / PAGE_SIZE) - 1); return; }
-    setCustomerRows(data || []);
-    setCustomerTotal(count || 0);
-  }
-
-  async function matchingCustomerIds(text) {
-    const { data } = await supabase.from('customers').select('id').or(`name.ilike.%${text}%,company.ilike.%${text}%`).limit(50);
-    return (data || []).map(row => row.id);
-  }
-
-  function changeTicketFilters(patch) {
-    setTicketFilters(current => ({ ...current, ...patch }));
-    setTicketPage(0);
-  }
-
-  async function fetchTicketCounts() {
-    const head = () => supabase.from('tickets').select('id', { count: 'exact', head: true });
-    const [open, progress, done, portalOpen] = await Promise.all([
-      head().eq('status', 'Open'),
-      head().eq('status', 'In Progress'),
-      head().in('status', ['Resolved', 'Closed']),
-      head().eq('source', 'portal').in('status', ['Open', 'In Progress'])
-    ]);
-    setTicketCounts({ Open: open.count || 0, 'In Progress': progress.count || 0, done: done.count || 0, portalOpen: portalOpen.count || 0 });
-  }
-
-  async function fetchTickets() {
-    const { page: pageIndex, filters } = pagingRef.current.tickets;
-    setTicketListLoading(true);
-    let query = supabase.from('tickets').select('*, customers (name, company)', { count: 'exact' });
-    if (filters.status !== 'All') query = query.eq('status', filters.status);
-    if (filters.priority !== 'All') query = query.eq('priority', filters.priority);
-    if (filters.queue === 'Assigned to me') query = query.eq('assigned_to', session?.user?.id);
-    else if (filters.queue === 'Unassigned') query = query.is('assigned_to', null);
-    else if (filters.queue === 'Customer portal') query = query.eq('source', 'portal');
-    const text = sanitizeSearch(filters.query);
-    if (text) {
-      const ids = await matchingCustomerIds(text);
-      const number = Number(text.replace(/^#/, ''));
-      const parts = [`title.ilike.%${text}%`, `description.ilike.%${text}%`, `category.ilike.%${text}%`];
-      if (Number.isInteger(number) && number > 0) parts.push(`ticket_number.eq.${number}`);
-      if (ids.length) parts.push(`customer_id.in.(${ids.join(',')})`);
-      query = query.or(parts.join(','));
-    }
-    const { data, count, error } = await query
-      .order('created_at', { ascending: false }).order('id', { ascending: true })
-      .range(pageIndex * PAGE_SIZE, pageIndex * PAGE_SIZE + PAGE_SIZE - 1);
-    setTicketListLoading(false);
-    if (error) { console.error('Error fetching tickets:', error); return; }
-    if ((data || []).length === 0 && (count || 0) > 0 && pageIndex > 0) { setTicketPage(Math.ceil(count / PAGE_SIZE) - 1); return; }
-    setTickets(data || []);
-    setTicketTotal(count || 0);
-    fetchTicketCounts();
-  }
-
-  const ACTIVITY_OPEN = 'status.is.null,status.not.in.(Completed,Cancelled)';
-  function activityFilterQuery(query, tab) {
-    const nowIso = new Date().toISOString();
-    if (tab === 'Completed') return query.eq('status', 'Completed');
-    if (tab === 'Upcoming') return query.or(ACTIVITY_OPEN).or(`activity_date.is.null,activity_date.gte.${nowIso}`);
-    if (tab === 'Overdue') return query.or(ACTIVITY_OPEN).lt('activity_date', nowIso);
-    return query;
-  }
-
   async function fetchActivities() {
-    const { tab, page: pageIndex } = pagingRef.current.activities;
-    setActivityListLoading(true);
-    const { data, count, error } = await activityFilterQuery(supabase.from('activities').select('*', { count: 'exact' }), tab)
-      .order('activity_date', { ascending: tab !== 'Completed', nullsFirst: false })
-      .order('id', { ascending: true })
-      .range(pageIndex * PAGE_SIZE, pageIndex * PAGE_SIZE + PAGE_SIZE - 1);
-    setActivityListLoading(false);
-    if (error) { console.error('Error fetching activities:', error); return; }
-    if ((data || []).length === 0 && (count || 0) > 0 && pageIndex > 0) { setActivityPage(Math.ceil(count / PAGE_SIZE) - 1); return; }
+    const { data, error } = await supabase
+      .from('activities')
+      .select('*')
+      .order('activity_date', { ascending: true });
+    if (error) {
+      console.error('Error fetching activities:', error);
+      return;
+    }
     setActivities(data || []);
-    setActivityTotal(count || 0);
-    const counts = {};
-    await Promise.all(['All', 'Upcoming', 'Overdue', 'Completed'].map(async name => {
-      const result = await activityFilterQuery(supabase.from('activities').select('id', { count: 'exact', head: true }), name);
-      counts[name] = result.count || 0;
-    }));
-    setActivityCounts(counts);
   }
+  async function fetchTickets() {
+    const { data, error } = await supabase
+      .from('tickets')
+      .select(`
+      *,
+      customers (
+        name,
+        company
+      )
+    `)
+      .order('created_at', { ascending: false });
 
-  // Small, fixed-size queries for the dashboard cards.
-  async function fetchDashboardStats() {
-    const start = new Date(); start.setHours(0, 0, 0, 0);
-    const end = new Date(start); end.setDate(end.getDate() + 1);
-    const nowIso = new Date().toISOString();
-    const head = table => supabase.from(table).select('id', { count: 'exact', head: true });
-    const [overdue, dueToday, openTickets, totalTickets, upcoming] = await Promise.all([
-      head('activities').or(ACTIVITY_OPEN).lt('activity_date', nowIso),
-      head('activities').or(ACTIVITY_OPEN).gte('activity_date', start.toISOString()).lt('activity_date', end.toISOString()),
-      head('tickets').in('status', ['Open', 'In Progress']),
-      head('tickets'),
-      supabase.from('activities').select('*').or(ACTIVITY_OPEN).order('activity_date', { ascending: true, nullsFirst: false }).limit(4)
-    ]);
-    setDashStats({
-      overdue: overdue.count || 0, dueToday: dueToday.count || 0,
-      openTickets: openTickets.count || 0, totalTickets: totalTickets.count || 0,
-      upcoming: upcoming.data || []
-    });
+    if (error) {
+      console.error('Error fetching tickets:', error);
+      return;
+    }
+
+    setTickets(data || []);
   }
-
-  // The customer pop-up shows that customer's own tickets and activities.
-  async function fetchCustomerRelated(customerId) {
-    const [activityResult, ticketResult] = await Promise.all([
-      supabase.from('activities').select('*').eq('customer_id', customerId).order('activity_date', { ascending: false, nullsFirst: false }).limit(100),
-      supabase.from('tickets').select('*, customers (name, company)').eq('customer_id', customerId).order('created_at', { ascending: false }).limit(100)
-    ]);
-    setCustomerRelated({ activities: activityResult.data || [], tickets: ticketResult.data || [] });
-  }
-
-  // Reports are the one place that needs every row, so they load the full lists only while open.
-  async function fetchReportData() {
-    const [activityResult, ticketResult] = await Promise.all([
-      fetchAllRows(() => supabase.from('activities').select('*').order('activity_date', { ascending: true })),
-      fetchAllRows(() => supabase.from('tickets').select('*, customers (name, company)').order('created_at', { ascending: false }))
-    ]);
-    setReportData({ activities: activityResult.data || [], tickets: ticketResult.data || [] });
-  }
-
   async function fetchEmailIntegrations() {
     if (!session?.user?.id) return;
     setEmailIntegrationLoading(true); setEmailIntegrationError('');
@@ -1627,9 +1312,9 @@ async function signUpWithEmail(event) {
   }
 
   async function fetchLeads() {
-    const { data, error } = await fetchAllRows(() => supabase.from('leads')
+    const { data, error } = await supabase.from('leads')
       .select('*, customers(name,company)')
-      .order('created_at', { ascending: false }));
+      .order('created_at', { ascending: false });
     if (error) {
       console.error('Error fetching leads:', error);
       return;
@@ -1655,22 +1340,110 @@ async function signUpWithEmail(event) {
     }
     setDealProducts(data || []);
   }
-  async function fetchEmailLogs() { const { data, error } = await fetchAllRows(() => supabase.from('email_logs').select('*, customers(name,company)').order('sent_at', { ascending: false })); if (error) { console.error('Error fetching email logs:', error); return; } setEmailLogs(data || []); }
-  async function fetchCalendarEvents() { const { data, error } = await fetchAllRows(() => supabase.from('calendar_events').select('*, customers(name,company)').order('start_at', { ascending: true })); if (error) { console.error('Error fetching calendar events:', error); return; } setCalendarEvents(data || []); }
+  async function fetchEmailLogs() { const { data, error } = await supabase.from('email_logs').select('*, customers(name,company)').order('sent_at', { ascending: false }); if (error) { console.error('Error fetching email logs:', error); return; } setEmailLogs(data || []); }
+  async function createDueCalendarNotifications(calendarRows = []) {
+    if (!session?.user?.id || !calendarRows.length) return;
+
+    const now = Date.now();
+    const EVENT_TIME_GRACE_MS = 2 * 60 * 1000;
+
+    const upcoming = calendarRows.filter(event => {
+      if (!event?.id || !event?.start_at || event.status === 'Cancelled' || event.reminder_minutes == null) return false;
+
+      const start = new Date(event.start_at).getTime();
+      const reminderMinutes = Number(event.reminder_minutes);
+      if (!Number.isFinite(start) || !Number.isFinite(reminderMinutes) || reminderMinutes < 0) return false;
+
+      const reminderAt = start - (reminderMinutes * 60 * 1000);
+
+      // Normal reminders fire once their reminder time has been reached,
+      // as long as the event itself has not already passed.
+      if (reminderMinutes > 0) {
+        return reminderAt <= now && start > now;
+      }
+
+      // "At event time" needs a small grace period because the browser's
+      // polling/check will almost never happen at the exact millisecond of
+      // the event start. This prevents the old `start > now` check from
+      // silently skipping the reminder.
+      return start <= now && start >= (now - EVENT_TIME_GRACE_MS);
+    });
+
+    if (!upcoming.length) return;
+
+    const { data: existing, error: existingError } = await supabase
+      .from('notifications')
+      .select('message')
+      .eq('user_id', session.user.id)
+      .eq('type', 'calendar_reminder')
+      .limit(500);
+
+    if (existingError) {
+      console.error('Failed to check calendar reminders:', existingError);
+      return;
+    }
+
+    const existingMessages = new Set((existing || []).map(item => item.message || ''));
+    const inserts = [];
+
+    upcoming.forEach(event => {
+      const key = `calendar-reminder:${event.id}:${event.reminder_minutes}`;
+      if ([...existingMessages].some(message => message.includes(`[${key}]`))) return;
+
+      const start = new Date(event.start_at);
+      const diffMs = start.getTime() - now;
+      const diffMinutes = Math.max(0, Math.ceil(diffMs / 60000));
+      let whenText = 'starting now';
+
+      if (diffMinutes >= 1440) {
+        const days = Math.ceil(diffMinutes / 1440);
+        whenText = `${days} day${days === 1 ? '' : 's'} to go`;
+      } else if (diffMinutes >= 60) {
+        const hours = Math.ceil(diffMinutes / 60);
+        whenText = `${hours} hour${hours === 1 ? '' : 's'} to go`;
+      } else if (diffMinutes > 0) {
+        whenText = `${diffMinutes} minute${diffMinutes === 1 ? '' : 's'} to go`;
+      }
+
+      inserts.push({
+        user_id: session.user.id,
+        type: 'calendar_reminder',
+        title: `Upcoming: ${event.title || 'Calendar event'}`,
+        message: `${event.title || 'Calendar event'} — ${whenText} [${key}]`,
+        link: 'Calendar'
+      });
+    });
+
+    if (inserts.length) {
+      const { error } = await supabase.from('notifications').insert(inserts);
+      if (error) {
+        console.error('Failed to create calendar reminders:', error);
+      } else {
+        await fetchNotifications();
+      }
+    }
+  }
+
+  async function fetchCalendarEvents() {
+    const { data, error } = await supabase.from('calendar_events').select('*, customers(name,company)').order('start_at', { ascending: true });
+    if (error) { console.error('Error fetching calendar events:', error); return; }
+    setCalendarEvents(data || []);
+    createDueCalendarNotifications(data || []);
+  }
   async function fetchQuotes() {
-    const { data, error } = await fetchAllRows(() => supabase
+    const { data, error } = await supabase
       .from('quotes')
       .select('*')
-      .order('created_at', { ascending: false }));
+      .order('created_at', { ascending: false });
     if (error) { console.error('Error fetching quotes:', error); return; }
     setQuotes(data || []);
   }
 
   async function fetchQuoteItems() {
-    const { data, error } = await fetchAllRows(() => supabase
+    const { data, error } = await supabase
       .from('quote_items')
       .select('*')
-      .order('created_at', { ascending: true }));
+      .order('created_at', { ascending: true });
     if (error) { console.error('Error fetching quote items:', error); return; }
     setQuoteItems(data || []);
   }
@@ -1724,9 +1497,9 @@ async function signUpWithEmail(event) {
 
     return data || [];
   }
-  async function fetchInvoices() { const { data, error } = await fetchAllRows(() => supabase.from('invoices').select('*, customers(name,company)').order('created_at', { ascending: false })); if (error) { console.error('Error fetching invoices:', error); return; } setInvoices(data || []); }
-  async function fetchPayments() { const { data, error } = await fetchAllRows(() => supabase.from('payments').select('*').order('paid_at', { ascending: false })); if (error) { console.error('Error fetching payments:', error); return; } setPayments(data || []); }
-  async function fetchDocuments() { const { data, error } = await fetchAllRows(() => supabase.from('documents').select('*, customers(name,company)').order('created_at', { ascending: false })); if (error) { console.error('Error fetching documents:', error); return; } setDocuments(data || []); }
+  async function fetchInvoices() { const { data, error } = await supabase.from('invoices').select('*, customers(name,company)').order('created_at', { ascending: false }); if (error) { console.error('Error fetching invoices:', error); return; } setInvoices(data || []); }
+  async function fetchPayments() { const { data, error } = await supabase.from('payments').select('*').order('paid_at', { ascending: false }); if (error) { console.error('Error fetching payments:', error); return; } setPayments(data || []); }
+  async function fetchDocuments() { const { data, error } = await supabase.from('documents').select('*, customers(name,company)').order('created_at', { ascending: false }); if (error) { console.error('Error fetching documents:', error); return; } setDocuments(data || []); }
   async function fetchWorkflows() { const { data, error } = await supabase.from('workflows').select('*').order('created_at', { ascending: false }); if (error) { console.error('Error fetching workflows:', error); return; } setWorkflows(data || []); }
   async function fetchSegments() { const { data, error } = await supabase.from('customer_segments').select('*').order('created_at', { ascending: false }); if (error) { console.error('Error fetching segments:', error); return; } setSegments(data || []); }
   async function fetchProducts() { const { data, error } = await supabase.from('products').select('*').order('created_at', { ascending: false }); if (error) { console.error('Error fetching products:', error); return; } setProducts(data || []); }
@@ -1837,26 +1610,6 @@ async function signUpWithEmail(event) {
     ]);
   }
   async function deleteLead(id) { if (!window.confirm('Delete this lead?')) return; const { error } = await supabase.from('leads').delete().eq('id', id); if (error) { alert(error.message); return; } setLeads(prev => prev.filter(x => x.id !== id)); }
-  // Opens the Compose window from anywhere (Email page, customer pop-up).
-  function openCompose(defaults = {}) {
-    ensureData(['emailIntegrations']);
-    setComposeDraft(defaults);
-  }
-
-  // Sends through the send-email Edge Function, which also records the email in the log.
-  async function sendEmail(payload) {
-    const { data, error } = await supabase.functions.invoke('send-email', { body: payload });
-    if (error) {
-      let message = error.message;
-      try { const details = await error.context?.json(); if (details?.error) message = details.error; } catch { /* keep the default message */ }
-      fetchEmailLogs();
-      throw new Error(message);
-    }
-    if (data?.error) { fetchEmailLogs(); throw new Error(data.error); }
-    fetchEmailLogs();
-    showToast(data?.logged === false ? 'Email sent, but it could not be saved to the log.' : 'Email sent.');
-  }
-
   async function addEmailLog(payload) { const { data, error } = await supabase.from('email_logs').insert([{ ...payload, created_by: session.user.id }]).select('*, customers(name,company)').single(); if (error) throw error; setEmailLogs(prev => [data, ...prev]); return data; }
   async function addCalendarEvent(payload) { const { data, error } = await supabase.from('calendar_events').insert([{ ...payload, created_by: session.user.id }]).select('*, customers(name,company)').single(); if (error) throw error; setCalendarEvents(prev => [...prev, data].sort((a, b) => new Date(a.start_at) - new Date(b.start_at))); return data; }
   async function updateCalendarEvent(id, payload) { const { data, error } = await supabase.from('calendar_events').update(payload).eq('id', id).select('*, customers(name,company)').single(); if (error) throw error; setCalendarEvents(prev => prev.map(x => x.id === id ? data : x)); return data; }
@@ -2122,46 +1875,6 @@ async function signUpWithEmail(event) {
     await fetchAuthorizedUsers();
     return true;
   }
-
-  async function fetchPortalInvitations() {
-    setInvitationsLoading(true);
-    setInvitationsError('');
-    const { data, error } = await supabase
-      .from('customer_portal_invitations')
-      .select('id, customer_id, email, invited_by, expires_at, accepted_at, revoked_at, created_at, customers(name, company)')
-      .order('created_at', { ascending: false })
-      .limit(200);
-    setInvitationsLoading(false);
-    if (error) { console.error('Error fetching portal invitations:', error); setInvitationsError('Unable to load invitations. Run the portal_invitations.sql migration, then refresh.'); return; }
-    setPendingInvitations(data || []);
-  }
-
-  // Generates the invite link, then opens Compose pre-filled so staff send it through their own inbox.
-  async function invitePortalCustomer(customer, toEmail, toName) {
-    const { data, error } = await supabase.rpc('staff_invite_portal_customer', {
-      p_customer_id: customer.id, p_email: toEmail, p_full_name: toName || null
-    });
-    if (error) throw new Error(error.message);
-    const row = Array.isArray(data) ? data[0] : data;
-    const link = `${window.location.origin}${window.location.pathname}?invite=${row.token}`;
-    fetchPortalInvitations();
-    openCompose({
-      customer_id: customer.id,
-      to: toEmail,
-      subject: `You're invited to the ${customer.company || 'Orbit CRM'} customer portal`,
-      body: `Hi ${toName || customer.name},\n\nYou now have access to your customer portal, where you can view your quotes, invoices, and documents, and reach our support team.\n\nCreate your account here:\n${link}\n\nThis link expires on ${new Date(row.expires_at).toLocaleDateString()}.\n\nThanks,`
-    });
-  }
-
-  async function revokeInvitation(id) {
-    setInvitationActionId(id);
-    const { error } = await supabase.rpc('revoke_portal_invitation', { p_invitation_id: id });
-    setInvitationActionId(null);
-    if (error) { showToast(`Could not revoke invitation: ${error.message}`); return; }
-    showToast('Invitation revoked.');
-    fetchPortalInvitations();
-  }
-
   async function fetchPendingPortalAccounts() {
     setPortalRequestsLoading(true);
     setPortalRequestsError('');
@@ -2211,7 +1924,6 @@ async function signUpWithEmail(event) {
   useEffect(() => {
     if (page === 'UserManagement' && authorizationProfile?.role === 'admin') {
       fetchPendingPortalAccounts();
-      fetchPortalInvitations();
     }
   }, [page, authorizationProfile?.role]);
 
@@ -2285,22 +1997,17 @@ async function signUpWithEmail(event) {
     setRefreshing(true);
 
     try {
-      // Core lists, plus any on-demand lists the user has already opened.
-      const loaders = getDataLoaders();
       const jobs = [
-        fetchCustomers(), fetchDeals(), fetchStaffUsers(),
-        ...(pageRef.current === 'Tickets' ? [fetchTickets()] : []),
-        ...(pageRef.current === 'Activities' ? [fetchActivities()] : []),
-        ...(pageRef.current === 'Customers' ? [fetchCustomerPage()] : []),
-        ...(pageRef.current === 'Dashboard' ? [fetchDashboardStats()] : []),
-        ...(pageRef.current === 'Reports' ? [fetchReportData()] : []),
-        fetchDealProducts(), fetchProducts(), fetchSupportEngineers(),
+        fetchCustomers(), fetchDeals(), fetchActivities(), fetchTickets(), fetchStaffUsers(),
+        fetchLeads(), fetchLeadProducts(), fetchDealProducts(), fetchEmailLogs(), fetchCalendarEvents(),
+        fetchQuotes(), fetchQuoteItems(), fetchInvoices(), fetchPayments(), fetchDocuments(),
+        fetchWorkflows(), fetchSegments(), fetchProducts(), fetchSupportEngineers(),
         fetchSolutionSupport(), fetchDealSupport(), fetchNotifications(), fetchOwnerProfiles(),
-        ...Array.from(loadedDataRef.current).map(key => loaders[key]?.())
+        fetchEmailIntegrations()
       ];
 
       if (authorizationProfile?.role === 'admin') {
-        jobs.push(fetchAuthorizedUsers(), fetchPendingPortalAccounts(), fetchPortalInvitations());
+        jobs.push(fetchAuthorizedUsers(), fetchPendingPortalAccounts());
       }
 
       await Promise.all(jobs);
@@ -2461,96 +2168,40 @@ async function signUpWithEmail(event) {
 
     fetchCustomers();
     fetchDeals();
+    fetchActivities();
+    fetchTickets();
     fetchStaffUsers();
-    // Core data every screen and pop-up form needs. Everything else loads when first used (see ensureData).
-    loadedDataRef.current = new Set();
-    fetchDealProducts(); fetchDealSupport(); fetchSolutionSupport(); fetchSupportEngineers(); fetchProducts();
+    fetchEmailIntegrations(); fetchLeads(); fetchLeadProducts(); fetchDealProducts(); fetchDealSupport(); fetchSolutionSupport(); fetchSupportEngineers(); fetchEmailLogs(); fetchCalendarEvents(); fetchQuotes(); fetchQuoteItems(); fetchInvoices(); fetchPayments(); fetchDocuments(); fetchWorkflows(); fetchSegments(); fetchProducts();
   }, [session, authorized]);
 
-  function getDataLoaders() {
-    return {
-      leads: fetchLeads, leadProducts: fetchLeadProducts, quotes: fetchQuotes, quoteItems: fetchQuoteItems,
-      invoices: fetchInvoices, payments: fetchPayments, documents: fetchDocuments, emailLogs: fetchEmailLogs,
-      emailIntegrations: fetchEmailIntegrations, calendarEvents: fetchCalendarEvents,
-      workflows: fetchWorkflows, segments: fetchSegments
+  // Calendar reminders need an active checker. Previously they were only
+  // evaluated when the calendar was fetched/refreshed, which meant a reminder
+  // could be missed completely if no refresh happened at the right time.
+  // Check frequently while Orbit is open so reminders appear in the bell
+  // without requiring a manual refresh.
+  useEffect(() => {
+    if (!session?.user?.id || !authorized) return;
+
+    let running = false;
+
+    const checkCalendarReminders = async () => {
+      if (running || document.visibilityState !== 'visible') return;
+      running = true;
+      try {
+        await fetchCalendarEvents();
+      } finally {
+        running = false;
+      }
     };
-  }
 
-  function ensureData(keys) {
-    const loaders = getDataLoaders();
-    keys.forEach(key => {
-      if (loadedDataRef.current.has(key) || !loaders[key]) return;
-      loadedDataRef.current.add(key);
-      loaders[key]();
-    });
-  }
+    const intervalId = window.setInterval(checkCalendarReminders, 15000);
 
-  // Load what the open page needs.
-  useEffect(() => {
-    if (!session || !authorized) return;
-    ensureData(PAGE_DATA[page] || []);
-  }, [session, authorized, page]);
+    // Check immediately as well, so a reminder is picked up quickly after
+    // opening Orbit or returning to the tab.
+    checkCalendarReminders();
 
-  // Keep the paging inputs where long-lived callbacks (realtime, refresh) can always read the latest values.
-  pageRef.current = page;
-  pagingRef.current = {
-    customers: { page: customerPageIndex, search: debouncedSearch, status: statusFilter },
-    tickets: { page: ticketPage, filters: { ...ticketFilters, query: debouncedTicketQuery } },
-    activities: { tab: activityTab, page: activityPage }
-  };
-
-  useEffect(() => {
-    if (session && authorized && page === 'Customers') fetchCustomerPage();
-  }, [session, authorized, page, customerPageIndex, debouncedSearch, statusFilter, customers]);
-
-  useEffect(() => {
-    if (session && authorized && page === 'Tickets') fetchTickets();
-  }, [session, authorized, page, ticketPage, ticketFilters.status, ticketFilters.priority, ticketFilters.queue, debouncedTicketQuery]);
-
-  useEffect(() => {
-    if (session && authorized && page === 'Activities') fetchActivities();
-  }, [session, authorized, page, activityPage, activityTab]);
-
-  useEffect(() => {
-    if (session && authorized && page === 'Dashboard') fetchDashboardStats();
-  }, [session, authorized, page]);
-
-  useEffect(() => {
-    if (session && authorized && page === 'Reports') fetchReportData();
-  }, [session, authorized, page]);
-
-  useEffect(() => {
-    if (!session || !authorized) return;
-    if (!selectedCustomer?.id) { setCustomerRelated({ activities: [], tickets: [] }); return; }
-    fetchCustomerRelated(selectedCustomer.id);
-  }, [session, authorized, selectedCustomer?.id]);
-
-  // Global search: tickets and activities are searched on the server instead of from a full list.
-  useEffect(() => {
-    const text = sanitizeSearch(debouncedGlobalSearch);
-    if (!session || !authorized || !text) { setServerSearch({ activities: [], tickets: [] }); return; }
-    let cancelled = false;
-    (async () => {
-      const [activityResult, ticketResult] = await Promise.all([
-        supabase.from('activities').select('*').or(`title.ilike.%${text}%,type.ilike.%${text}%,notes.ilike.%${text}%`).limit(8),
-        supabase.from('tickets').select('*, customers (name, company)').or(`title.ilike.%${text}%,description.ilike.%${text}%,category.ilike.%${text}%`).limit(8)
-      ]);
-      if (!cancelled) setServerSearch({ activities: activityResult.data || [], tickets: ticketResult.data || [] });
-    })();
-    return () => { cancelled = true; };
-  }, [session, authorized, debouncedGlobalSearch]);
-
-  // The customer pop-up shows quotes, invoices, payments, emails and documents.
-  useEffect(() => {
-    if (!session || !authorized || !selectedCustomer) return;
-    ensureData(['quotes', 'invoices', 'payments', 'emailLogs', 'documents']);
-  }, [session, authorized, selectedCustomer?.id]);
-
-  // Global search also looks through leads, quotes and invoices, so load them the first time someone searches.
-  useEffect(() => {
-    if (!session || !authorized || !debouncedGlobalSearch.trim()) return;
-    ensureData(['leads', 'quotes', 'invoices']);
-  }, [session, authorized, debouncedGlobalSearch]);
+    return () => window.clearInterval(intervalId);
+  }, [session?.user?.id, authorized]);
 
   // Quietly refresh when the user returns to the CRM tab after it has been idle.
   useEffect(() => {
@@ -3236,7 +2887,6 @@ async function signUpWithEmail(event) {
       }).eq('id', editingActivity.id).select('*').single();
       if (error) { console.error('Error updating activity:', error); setEditActivityError(error.message); return; }
       setActivities(prev => prev.map(activity => activity.id === data.id ? data : activity));
-      fetchActivities();
       setEditingActivity(null);
       if (selectedActivity?.id === data.id) setSelectedActivity(data);
     } finally { setEditActivitySaving(false); }
@@ -3246,7 +2896,6 @@ async function signUpWithEmail(event) {
     const { data, error } = await supabase.from('activities').update({ status }).eq('id', id).select('*').single();
     if (error) { console.error('Error updating activity:', error); alert(error.message); return; }
     setActivities(prev => prev.map(activity => activity.id === data.id ? data : activity));
-    fetchActivities();
     if (selectedActivity?.id === data.id) setSelectedActivity(data);
   }
   async function deleteActivity(id) {
@@ -3270,7 +2919,6 @@ async function signUpWithEmail(event) {
     setActivities((prev) =>
       prev.filter((activity) => activity.id !== id)
     );
-    fetchActivities();
   }
   async function addTicket(e) {
     e.preventDefault();
@@ -3284,7 +2932,7 @@ async function signUpWithEmail(event) {
         priority: newTicket.priority, category: newTicket.category, assigned_to: newTicket.assigned_to || session.user.id, portal_visible: newTicket.portal_visible !== false, created_by: session.user.id
       }]).select(`*, customers (name, company)`).single();
       if (error) { console.error('Error adding ticket:', error); setTicketError(error.message); return; }
-      fetchTickets();
+      setTickets(prev => [data, ...prev]);
       setNewTicket({ title: '', description: '', customer_id: '', status: 'Open', priority: 'Medium', category: 'General', assigned_to: '', portal_visible: true });
       setShowTicketForm(false);
     } catch (error) { console.error('Unexpected error:', error); setTicketError('Something went wrong. Please try again.'); }
@@ -3304,7 +2952,6 @@ async function signUpWithEmail(event) {
       }).eq('id', editingTicket.id).select(`*, customers (name, company)`).single();
       if (error) { console.error('Error updating ticket:', error); setEditTicketError(error.message); return; }
       setTickets(prev => prev.map(ticket => ticket.id === data.id ? data : ticket));
-      fetchTickets();
       setEditingTicket(null);
       if (selectedTicket?.id === data.id) setSelectedTicket(data);
     } finally { setEditTicketSaving(false); }
@@ -3315,7 +2962,6 @@ async function signUpWithEmail(event) {
     const { data, error } = await supabase.from('tickets').update({ status, updated_at: new Date().toISOString() }).eq('id', id).select(`*, customers (name, company)`).single();
     if (error) { console.error('Error updating ticket status:', error); setTicketError(error.message); return; }
     setTickets(prev => prev.map(ticket => ticket.id === id ? data : ticket));
-    fetchTickets();
     if (selectedTicket?.id === id) setSelectedTicket(data);
   }
 
@@ -3331,7 +2977,6 @@ async function signUpWithEmail(event) {
       return;
     }
     setTickets(prev => prev.map(ticket => ticket.id === id ? data : ticket));
-    fetchTickets();
     if (selectedTicket?.id === id) setSelectedTicket(data);
     if (userId && userId !== session.user.id) {
       const { error: notifyError } = await supabase.from('notifications').insert({
@@ -3352,7 +2997,6 @@ async function signUpWithEmail(event) {
     const { error } = await supabase.from('tickets').delete().eq('id', id);
     if (error) { console.error('Error deleting ticket:', error); setTicketError(error.message); return; }
     setTickets(prev => prev.filter(ticket => ticket.id !== id));
-    fetchTickets();
     if (selectedTicket?.id === id) setSelectedTicket(null);
   }
 
@@ -3363,7 +3007,7 @@ async function signUpWithEmail(event) {
           <div className="auth-brand">
             <div className="brand-mark"><OrbitLogo /></div>
             <span>
-              storhet<span className="brand-accent">CRM</span>
+              orbit<span className="brand-accent">CRM</span>
             </span>
           </div>
           <p>
@@ -3399,10 +3043,6 @@ async function signUpWithEmail(event) {
         error={authError}
         notice={authNotice}
         loading={authLoading || authorizationLoading || emailLoading}
-        invite={inviteInfo}
-        inviteChecking={inviteChecking}
-        inviteError={inviteError}
-        onPortalInviteSignUp={signUpPortalInvite}
       />
     );
   }
@@ -3412,7 +3052,7 @@ async function signUpWithEmail(event) {
     <aside className={`sidebar ${sidebarOpen ? 'sidebar-open' : ''}`}>
       <div className="brand">
         <div className="brand-mark"><OrbitLogo /></div>
-        <span>storhet<span className="brand-accent">CRM</span></span>
+        <span>orbit<span className="brand-accent">CRM</span></span>
         <button className="icon-btn close-mobile" onClick={() => setSidebarOpen(false)}><X size={18} /></button>
       </div>
       <div className="workspace-label">WORKSPACE</div>
@@ -3569,15 +3209,15 @@ async function signUpWithEmail(event) {
       <RefreshContext.Provider value={{ refreshAll, refreshing }}>
       <section className="page-content">
         {page === 'Dashboard' && (
-          <Dashboard revenue={revenue} customers={customers} deals={deals} stats={dashStats} setPage={setPage} formatAmount={formatAmount} onSelectCustomer={setSelectedCustomer} onEditCustomer={setEditingCustomer} onDeleteCustomer={deleteCustomer} />
+          <Dashboard revenue={revenue} customers={customers} deals={deals} activities={activities} tickets={tickets} setPage={setPage} formatAmount={formatAmount} onSelectCustomer={setSelectedCustomer} onEditCustomer={setEditingCustomer} onDeleteCustomer={deleteCustomer} />
         )}
         {page === 'Customers' && (
-          <Customers customers={customerRows} total={customerTotal} pageIndex={customerPageIndex} loading={customerListLoading} onPage={setCustomerPageIndex}
+          <Customers customers={filteredCustomers}
             allCustomers={customers}
             search={search}
-            setSearch={value => { setSearch(value); setCustomerPageIndex(0); }}
+            setSearch={setSearch}
             statusFilter={statusFilter}
-            setStatusFilter={value => { setStatusFilter(value); setCustomerPageIndex(0); }}
+            setStatusFilter={setStatusFilter}
             deals={deals}
             onImport={importCustomers}
             onAdd={() => { setCustomerError(''); setShowCustomerForm(true); }}
@@ -3590,10 +3230,10 @@ async function signUpWithEmail(event) {
         {page === 'Products' && <Products products={products} supportEngineers={supportEngineers} solutionSupport={solutionSupport} onAdd={addProduct} onUpdate={updateProduct} onDelete={deleteProduct} onUpdateFamilySupport={syncSolutionSupport} currentUserId={session.user.id} isAdmin={authorizationProfile?.role === 'admin'} />}
         {page === 'Technical Support' && <SupportEngineers supportEngineers={supportEngineers} solutionSupport={solutionSupport} onAdd={addSupportEngineer} onUpdate={updateSupportEngineer} onDeactivate={deactivateSupportEngineer} isAdmin={authorizationProfile?.role === 'admin'} />}
         {page === 'Leads' && <Leads leads={leads} customers={customers} products={products} leadProducts={leadProducts} onAdd={addLead} onUpdate={updateLead} onSyncProducts={syncLeadProducts} onDelete={deleteLead} currentUserId={session.user.id} isAdmin={authorizationProfile?.role === 'admin'} />}
-        {page === 'Email' && <EmailPage emailLogs={emailLogs} customers={customers} integrations={emailIntegrations} loading={emailIntegrationLoading} error={emailIntegrationError} onConnect={connectEmailProvider} onDisconnect={disconnectEmailProvider} onCompose={() => openCompose()} onAdd={async payload => { try { await addEmailLog(payload); showToast('Email logged.'); } catch (e) { alert(e.message); } }} />}
-        {page === 'Calendar' && <CalendarPage events={calendarEvents} customers={customers} onAdd={addCalendarEvent} onUpdate={updateCalendarEvent} onDelete={deleteCalendarEvent} />}
+        {page === 'Email' && <EmailPage emailLogs={emailLogs} customers={customers} integrations={emailIntegrations} loading={emailIntegrationLoading} error={emailIntegrationError} onConnect={connectEmailProvider} onDisconnect={disconnectEmailProvider} onAdd={async payload => { try { await addEmailLog(payload); showToast('Email logged.'); } catch (e) { alert(e.message); } }} />}
+        {page === 'Calendar' && <CalendarPage events={calendarEvents} customers={customers} onAdd={addCalendarEvent} onUpdate={updateCalendarEvent} onDelete={deleteCalendarEvent} onRefresh={fetchCalendarEvents} />}
         {page === 'Quotes' && <Quotes quotes={quotes} products={products} quoteItems={quoteItems} onLoadQuoteItems={loadQuoteItems} onAdd={addQuote} onUpdate={updateQuote} onDelete={deleteQuote} formatAmount={formatAmount} currentUserId={session.user.id} isAdmin={authorizationProfile?.role === 'admin'} />}
-        {page === 'Invoices' && <Invoices invoices={invoices} payments={payments} customers={customers} onAdd={addInvoice} onUpdate={updateInvoice} onAddPayment={addPayment} formatAmount={formatAmount} currentUserId={session.user.id} isAdmin={authorizationProfile?.role === 'admin'} />}
+        {page === 'Invoices' && <Invoices invoices={invoices} payments={payments} customers={customers} products={products} onAdd={addInvoice} onUpdate={updateInvoice} onAddPayment={addPayment} formatAmount={formatAmount} currentUserId={session.user.id} isAdmin={authorizationProfile?.role === 'admin'} />}
         {page === 'Documents' && <Documents documents={documents} customers={customers} onUpload={uploadDocument} onDownload={downloadDocument} onDelete={deleteDocument} />}
         {page === 'Automation' && <Automation workflows={workflows} onAdd={addWorkflow} onUpdate={updateWorkflow} />}
         {page === 'Segments' && <Segments segments={segments} customers={customers} onAdd={addSegment} onUpdate={updateSegment} />}
@@ -3629,19 +3269,11 @@ async function signUpWithEmail(event) {
           />
         )}
         {page === 'Activities' && (
-          <Activities activities={activities} counts={activityCounts} tab={activityTab} setTab={tab => { setActivityTab(tab); setActivityPage(0); }} page={activityPage} total={activityTotal} loading={activityListLoading} onPage={setActivityPage} customers={customers} ownerProfiles={ownerProfiles} currentUserEmail={session.user.email} onAdd={() => { setActivityError(''); setNewActivity(a => ({ ...a, customer_id: '' })); setShowActivityForm(true); }} onStatusChange={updateActivityStatus} onDelete={deleteActivity} onEdit={activity => { setEditActivityError(''); setEditingActivity({ ...activity, activity_date: formatDateTimeLocal(activity.activity_date) }); }} onView={setSelectedActivity} currentUserId={session.user.id} isAdmin={authorizationProfile?.role === 'admin'} />
+          <Activities activities={activities} customers={customers} ownerProfiles={ownerProfiles} currentUserEmail={session.user.email} onAdd={() => { setActivityError(''); setNewActivity(a => ({ ...a, customer_id: '' })); setShowActivityForm(true); }} onStatusChange={updateActivityStatus} onDelete={deleteActivity} onEdit={activity => { setEditActivityError(''); setEditingActivity({ ...activity, activity_date: formatDateTimeLocal(activity.activity_date) }); }} onView={setSelectedActivity} currentUserId={session.user.id} isAdmin={authorizationProfile?.role === 'admin'} />
         )}
         {page === 'Tickets' && (
           <Tickets
             tickets={tickets}
-            total={ticketTotal}
-            page={ticketPage}
-            pageSize={PAGE_SIZE}
-            loading={ticketListLoading}
-            filters={ticketFilters}
-            onFilters={changeTicketFilters}
-            onPage={setTicketPage}
-            counts={ticketCounts}
             error={ticketError}
             onAdd={() => { setTicketError(''); setNewTicket(t => ({ ...t, customer_id: '' })); setShowTicketForm(true); }}
             onStatusChange={updateTicketStatus}
@@ -3657,9 +3289,9 @@ async function signUpWithEmail(event) {
           />
         )}
         {page === 'Chat' && <Chat />}
-        {page === 'Reports' && <AdvancedReports customers={customers} deals={deals} activities={reportData.activities} tickets={reportData.tickets} leads={leads} quotes={quotes} invoices={invoices} payments={payments} formatAmount={formatAmount} />}
+        {page === 'Reports' && <AdvancedReports customers={customers} deals={deals} activities={activities} tickets={tickets} leads={leads} quotes={quotes} invoices={invoices} payments={payments} formatAmount={formatAmount} />}
         {page === 'Email Logs' && <EmailLogs emailLogs={emailLogs} customers={customers} onAdd={addEmailLog} />}
-        {page === 'UserManagement' && authorizationProfile?.role === 'admin' && <UserManagement users={authorizedUsers} loading={usersLoading} error={usersError} onRefresh={fetchAuthorizedUsers} onUpdateUser={updateAuthorizedUser} currentUserId={session?.user?.id} pendingPortalAccounts={pendingPortalAccounts} portalRequestsLoading={portalRequestsLoading} portalRequestsError={portalRequestsError} portalRequestsNotice={portalRequestsNotice} onRefreshPortalRequests={fetchPendingPortalAccounts} onReviewPortalRequest={reviewPortalRequest} portalRequestActionId={portalRequestActionId} invitations={pendingInvitations} invitationsLoading={invitationsLoading} invitationsError={invitationsError} onRefreshInvitations={fetchPortalInvitations} onRevokeInvitation={revokeInvitation} invitationActionId={invitationActionId} />}
+        {page === 'UserManagement' && <UserManagement users={authorizedUsers} loading={usersLoading} error={usersError} onRefresh={fetchAuthorizedUsers} onUpdateUser={updateAuthorizedUser} currentUserId={session?.user?.id} pendingPortalAccounts={pendingPortalAccounts} portalRequestsLoading={portalRequestsLoading} portalRequestsError={portalRequestsError} portalRequestsNotice={portalRequestsNotice} onRefreshPortalRequests={fetchPendingPortalAccounts} onReviewPortalRequest={reviewPortalRequest} portalRequestActionId={portalRequestActionId} />}
         {page === 'Settings' && <SettingsPage currency={currency} setCurrency={setCurrency} />}
       </section>
       </RefreshContext.Provider>
@@ -3709,8 +3341,8 @@ async function signUpWithEmail(event) {
         currentUserId={session.user.id}
         customer={selectedCustomer}
         deals={deals}
-        activities={customerRelated.activities}
-        tickets={customerRelated.tickets}
+        activities={activities}
+        tickets={tickets}
         quotes={quotes}
         invoices={invoices}
         payments={payments}
@@ -3722,8 +3354,6 @@ async function signUpWithEmail(event) {
         onAddDeal={c => { setSelectedCustomer(null); setDealError(''); setNewDeal(d => ({ ...d, customer_id: c.id, company: c.company || '' })); setSelectedDealProductIds([]); setExpandedDealVendor(null); setShowDealForm(true); }}
         onAddActivity={c => { setSelectedCustomer(null); setActivityError(''); setNewActivity(a => ({ ...a, customer_id: c.id })); setShowActivityForm(true); }}
         onAddTicket={c => { setSelectedCustomer(null); setTicketError(''); setNewTicket(t => ({ ...t, customer_id: c.id })); setShowTicketForm(true); }}
-        onEmail={c => { setSelectedCustomer(null); openCompose({ customer_id: c.id, to: c.email || '' }); }}
-        onInvitePortal={c => { setSelectedCustomer(null); setInvitingCustomer(c); }}
       />
     )}
     {editingCustomer && (
@@ -4446,8 +4076,6 @@ async function signUpWithEmail(event) {
     )}
     {selectedActivity && <ActivityDetail activity={selectedActivity} customer={customers.find(c => c.id === selectedActivity.customer_id)} ownerProfiles={ownerProfiles} currentUserEmail={session?.user?.email} onClose={() => setSelectedActivity(null)} onEdit={activity => { setSelectedActivity(null); setEditActivityError(''); setEditingActivity({ ...activity, activity_date: formatDateTimeLocal(activity.activity_date) }); }} />}
     {editingActivity && <div className="modal-backdrop" onClick={() => setEditingActivity(null)}><form className="modal" onSubmit={updateActivity} onClick={e => e.stopPropagation()}><div className="modal-heading"><h2>Edit Activity</h2><button type="button" className="icon-btn" onClick={() => setEditingActivity(null)}><X size={18} /></button></div>{editActivityError && <p className="form-error">{editActivityError}</p>}<label>Activity title<input type="text" value={editingActivity.title || ''} onChange={e => setEditingActivity({ ...editingActivity, title: e.target.value })} required /></label><label>Activity type<select value={editingActivity.type || 'Task'} onChange={e => setEditingActivity({ ...editingActivity, type: e.target.value })}><option value="Task">Task</option><option value="Call">Call</option><option value="Meeting">Meeting</option><option value="Email">Email</option><option value="Follow-up">Follow-up</option></select></label><label>Due date and time<input type="datetime-local" value={editingActivity.activity_date || ''} onChange={e => setEditingActivity({ ...editingActivity, activity_date: e.target.value })} /></label><div className="activity-form-grid"><label>Priority<select value={editingActivity.priority || 'Medium'} onChange={e => setEditingActivity({ ...editingActivity, priority: e.target.value })}><option value="Low">Low</option><option value="Medium">Medium</option><option value="High">High</option><option value="Urgent">Urgent</option></select></label><label>Assign to<select value={editingActivity.assigned_to || session.user.id} onChange={e => setEditingActivity({ ...editingActivity, assigned_to: e.target.value })}><option value={session.user.id}>{profileName.trim() || session.user.email || 'Me'} (me)</option>{Object.entries(ownerProfiles).filter(([id, name]) => id !== session.user.id).map(([id, name]) => <option key={id} value={id}>{name || 'Team member'}</option>)}</select></label></div><label>Customer<select value={editingActivity.customer_id || ''} onChange={e => setEditingActivity({ ...editingActivity, customer_id: e.target.value })}><option value="">No customer selected</option>{customers.map(customer => <option key={customer.id} value={customer.id}>{customer.name}{customer.company ? ` — ${customer.company}` : ''}</option>)}</select></label><label>Notes<textarea value={editingActivity.notes || ''} onChange={e => setEditingActivity({ ...editingActivity, notes: e.target.value })} rows="4" /></label><label>Status<select value={editingActivity.status || 'Scheduled'} onChange={e => setEditingActivity({ ...editingActivity, status: e.target.value })}><option value="Scheduled">Scheduled</option><option value="In Progress">In Progress</option><option value="Completed">Completed</option><option value="Cancelled">Cancelled</option></select></label><div className="modal-actions"><button type="button" className="secondary-btn" onClick={() => setEditingActivity(null)}>Cancel</button><button type="submit" className="primary-btn" disabled={editActivitySaving}>{editActivitySaving ? 'Saving...' : 'Save changes'}</button></div></form></div>}
-    {composeDraft && <ComposeEmailModal integrations={emailIntegrations} customers={customers} defaults={composeDraft} userId={session.user.id} onSend={sendEmail} onClose={() => setComposeDraft(null)} />}
-    {invitingCustomer && <PortalInviteModal customer={invitingCustomer} onInvite={invitePortalCustomer} onClose={() => setInvitingCustomer(null)} />}
     {selectedTicket && <TicketDetail ticket={tickets.find(t => t.id === selectedTicket.id) || selectedTicket} onRefresh={fetchTickets} staffName={staffName} staffOptions={getStaffOptions()} currentUserId={session.user.id} canManage={canManageTicket} onStatusChange={updateTicketStatus} onAssign={assignTicket} onClose={() => setSelectedTicket(null)} onEdit={ticket => { setSelectedTicket(null); setEditTicketError(''); setEditingTicket(ticket); }} />}
     {editingTicket && <div className="modal-backdrop" onClick={() => setEditingTicket(null)}><form className="modal" onSubmit={updateTicket} onClick={e => e.stopPropagation()}><div className="modal-heading"><h2>Edit Ticket</h2><button type="button" className="icon-btn" onClick={() => setEditingTicket(null)}><X size={18} /></button></div>{editTicketError && <p className="form-error">{editTicketError}</p>}<label>Ticket title<input type="text" value={editingTicket.title || ''} onChange={e => setEditingTicket({ ...editingTicket, title: e.target.value })} required /></label><label>Description<textarea value={editingTicket.description || ''} onChange={e => setEditingTicket({ ...editingTicket, description: e.target.value })} rows="4" /></label><label>Customer<select value={editingTicket.customer_id || ''} onChange={e => setEditingTicket({ ...editingTicket, customer_id: e.target.value })}><option value="">No customer selected</option>{customers.map(customer => <option key={customer.id} value={customer.id}>{customer.name}{customer.company ? ` — ${customer.company}` : ''}</option>)}</select></label><label>Assign to<select value={editingTicket.assigned_to || ''} onChange={e => setEditingTicket({ ...editingTicket, assigned_to: e.target.value })}><option value="">Unassigned</option>{getStaffOptions().map(u => <option key={u.user_id} value={u.user_id}>{staffName(u.user_id)}</option>)}</select></label>{editingTicket.source !== 'portal' && <label className="portal-check-row"><input type="checkbox" checked={!!editingTicket.portal_visible} onChange={e => setEditingTicket({ ...editingTicket, portal_visible: e.target.checked })} />Show this ticket in the customer's portal (needs a linked customer)</label>}<label>Category<select value={editingTicket.category || 'General'} onChange={e => setEditingTicket({ ...editingTicket, category: e.target.value })}><option value="General">General</option><option value="Technical">Technical</option><option value="Billing">Billing</option><option value="Account">Account</option><option value="Feature Request">Feature Request</option></select></label><label>Priority<select value={editingTicket.priority || 'Medium'} onChange={e => setEditingTicket({ ...editingTicket, priority: e.target.value })}><option value="Low">Low</option><option value="Medium">Medium</option><option value="High">High</option><option value="Urgent">Urgent</option></select></label><label>Status<select value={editingTicket.status || 'Open'} onChange={e => setEditingTicket({ ...editingTicket, status: e.target.value })}><option value="Open">Open</option><option value="In Progress">In Progress</option><option value="Resolved">Resolved</option><option value="Closed">Closed</option></select></label><div className="modal-actions"><button type="button" className="secondary-btn" onClick={() => setEditingTicket(null)}>Cancel</button><button type="submit" className="primary-btn" disabled={editTicketSaving}>{editTicketSaving ? 'Saving...' : 'Save changes'}</button></div></form></div>}
     {showTicketForm && (
@@ -4868,7 +4496,7 @@ function StatCard({ label, value, change, hint, icon, tone }) {
   );
 }
 
-function Dashboard({ revenue, customers, deals, stats, setPage, formatAmount, onSelectCustomer, onEditCustomer, onDeleteCustomer }) {
+function Dashboard({ revenue, customers, deals, activities, tickets, setPage, formatAmount, onSelectCustomer, onEditCustomer, onDeleteCustomer }) {
   const [range, setRange] = useState(6);
 
   const monthlyRevenue = useMemo(() => {
@@ -4907,12 +4535,15 @@ function Dashboard({ revenue, customers, deals, stats, setPage, formatAmount, on
   const wonDeals = deals.filter(d => d.stage === 'Won');
   const openDeals = deals.filter(d => d.stage !== 'Won');
   const winRate = deals.length ? (wonDeals.length / deals.length) * 100 : 0;
-  const overdueCount = stats.overdue;
-  const dueTodayCount = stats.dueToday;
-  const openTickets = stats.openTickets;
+  const overdueCount = activities.filter(isOverdue).length;
+  const dueTodayCount = activities.filter(a => { if (!isOpenActivity(a) || !a.activity_date) return false; const d = new Date(a.activity_date); const today = new Date(); return d.getFullYear() === today.getFullYear() && d.getMonth() === today.getMonth() && d.getDate() === today.getDate(); }).length;
+  const openTickets = tickets.filter(t => t.status === 'Open' || t.status === 'In Progress').length;
   const avgDeal = wonDeals.length ? sumAmount(wonDeals) / wonDeals.length : 0;
 
-  const upcoming = stats.upcoming;
+  const upcoming = useMemo(() => activities
+    .filter(isOpenActivity)
+    .sort((a, b) => new Date(a.activity_date || 8.64e15) - new Date(b.activity_date || 8.64e15))
+    .slice(0, 4), [activities]);
 
   const maxRevenue = Math.max(...monthlyRevenue.map(item => item.revenue), 0);
   const step = maxRevenue > 0 ? maxRevenue / 4 : 0;
@@ -4934,7 +4565,7 @@ function Dashboard({ revenue, customers, deals, stats, setPage, formatAmount, on
       <StatCard label="Win rate" value={`${winRate.toFixed(1)}%`} hint={`${wonDeals.length} of ${deals.length} deals won`} tone="green" icon="◉" />
       <StatCard label="Overdue activities" value={overdueCount} hint={overdueCount ? 'Needs attention' : 'You are on track'} tone="orange" icon="◷" />
       <StatCard label="Due today" value={dueTodayCount} hint="Activity reminders" tone="blue" icon="!" />
-      <StatCard label="Open tickets" value={openTickets} hint={`${stats.totalTickets} tickets in total`} tone="blue" icon="✉" />
+      <StatCard label="Open tickets" value={openTickets} hint={`${tickets.length} tickets in total`} tone="blue" icon="✉" />
       <StatCard label="Average deal size" value={formatAmount(avgDeal)} hint="Across won deals" tone="purple" icon="◆" />
       <StatCard label="Deals won" value={wonDeals.length} hint={`${formatAmount(sumAmount(wonDeals))} closed`} tone="green" icon="✓" />
     </div>
@@ -5100,7 +4731,7 @@ function CustomerTable({ customers, deals = [], formatAmount, onSelectCustomer, 
   );
 }
 
-function Customers({ customers, total = customers.length, pageIndex = 0, loading = false, onPage = () => {}, allCustomers, deals, search, setSearch, statusFilter, setStatusFilter, onAdd, onImport, formatAmount, onSelectCustomer, onEditCustomer, onDeleteCustomer }) {
+function Customers({ customers, allCustomers, deals, search, setSearch, statusFilter, setStatusFilter, onAdd, onImport, formatAmount, onSelectCustomer, onEditCustomer, onDeleteCustomer }) {
   const fileRef = useRef(null);
 
   async function handleFile(event) {
@@ -5119,14 +4750,11 @@ function Customers({ customers, total = customers.length, pageIndex = 0, loading
     })));
   }
 
-  // Export covers every matching customer, not just the visible page.
-  const exportRows = allCustomers.filter(c => (statusFilter === 'All' || (c.status || 'Active') === statusFilter) && `${c.name} ${c.company || ''} ${c.email || ''}`.toLowerCase().includes(search.toLowerCase()));
-
   function exportCustomers() {
     downloadCSV(
       'customers.csv',
       ['name', 'company', 'email', 'status', 'lifetime_value'],
-      exportRows.map(c => [c.name, c.company || '', c.email, c.status || 'Active', lifetimeValue(c, deals)])
+      customers.map(c => [c.name, c.company || '', c.email, c.status || 'Active', lifetimeValue(c, deals)])
     );
   }
 
@@ -5138,13 +4766,13 @@ function Customers({ customers, total = customers.length, pageIndex = 0, loading
       <div className="panel">
         <div className="panel-heading">
           <div>
-            <h3>All customers <span className="count-badge">{total}</span></h3>
+            <h3>All customers <span className="count-badge">{customers.length}</span></h3>
             <p>Search, filter and manage your contacts.</p>
           </div>
           <div className="toolbar-actions">
             <input ref={fileRef} type="file" accept=".csv,text/csv" onChange={handleFile} hidden />
             <button className="secondary-btn" type="button" onClick={() => fileRef.current?.click()}><Users size={15} /> Import CSV</button>
-            <button className="secondary-btn" type="button" onClick={exportCustomers} disabled={exportRows.length === 0}>Export CSV</button>
+            <button className="secondary-btn" type="button" onClick={exportCustomers} disabled={customers.length === 0}>Export CSV</button>
           </div>
         </div>
         <div className="toolbar">
@@ -5178,53 +4806,8 @@ function Customers({ customers, total = customers.length, pageIndex = 0, loading
           onEditCustomer={onEditCustomer}
           onDeleteCustomer={onDeleteCustomer}
         />
-        <Pager page={pageIndex} total={total} onPage={onPage} loading={loading} />
       </div>
     </>
-  );
-}
-
-function PortalInviteModal({ customer, onInvite, onClose }) {
-  const [emailValue, setEmailValue] = useState(customer.email || '');
-  const [name, setName] = useState(customer.name || '');
-  const [sending, setSending] = useState(false);
-  const [error, setError] = useState('');
-
-  async function submit(event) {
-    event.preventDefault();
-    setError('');
-    setSending(true);
-    try {
-      await onInvite(customer, emailValue.trim(), name.trim());
-      onClose();
-    } catch (err) {
-      setError(err.message || 'Could not create the invitation.');
-    } finally {
-      setSending(false);
-    }
-  }
-
-  return (
-    <div className="modal-backdrop">
-      <form className="modal" onSubmit={submit}>
-        <div className="modal-heading">
-          <div><h2>Invite to portal</h2><p>They will skip the usual approval queue and get access as soon as they sign up.</p></div>
-          <button type="button" className="icon-btn" onClick={onClose} disabled={sending} aria-label="Close invite form"><X size={18} /></button>
-        </div>
-        {error && <div className="form-error" role="alert">{error}</div>}
-        <label>Full name
-          <input type="text" value={name} onChange={e => setName(e.target.value)} />
-        </label>
-        <label>Email address
-          <input type="email" value={emailValue} onChange={e => setEmailValue(e.target.value)} required />
-        </label>
-        <p className="detail-empty">A sign-up link good for 7 days will be ready to send from your Email page.</p>
-        <div className="modal-actions">
-          <button type="button" className="secondary-btn" onClick={onClose} disabled={sending}>Cancel</button>
-          <button type="submit" className="primary-btn" disabled={sending}>{sending ? 'Creating link…' : 'Create invite link'}</button>
-        </div>
-      </form>
-    </div>
   );
 }
 
@@ -5308,7 +4891,7 @@ function PortalSharingPanel({ customer, deals, quotes, invoices, documents, curr
   );
 }
 
-function CustomerDetail({ currentUserId, customer, deals, activities, tickets, quotes = [], invoices = [], payments = [], emailLogs = [], documents = [], formatAmount, onClose, onEdit, onAddDeal, onAddActivity, onAddTicket, onEmail, onInvitePortal }) {
+function CustomerDetail({ currentUserId, customer, deals, activities, tickets, quotes = [], invoices = [], payments = [], emailLogs = [], documents = [], formatAmount, onClose, onEdit, onAddDeal, onAddActivity, onAddTicket }) {
   const myDeals = deals.filter(d => d.customer_id === customer.id);
   const myActivities = activities.filter(a => a.customer_id === customer.id);
   const myTickets = tickets.filter(t => t.customer_id === customer.id);
@@ -5365,8 +4948,6 @@ function CustomerDetail({ currentUserId, customer, deals, activities, tickets, q
           <button type="button" className="primary-btn" onClick={() => onAddDeal(customer)}><Plus size={15} /> New deal</button>
           <button type="button" className="secondary-btn" onClick={() => onAddActivity(customer)}>Log activity</button>
           <button type="button" className="secondary-btn" onClick={() => onAddTicket(customer)}>Create ticket</button>
-          {onEmail && <button type="button" className="secondary-btn" onClick={() => onEmail(customer)}>Send email</button>}
-          {onInvitePortal && <button type="button" className="secondary-btn" onClick={() => onInvitePortal(customer)}>Invite to portal</button>}
         </div>
 
         <h3 className="detail-title">Customer history</h3>
@@ -5519,11 +5100,13 @@ function Pipeline({ deals, customers, dealSupport = [], supportEngineers = [], m
 }
 
 
-function Activities({ activities, counts = {}, tab, setTab, page, total = 0, loading = false, onPage = () => {}, customers, ownerProfiles = {}, currentUserEmail, onAdd, onStatusChange, onDelete, onEdit, onView, currentUserId, isAdmin }) {
+function Activities({ activities, customers, ownerProfiles = {}, currentUserEmail, onAdd, onStatusChange, onDelete, onEdit, onView, currentUserId, isAdmin }) {
+  const [tab, setTab] = useState('All');
   const getCustomerName = id => customers.find(c => c.id === id)?.name || 'No customer linked';
-  const filterNames = ['All', 'Upcoming', 'Overdue', 'Completed'];
-  const list = activities; // already filtered, sorted and paged by the server
-  return <><PageHeading eyebrow="PRODUCTIVITY" title="Activities" description="Keep track of meetings, calls, and follow-ups." action="New activity" onAction={onAdd} /><div className="panel"><div className="panel-heading"><div><h3>Schedule</h3><p>Your tasks, calls and follow-ups.</p></div></div><div className="filter-tabs" role="tablist" aria-label="Filter activities">{filterNames.map(name => <button key={name} type="button" className={`filter-tab ${tab === name ? 'active' : ''} ${name === 'Overdue' && counts.Overdue ? 'danger' : ''}`} onClick={() => setTab(name)}>{name} ({counts[name]})</button>)}</div>{list.length === 0 ? <div className="empty-state"><p>{(counts.All || 0) === 0 ? 'No activities yet.' : `No ${tab.toLowerCase()} activities.`}</p>{(counts.All || 0) === 0 && <button type="button" className="primary-btn" onClick={onAdd}>Create your first activity</button>}</div> : list.map(activity => { const canEdit = isAdmin || activity.created_by === currentUserId; const date = activity.activity_date ? new Date(activity.activity_date) : null; return <div className="activity-row large" key={activity.id}><div className="date-box"><strong>{date ? date.getDate() : '--'}</strong><span>{date ? date.toLocaleDateString('en-US', { month: 'short' }).toUpperCase() : '---'}</span></div><div className="activity-content"><strong>{activity.title} {isOverdue(activity) && <span className="status overdue">Overdue</span>}</strong><p>{activity.type || 'Task'} · {getCustomerName(activity.customer_id)}</p><div className="activity-meta-badges"><span className={`priority-pill priority-${String(activity.priority || 'Medium').toLowerCase()}`}>{activity.priority || 'Medium'} priority</span><span className="assignee-pill">Assigned: {(activity.assigned_to === currentUserId ? (ownerProfiles[currentUserId] || currentUserEmail || 'Me') : (ownerProfiles[activity.assigned_to] || (activity.assigned_to ? 'Team member' : 'Unassigned')))}</span></div><small>Due: {formatDateTime(activity.activity_date)}</small>{activity.notes && <p className="activity-notes">{activity.notes}</p>}</div><div className="activity-actions"><button type="button" className="secondary-btn" onClick={() => onView(activity)}>View</button>{canEdit && <button type="button" className="secondary-btn" onClick={() => onEdit(activity)}><Pencil size={14} /> Edit</button>}{canEdit && isOpenActivity(activity) && <button type="button" className="secondary-btn" onClick={() => onStatusChange(activity.id, 'Completed')}>Mark done</button>}<select value={activity.status || 'Scheduled'} onChange={e => onStatusChange(activity.id, e.target.value)} disabled={!canEdit}><option value="Scheduled">Scheduled</option><option value="In Progress">In Progress</option><option value="Completed">Completed</option><option value="Cancelled">Cancelled</option></select>{canEdit && <button type="button" className="icon-btn" title="Delete activity" onClick={() => onDelete(activity.id)}><X size={16} /></button>}</div></div> })}<Pager page={page} total={total} onPage={onPage} loading={loading} /></div></>;
+  const filters = { All: () => true, Upcoming: a => isOpenActivity(a) && !isOverdue(a), Overdue: isOverdue, Completed: a => a.status === 'Completed' };
+  const counts = Object.fromEntries(Object.entries(filters).map(([k, f]) => [k, activities.filter(f).length]));
+  const list = activities.filter(filters[tab]).sort((a, b) => { const diff = new Date(a.activity_date || 8.64e15) - new Date(b.activity_date || 8.64e15); return tab === 'Completed' ? -diff : diff; });
+  return <><PageHeading eyebrow="PRODUCTIVITY" title="Activities" description="Keep track of meetings, calls, and follow-ups." action="New activity" onAction={onAdd} /><div className="panel"><div className="panel-heading"><div><h3>Schedule</h3><p>Your tasks, calls and follow-ups.</p></div></div><div className="filter-tabs" role="tablist" aria-label="Filter activities">{Object.keys(filters).map(name => <button key={name} type="button" className={`filter-tab ${tab === name ? 'active' : ''} ${name === 'Overdue' && counts.Overdue ? 'danger' : ''}`} onClick={() => setTab(name)}>{name} ({counts[name]})</button>)}</div>{list.length === 0 ? <div className="empty-state"><p>{activities.length === 0 ? 'No activities yet.' : `No ${tab.toLowerCase()} activities.`}</p>{activities.length === 0 && <button type="button" className="primary-btn" onClick={onAdd}>Create your first activity</button>}</div> : list.map(activity => { const canEdit = isAdmin || activity.created_by === currentUserId; const date = activity.activity_date ? new Date(activity.activity_date) : null; return <div className="activity-row large" key={activity.id}><div className="date-box"><strong>{date ? date.getDate() : '--'}</strong><span>{date ? date.toLocaleDateString('en-US', { month: 'short' }).toUpperCase() : '---'}</span></div><div className="activity-content"><strong>{activity.title} {isOverdue(activity) && <span className="status overdue">Overdue</span>}</strong><p>{activity.type || 'Task'} · {getCustomerName(activity.customer_id)}</p><div className="activity-meta-badges"><span className={`priority-pill priority-${String(activity.priority || 'Medium').toLowerCase()}`}>{activity.priority || 'Medium'} priority</span><span className="assignee-pill">Assigned: {(activity.assigned_to === currentUserId ? (ownerProfiles[currentUserId] || currentUserEmail || 'Me') : (ownerProfiles[activity.assigned_to] || (activity.assigned_to ? 'Team member' : 'Unassigned')))}</span></div><small>Due: {formatDateTime(activity.activity_date)}</small>{activity.notes && <p className="activity-notes">{activity.notes}</p>}</div><div className="activity-actions"><button type="button" className="secondary-btn" onClick={() => onView(activity)}>View</button>{canEdit && <button type="button" className="secondary-btn" onClick={() => onEdit(activity)}><Pencil size={14} /> Edit</button>}{canEdit && isOpenActivity(activity) && <button type="button" className="secondary-btn" onClick={() => onStatusChange(activity.id, 'Completed')}>Mark done</button>}<select value={activity.status || 'Scheduled'} onChange={e => onStatusChange(activity.id, e.target.value)} disabled={!canEdit}><option value="Scheduled">Scheduled</option><option value="In Progress">In Progress</option><option value="Completed">Completed</option><option value="Cancelled">Cancelled</option></select>{canEdit && <button type="button" className="icon-btn" title="Delete activity" onClick={() => onDelete(activity.id)}><X size={16} /></button>}</div></div> })}</div></>;
 }
 
 function ActivityDetail({ activity, customer, ownerProfiles = {}, currentUserEmail, onClose, onEdit }) {
@@ -5574,30 +5157,32 @@ function ActivityDetail({ activity, customer, ownerProfiles = {}, currentUserEma
   );
 }
 
-function Tickets({ tickets, total = 0, page = 0, pageSize = PAGE_SIZE, loading = false, filters, onFilters, onPage = () => {}, counts = {}, error, onAdd, onStatusChange, onDelete, onEdit, onView, currentUserId, isAdmin, canManage, staffName, staffOptions, onAssign }) {
-  // Filtering, searching and paging all happen on the server; these just read and change the filters.
-  const { query, status, priority, queue } = filters;
-  const setQuery = value => onFilters({ query: value });
-  const setStatus = value => onFilters({ status: value });
-  const setPriority = value => onFilters({ priority: value });
-  const setQueue = value => onFilters({ queue: value });
-  const hasFilters = !!query.trim() || status !== 'All' || priority !== 'All' || queue !== 'All tickets';
-  const filtered = tickets;
-  const count = key => counts[key] || 0;
-  const portalOpen = counts.portalOpen || 0;
+function Tickets({ tickets, error, onAdd, onStatusChange, onDelete, onEdit, onView, currentUserId, isAdmin, canManage, staffName, staffOptions, onAssign }) {
+  const [query, setQuery] = useState('');
+  const [status, setStatus] = useState('All');
+  const [priority, setPriority] = useState('All');
+  const [queue, setQueue] = useState('All tickets');
+  const q = query.trim().toLowerCase();
+  const matchesQueue = t => queue === 'All tickets'
+    || (queue === 'Assigned to me' && t.assigned_to === currentUserId)
+    || (queue === 'Unassigned' && !t.assigned_to)
+    || (queue === 'Customer portal' && t.source === 'portal');
+  const filtered = tickets.filter(t => (status === 'All' || t.status === status) && (priority === 'All' || t.priority === priority) && matchesQueue(t) && (!q || `${t.title} ${t.description || ''} ${t.customers?.name || ''} ${t.category || ''} ${t.ticket_number || ''}`.toLowerCase().includes(q)));
+  const count = s => tickets.filter(t => t.status === s).length;
+  const portalOpen = tickets.filter(t => t.source === 'portal' && (t.status === 'Open' || t.status === 'In Progress')).length;
   return <>
     <PageHeading eyebrow="SUPPORT" title="Tickets" description="Manage customer issues and support requests, including tickets raised from the customer portal." action="Create Ticket" onAction={onAdd} />
     <div className="stats-grid">
       <StatCard label="Open" value={count('Open')} hint="Waiting for a response" tone="orange" icon="!" />
       <StatCard label="In progress" value={count('In Progress')} hint="Being worked on" tone="blue" icon="◷" />
-      <StatCard label="Resolved" value={count('done')} hint="Resolved or closed" tone="green" icon="✓" />
+      <StatCard label="Resolved" value={count('Resolved') + count('Closed')} hint="Resolved or closed" tone="green" icon="✓" />
       <StatCard label="From customer portal" value={portalOpen} hint="Open portal tickets" tone="purple" icon="✉" />
     </div>
     <div className="panel">
       <div className="panel-heading">
         <div>
           <h3>All Tickets</h3>
-          <p>{total} {total === 1 ? 'ticket' : 'tickets'}{loading ? ' · loading…' : ''}</p>
+          <p>{filtered.length} of {tickets.length} tickets</p>
         </div>
       </div>
       {error && <div className="form-error">{error}</div>}
@@ -5609,7 +5194,7 @@ function Tickets({ tickets, total = 0, page = 0, pageSize = PAGE_SIZE, loading =
         <select value={priority} onChange={e => setPriority(e.target.value)}>
           {['All', 'Low', 'Medium', 'High', 'Urgent'].map(x => <option key={x} value={x}>{x === 'All' ? 'All priorities' : x}</option>)}</select>
       </div>
-      {tickets.length === 0 && !hasFilters && !loading ?
+      {tickets.length === 0 ?
         <div className="empty-state">
           <p>No tickets yet.</p>
           <button type="button" className="secondary-btn" onClick={onAdd}>Create your first ticket</button>
@@ -5629,7 +5214,7 @@ function Tickets({ tickets, total = 0, page = 0, pageSize = PAGE_SIZE, loading =
             <td>{formatDate(ticket.created_at)}</td>
             <td><div className="toolbar-actions"><button type="button" className="secondary-btn" onClick={() => onView(ticket)}>View</button>{editable && <button type="button" className="secondary-btn" onClick={() => onEdit(ticket)}><Pencil size={14} /> Edit</button>}{(isAdmin || ticket.created_by === currentUserId) && <button type="button" className="icon-btn" title="Delete ticket" onClick={() => onDelete(ticket.id)}><X size={16} /></button>}</div></td>
           </tr>;
-        })}</tbody></table></div>}<Pager page={page} pageSize={pageSize} total={total} onPage={onPage} loading={loading} /></div></>;
+        })}</tbody></table></div>}</div></>;
 }
 function TicketDetail({ onRefresh, ticket, staffName, staffOptions, currentUserId, canManage, onClose, onEdit, onStatusChange, onAssign }) {
   const [comments, setComments] = useState([]);
@@ -6067,137 +5652,11 @@ function Leads({ leads, customers, products, leadProducts, onAdd, onUpdate, onSy
   </>;
 }
 
-function ComposeEmailModal({ integrations, customers, defaults = {}, userId, onSend, onClose }) {
-  const accounts = integrations.filter(x => x.status === 'connected');
-  const [provider, setProvider] = useState(accounts[0]?.provider || '');
-  const [customerId, setCustomerId] = useState(defaults.customer_id || '');
-  const [to, setTo] = useState(defaults.to || '');
-  const [cc, setCc] = useState('');
-  const [bcc, setBcc] = useState('');
-  const [showCc, setShowCc] = useState(false);
-  const [subject, setSubject] = useState(defaults.subject || '');
-  const [body, setBody] = useState(defaults.body || '');
-  const [signature, setSignature] = useState('');
-  const [useSignature, setUseSignature] = useState(true);
-  const [showSignature, setShowSignature] = useState(false);
-  const [signatureSaving, setSignatureSaving] = useState(false);
-  const [sending, setSending] = useState(false);
-  const [error, setError] = useState('');
-
-  // The connected accounts may finish loading after the window opens.
-  useEffect(() => {
-    if (!provider && accounts[0]) setProvider(accounts[0].provider);
-  }, [integrations]);
-
-  useEffect(() => {
-    let cancelled = false;
-    supabase.from('user_profiles').select('email_signature').eq('user_id', userId).maybeSingle()
-      .then(({ data }) => { if (!cancelled && data?.email_signature) setSignature(data.email_signature); });
-    return () => { cancelled = true; };
-  }, [userId]);
-
-  const pickCustomer = id => {
-    setCustomerId(id);
-    const customer = customers.find(c => c.id === id);
-    if (customer?.email) setTo(customer.email);
-  };
-
-  async function saveSignature() {
-    setSignatureSaving(true);
-    const { error: saveError } = await supabase.from('user_profiles').upsert({ user_id: userId, email_signature: signature.trim() || null, updated_at: new Date().toISOString() });
-    setSignatureSaving(false);
-    if (saveError) setError(`Could not save your signature: ${saveError.message}`);
-    else { setError(''); setShowSignature(false); }
-  }
-
-  const submit = async event => {
-    event.preventDefault();
-    setError('');
-    if (!provider) { setError('Connect a Gmail or Outlook account first.'); return; }
-    if (!to.trim()) { setError('Enter at least one recipient.'); return; }
-    setSending(true);
-    try {
-      const finalBody = useSignature && signature.trim() ? `${body.trimEnd()}\n\n-- \n${signature.trim()}` : body;
-      await onSend({ provider, to: to.trim(), cc: cc.trim(), bcc: bcc.trim(), subject: subject.trim(), body: finalBody, customer_id: customerId || null });
-      onClose();
-    } catch (err) {
-      setError(err.message || 'The email could not be sent.');
-    } finally {
-      setSending(false);
-    }
-  };
-
-  return (
-    <div className="modal-backdrop">
-      <form className="modal modal-wide compose-modal" onSubmit={submit}>
-        <div className="modal-heading">
-          <div><h2>New email</h2><p>Sent from your connected account and saved to the customer's history.</p></div>
-          <button type="button" className="icon-btn" onClick={onClose} disabled={sending} aria-label="Close compose email"><X size={18} /></button>
-        </div>
-        {accounts.length === 0 ? (
-          <>
-            <p className="detail-empty">Connect Gmail or Outlook on the Email page before sending email from here.</p>
-            <div className="modal-actions"><button type="button" className="primary-btn" onClick={onClose}>Close</button></div>
-          </>
-        ) : (
-          <>
-            {error && <div className="form-error" role="alert">{error}</div>}
-            <div className="compose-row">
-              <label>From
-                <select value={provider} onChange={e => setProvider(e.target.value)}>
-                  {accounts.map(a => <option key={a.id} value={a.provider}>{a.email_address || a.provider} ({a.provider === 'gmail' ? 'Gmail' : 'Outlook'})</option>)}
-                </select>
-              </label>
-              <label>Customer (optional)
-                <select value={customerId} onChange={e => pickCustomer(e.target.value)}>
-                  <option value="">Not linked to a customer</option>
-                  {customers.map(c => <option key={c.id} value={c.id}>{c.name}{c.company ? ` — ${c.company}` : ''}</option>)}
-                </select>
-              </label>
-            </div>
-            <label>To
-              <input type="text" value={to} onChange={e => setTo(e.target.value)} placeholder="name@company.com (separate several with commas)" required />
-            </label>
-            {showCc ? (
-              <div className="compose-row">
-                <label>Cc<input type="text" value={cc} onChange={e => setCc(e.target.value)} placeholder="Optional" /></label>
-                <label>Bcc<input type="text" value={bcc} onChange={e => setBcc(e.target.value)} placeholder="Optional" /></label>
-              </div>
-            ) : (
-              <button type="button" className="text-btn compose-link" onClick={() => setShowCc(true)}>+ Add Cc / Bcc</button>
-            )}
-            <label>Subject
-              <input value={subject} onChange={e => setSubject(e.target.value)} maxLength={300} required />
-            </label>
-            <label>Message
-              <textarea rows="9" value={body} onChange={e => setBody(e.target.value)} required />
-            </label>
-            <div className="compose-signature">
-              <label className="compose-check"><input type="checkbox" checked={useSignature} onChange={e => setUseSignature(e.target.checked)} />Add my signature</label>
-              <button type="button" className="text-btn" onClick={() => setShowSignature(v => !v)}>{showSignature ? 'Hide signature' : signature ? 'Edit signature' : 'Create signature'}</button>
-            </div>
-            {showSignature && (
-              <div className="compose-signature-editor">
-                <textarea rows="4" value={signature} onChange={e => setSignature(e.target.value)} placeholder={'Your name\nYour title · Company\nPhone'} maxLength={1000} />
-                <button type="button" className="secondary-btn" onClick={saveSignature} disabled={signatureSaving}>{signatureSaving ? 'Saving…' : 'Save signature'}</button>
-              </div>
-            )}
-            <div className="modal-actions">
-              <button type="button" className="secondary-btn" onClick={onClose} disabled={sending}>Cancel</button>
-              <button type="submit" className="primary-btn" disabled={sending}>{sending ? 'Sending…' : 'Send email'}</button>
-            </div>
-          </>
-        )}
-      </form>
-    </div>
-  );
-}
-
-function EmailPage({ emailLogs, customers, integrations, loading, error, onConnect, onDisconnect, onAdd, onCompose }) {
+function EmailPage({ emailLogs, customers, integrations, loading, error, onConnect, onDisconnect, onAdd }) {
   const [showLog, setShowLog] = useState(false);
-  useEffect(() => { const handler = () => setShowLog(true); window.addEventListener('storhet-open-email-log', handler); return () => window.removeEventListener('storhet-open-email-log', handler); }, []);
+  useEffect(() => { const handler = () => setShowLog(true); window.addEventListener('orbit-open-email-log', handler); return () => window.removeEventListener('orbit-open-email-log', handler); }, []);
   return <>
-    <PageHeading eyebrow="COMMUNICATIONS" title="Email" description="Connect Gmail or Outlook, send email from inside the CRM, and keep customer communication in one place." action="Compose email" onAction={onCompose} />
+    <PageHeading eyebrow="COMMUNICATIONS" title="Email" description="Connect Gmail or Outlook and keep customer communication in your CRM." />
     <div className="stats-grid">
       <StatCard label="Connected accounts" value={integrations.filter(x => x.status === 'connected').length} hint="Gmail and Outlook" tone="blue" icon="@" />
       <StatCard label="Email logs" value={emailLogs.length} hint="CRM communication history" tone="green" icon="✉" />
@@ -6282,70 +5741,388 @@ function EmailLogs({ emailLogs, customers, onAdd, openExternally = false, onClos
     }
   </>
 }
-function CalendarPage({ events, customers, onAdd, onUpdate, onDelete }) {
-  const [show, setShow] = useState(false); const [editing, setEditing] = useState(null);
-  const blank = { title: '', description: '', start_at: '', end_at: '', event_type: 'Meeting', customer_id: '', location: '', status: 'Scheduled' };
+function CalendarPage({ events = [], customers = [], onAdd, onUpdate, onDelete, onRefresh }) {
+  const [show, setShow] = useState(false);
+  const [editing, setEditing] = useState(null);
+  const [saving, setSaving] = useState(false);
+  const blank = {
+    title: '',
+    description: '',
+    start_at: '',
+    end_at: '',
+    event_type: 'Meeting',
+    customer_id: '',
+    location: '',
+    status: 'Scheduled',
+    reminder_minutes: ''
+  };
   const [form, setForm] = useState(blank);
+
+  const localDateTime = value => {
+    if (!value) return '';
+    const date = new Date(value);
+    if (Number.isNaN(date.getTime())) return '';
+    const pad = n => String(n).padStart(2, '0');
+    return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}T${pad(date.getHours())}:${pad(date.getMinutes())}`;
+  };
+
+  const toIso = value => {
+    if (!value) return null;
+    const date = new Date(value);
+    return Number.isNaN(date.getTime()) ? null : date.toISOString();
+  };
+
+  const calendarEvents = useMemo(() => events.map(event => {
+    const type = String(event.event_type || 'Other').toLowerCase();
+    const colorMap = {
+      meeting: '#10b981',
+      demo: '#10b981',
+      'follow-up': '#6366f1',
+      call: '#0ea5e9',
+      reminder: '#f59e0b',
+      task: '#8b5cf6',
+      other: '#64748b'
+    };
+    const color = colorMap[type] || '#64748b';
+    return {
+      id: event.id,
+      title: event.title || 'Untitled event',
+      start: event.start_at,
+      // Calendar events are single-day by default. If an old/accidental record
+      // contains an end date on another day, do not let it become a long
+      // multi-day bar in Month view. Same-day end times are still respected.
+      end: (() => {
+        if (!event.end_at) return undefined;
+        const startDate = new Date(event.start_at);
+        const endDate = new Date(event.end_at);
+        if (Number.isNaN(startDate.getTime()) || Number.isNaN(endDate.getTime())) return undefined;
+        return startDate.toDateString() === endDate.toDateString() ? event.end_at : undefined;
+      })(),
+      allDay: false,
+      color,
+      textColor: '#ffffff',
+      extendedProps: { original: event }
+    };
+  }), [events]);
+
+  const hasEventOnDate = date => {
+    const target = new Date(date);
+    target.setHours(0, 0, 0, 0);
+    return events.some(event => {
+      if (!event?.start_at) return false;
+      const start = new Date(event.start_at);
+      if (Number.isNaN(start.getTime())) return false;
+      start.setHours(0, 0, 0, 0);
+      return start.getTime() === target.getTime();
+    });
+  };
+
+  const openNew = startValue => {
+    setEditing(null);
+    setForm({ ...blank, start_at: startValue || '' });
+    setShow(true);
+  };
+
+  const openEdit = event => {
+    const original = event.extendedProps?.original || event;
+    setEditing(original);
+    setForm({
+      ...blank,
+      ...original,
+      customer_id: original.customer_id || '',
+      event_type: original.event_type || 'Meeting',
+      status: original.status || 'Scheduled',
+      reminder_minutes: original.reminder_minutes == null ? '' : String(original.reminder_minutes),
+      start_at: localDateTime(original.start_at || event.start),
+      end_at: (() => {
+        const start = new Date(original.start_at || event.start);
+        const end = new Date(original.end_at || event.end);
+        if (Number.isNaN(start.getTime()) || Number.isNaN(end.getTime())) return '';
+        return start.toDateString() === end.toDateString() ? localDateTime(original.end_at || event.end) : '';
+      })()
+    });
+    setShow(true);
+  };
+
+  const close = () => {
+    if (saving) return;
+    setShow(false);
+    setEditing(null);
+    setForm(blank);
+  };
+
   const save = async e => {
     e.preventDefault();
+    if (!form.title.trim() || !form.start_at) return;
+
+    setSaving(true);
     try {
-      if (editing) await onUpdate(editing.id, form);
-      else await onAdd(form);
-      setShow(false);
-      setEditing(null);
-      setForm(blank)
-    } catch (err) { alert(err.message) }
+      const payload = {
+        title: form.title.trim(),
+        description: form.description?.trim() || '',
+        start_at: toIso(form.start_at),
+        end_at: form.end_at ? toIso(form.end_at) : null,
+        event_type: form.event_type || 'Meeting',
+        customer_id: form.customer_id || null,
+        location: form.location?.trim() || '',
+        status: form.status || 'Scheduled',
+        reminder_minutes: form.reminder_minutes === '' ? null : Number(form.reminder_minutes)
+      };
+
+      if (editing) await onUpdate(editing.id, payload);
+      else await onAdd(payload);
+      close();
+    } catch (err) {
+      alert(err.message || 'Unable to save event.');
+    } finally {
+      setSaving(false);
+    }
   };
-  const open = x => {
-    setEditing(x);
-    setForm({ ...x, start_at: formatDateTimeLocal(x.start_at), end_at: formatDateTimeLocal(x.end_at) }); setShow(true)
+
+  const updateCalendarPosition = async info => {
+    const original = info.event.extendedProps?.original;
+    if (!original) return;
+
+    try {
+      await onUpdate(original.id, {
+        title: original.title,
+        description: original.description || '',
+        start_at: info.event.start?.toISOString() || original.start_at,
+        end_at: (() => {
+          const start = info.event.start;
+          const end = info.event.end;
+          if (!start || !end) return null;
+          return start.toDateString() === end.toDateString() ? end.toISOString() : null;
+        })(),
+        event_type: original.event_type || 'Meeting',
+        customer_id: original.customer_id || null,
+        location: original.location || '',
+        status: original.status || 'Scheduled',
+        reminder_minutes: original.reminder_minutes == null ? null : Number(original.reminder_minutes)
+      });
+    } catch (err) {
+      info.revert();
+      alert(err.message || 'Unable to update the event.');
+    }
   };
+
+  const dateClickValue = (date, allDay = false) => {
+    const pad = n => String(n).padStart(2, '0');
+    const nextDate = new Date(date);
+    if (allDay) nextDate.setHours(9, 0, 0, 0);
+    return `${nextDate.getFullYear()}-${pad(nextDate.getMonth() + 1)}-${pad(nextDate.getDate())}T${pad(nextDate.getHours())}:${pad(nextDate.getMinutes())}`;
+  };
+
+  const openFromSelection = selection => {
+    const start = new Date(selection.start);
+    const end = selection.end ? new Date(selection.end) : null;
+    if (selection.allDay) {
+      start.setHours(9, 0, 0, 0);
+      if (end) {
+        end.setDate(end.getDate() - 1);
+        end.setHours(10, 0, 0, 0);
+      }
+    }
+    openNew(dateClickValue(start), end ? dateClickValue(end) : '');
+  };
+
+  const reminderOptions = [
+    { value: '', label: 'No reminder' },
+    { value: '0', label: 'At event time' },
+    { value: '5', label: '5 minutes before' },
+    { value: '15', label: '15 minutes before' },
+    { value: '30', label: '30 minutes before' },
+    { value: '60', label: '1 hour before' },
+    { value: '1440', label: '1 day before' },
+    { value: '4320', label: '3 days before' }
+  ];
+
+  const eventContent = info => {
+    const original = info.event.extendedProps?.original || {};
+    return (
+      <div className="orbit-event-inner">
+        <span className="orbit-event-dot" />
+        <span className="orbit-event-copy">
+          {info.timeText && <span className="orbit-event-time">{info.timeText}</span>}
+          <span className="orbit-event-title">{info.event.title}</span>
+        </span>
+      </div>
+    );
+  };
+
   return <>
-    <PageHeading eyebrow="PRODUCTIVITY" title="Calendar" description="Manage meetings, calls and customer appointments." action="New event" onAction={() => { setEditing(null); setForm(blank); setShow(true) }} />
-    <div className="panel">
-      <div className="table-wrap">
-        <table>
-          <thead>
-            <tr>
-              <th>Event</th>
-              <th>Customer</th>
-              <th>When</th>
-              <th>Type</th>
-              <th>Status</th>
-              <th>Actions</th>
-            </tr>
-          </thead>
-          <tbody>{events.length === 0 ?
-            <tr>
-              <td colSpan="6">No calendar events yet.</td>
-            </tr> : events.map(x => <tr key={x.id}>
-              <td>
-                <strong>{x.title}</strong>
-                <div className="deal-customer">{x.location || ''}</div>
-              </td>
-              <td>{x.customers?.name || '—'}</td>
-              <td>{formatDateTime(x.start_at)}</td>
-              <td>{x.event_type}</td><td>{x.status}</td>
-              <td>
-                <div className="toolbar-actions">
-                  <button className="secondary-btn" onClick={() => open(x)}>Edit</button>
-                  <button className="icon-btn" onClick={() => onDelete(x.id)}><X size={16} /></button>
-                </div>
-              </td>
-            </tr>
-            )}
-          </tbody>
-        </table>
+
+
+    <PageHeading
+      eyebrow="PRODUCTIVITY"
+      title="Calendar"
+      description="Manage meetings, calls, follow-ups and reminders."
+      action="New event"
+      onAction={() => openNew()}
+    />
+
+    <div className="orbit-calendar-panel panel">
+      <div className="orbit-calendar-shell">
+        <FullCalendar
+          plugins={[dayGridPlugin, timeGridPlugin, listPlugin, interactionPlugin]}
+          initialView="dayGridMonth"
+          headerToolbar={{
+            left: 'prev,next today',
+            center: 'title',
+            right: 'dayGridMonth,timeGridWeek,timeGridDay,listWeek'
+          }}
+          buttons={{
+            prev: { text: '‹' },
+            next: { text: '›' },
+            today: { text: 'Today' },
+            dayGridMonth: { text: 'Month' },
+            timeGridWeek: { text: 'Week' },
+            timeGridDay: { text: 'Day' },
+            listWeek: { text: 'List' }
+          }}
+          headerToolbarClass="orbit-fc-header"
+          toolbarSectionClass="orbit-fc-toolbar-section"
+          toolbarTitleClass="orbit-fc-title"
+          buttonGroupClass="orbit-fc-button-group"
+          buttonClass={info => `orbit-fc-button${info.isSelected ? ' orbit-fc-button-active' : ''}`}
+          className="orbit-fullcalendar"
+          viewClass="orbit-fc-view"
+          dayHeaderClass="orbit-fc-day-header"
+          dayHeaderInnerClass="orbit-fc-day-header-inner"
+          dayHeaderRowClass="orbit-fc-day-header-row"
+          dayHeaderDividerClass="orbit-fc-day-header-divider"
+          dayCellClass={info => `orbit-fc-day-cell${hasEventOnDate(info.date) ? ' orbit-fc-day-cell-has-event' : ''}${info.isToday ? ' orbit-fc-day-cell-today' : ''}${info.isOther ? ' orbit-fc-day-cell-other' : ''}`}
+          dayCellTopClass="orbit-fc-day-top"
+          dayCellTopInnerClass="orbit-fc-day-number"
+          dayCellInnerClass="orbit-fc-day-events"
+          dayCellBottomClass="orbit-fc-day-bottom"
+          dayRowClass="orbit-fc-day-row"
+          eventClass={info => {
+            const type = String(info.event.extendedProps?.original?.event_type || 'Other')
+              .toLowerCase()
+              .replace(/\s+/g, '-');
+            return `orbit-fc-event orbit-calendar-event-${type}`;
+          }}
+          eventInnerClass="orbit-fc-event-inner"
+          eventTimeClass="orbit-fc-event-time"
+          eventTitleClass="orbit-fc-event-title"
+          dayLaneClass="orbit-fc-day-lane"
+          slotHeaderClass="orbit-fc-slot-header"
+          slotHeaderInnerClass="orbit-fc-slot-header-inner"
+          slotLaneClass="orbit-fc-slot-lane"
+          listDayHeaderClass="orbit-fc-list-day-header"
+          listDayHeaderInnerClass="orbit-fc-list-day-header-inner"
+          views={{
+            dayGrid: { className: 'orbit-fc-daygrid-view', eventClass: 'orbit-fc-event' },
+            timeGrid: { className: 'orbit-fc-timegrid-view', rowEventClass: 'orbit-fc-event' },
+            list: { className: 'orbit-fc-list-view', listItemEventClass: 'orbit-fc-list-event' }
+          }}
+          height="auto"
+          dayMaxEvents={3}
+          dayMaxEventRows={3}
+          fixedWeekCount={false}
+          nowIndicator
+          slotMinTime="07:00:00"
+          slotMaxTime="20:00:00"
+          scrollTime="08:00:00"
+          eventContent={eventContent}
+          editable
+          selectable
+          selectMirror
+          unselectAuto
+          events={calendarEvents}
+          dateClick={info => openNew(dateClickValue(info.date, info.allDay))}
+          select={openFromSelection}
+          eventClick={info => openEdit(info.event)}
+          eventDrop={updateCalendarPosition}
+          eventResize={updateCalendarPosition}
+          eventTimeFormat={{ hour:'numeric', minute:'2-digit', meridiem:'short' }}
+          eventDisplay="block"
+        />
+        <div className="orbit-calendar-legend">
+          <span className="orbit-calendar-legend-item"><span className="orbit-calendar-legend-dot" style={{ background:'#10b981' }} />Meeting / Demo</span>
+          <span className="orbit-calendar-legend-item"><span className="orbit-calendar-legend-dot" style={{ background:'#6366f1' }} />Follow-up</span>
+          <span className="orbit-calendar-legend-item"><span className="orbit-calendar-legend-dot" style={{ background:'#0ea5e9' }} />Call</span>
+          <span className="orbit-calendar-legend-item"><span className="orbit-calendar-legend-dot" style={{ background:'#f59e0b' }} />Reminder</span>
+          <span className="orbit-calendar-legend-item"><span className="orbit-calendar-legend-dot" style={{ background:'#8b5cf6' }} />Task</span>
+        </div>
       </div>
     </div>
-    {show && <div className="modal-backdrop" onClick={() => setShow(false)}><form className="modal" onSubmit={save} onClick={e => e.stopPropagation()}>
-      <div className="modal-heading">
-        <h2>{editing ? 'Edit event' : 'New event'}</h2>
-        <button type="button" className="icon-btn" onClick={() => setShow(false)}><X size={18} /></button>
-      </div>
-      <label>Title<input required value={form.title} onChange={e => setForm({ ...form, title: e.target.value })} /></label>
-      <label>Customer<select value={form.customer_id} onChange={e => setForm({ ...form, customer_id: e.target.value })}><option value="">None</option>{customers.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}</select></label><label>Start<input type="datetime-local" required value={form.start_at || ''} onChange={e => setForm({ ...form, start_at: e.target.value })} /></label><label>End<input type="datetime-local" value={form.end_at || ''} onChange={e => setForm({ ...form, end_at: e.target.value })} /></label><label>Type<select value={form.event_type} onChange={e => setForm({ ...form, event_type: e.target.value })}>{['Meeting', 'Call', 'Demo', 'Task', 'Other'].map(x => <option key={x}>{x}</option>)}</select></label><label>Location<input value={form.location || ''} onChange={e => setForm({ ...form, location: e.target.value })} /></label><label>Description<textarea value={form.description || ''} onChange={e => setForm({ ...form, description: e.target.value })} /></label><div className="modal-actions"><button type="button" className="secondary-btn" onClick={() => setShow(false)}>Cancel</button><button className="primary-btn">Save event</button></div></form></div>}</>
+
+    {show && <div className="modal-backdrop" onClick={close}>
+      <form className="modal calendar-event-modal" onSubmit={save} onClick={e => e.stopPropagation()}>
+        <div className="modal-heading">
+          <div>
+            <div className="eyebrow">CALENDAR</div>
+            <h2>{editing ? 'Edit event' : 'New event'}</h2>
+          </div>
+          <button type="button" className="icon-btn" onClick={close}><X size={18} /></button>
+        </div>
+
+        <label>Title
+          <input required value={form.title} onChange={e => setForm({ ...form, title:e.target.value })} placeholder="e.g. Follow up with Kenya" />
+        </label>
+
+        <label>Customer
+          <select value={form.customer_id} onChange={e => setForm({ ...form, customer_id:e.target.value })}>
+            <option value="">No customer / general event</option>
+            {customers.map(customer => <option key={customer.id} value={customer.id}>{customer.name}{customer.company ? ` — ${customer.company}` : ''}</option>)}
+          </select>
+        </label>
+
+        <div className="calendar-form-grid">
+          <label>Start
+            <input type="datetime-local" required value={form.start_at || ''} onChange={e => setForm({ ...form, start_at:e.target.value })} />
+          </label>
+          <label>End
+            <input type="datetime-local" value={form.end_at || ''} onChange={e => setForm({ ...form, end_at:e.target.value })} />
+          </label>
+        </div>
+
+        <div className="calendar-form-grid">
+          <label>Type
+            <select value={form.event_type} onChange={e => setForm({ ...form, event_type:e.target.value })}>
+              {['Meeting','Follow-up','Call','Reminder','Task','Demo','Other'].map(type => <option key={type}>{type}</option>)}
+            </select>
+          </label>
+          <label>Status
+            <select value={form.status} onChange={e => setForm({ ...form, status:e.target.value })}>
+              {['Scheduled','Completed','Cancelled'].map(status => <option key={status}>{status}</option>)}
+            </select>
+          </label>
+        </div>
+
+        <label>Reminder
+          <select value={form.reminder_minutes == null ? '' : String(form.reminder_minutes)} onChange={e => setForm({ ...form, reminder_minutes:e.target.value })}>
+            {reminderOptions.map(option => <option key={option.value} value={option.value}>{option.label}</option>)}
+          </select>
+          <span className="calendar-form-help">The reminder will appear in your Orbit notification bell.</span>
+        </label>
+
+        <label>Location
+          <input value={form.location || ''} onChange={e => setForm({ ...form, location:e.target.value })} placeholder="Office, Zoom, customer site, etc." />
+        </label>
+
+        <label>Description
+          <textarea rows="5" value={form.description || ''} onChange={e => setForm({ ...form, description:e.target.value })} placeholder="Add notes, follow-up details or instructions..." />
+        </label>
+
+        <div className="modal-actions">
+          {editing && <button type="button" className="secondary-btn calendar-delete-btn" onClick={async () => {
+            if (!window.confirm('Delete this event?')) return;
+            try { await onDelete(editing.id); close(); }
+            catch (err) { alert(err.message || 'Unable to delete event.'); }
+          }} disabled={saving}>Delete</button>}
+          <div className="calendar-modal-actions-right">
+            <button type="button" className="secondary-btn" onClick={close} disabled={saving}>Cancel</button>
+            <button type="submit" className="primary-btn" disabled={saving}>{saving ? 'Saving…' : editing ? 'Save changes' : 'Save event'}</button>
+          </div>
+        </div>
+      </form>
+    </div>}
+  </>;
 }
+
 function Quotes({ quotes = [], products = [], quoteItems = [], onLoadQuoteItems, onAdd, onUpdate, onDelete, formatAmount, currentUserId, isAdmin }) {
   const [show, setShow] = useState(false);
   const [editing, setEditing] = useState(null);
@@ -6672,21 +6449,427 @@ function Quotes({ quotes = [], products = [], quoteItems = [], onLoadQuoteItems,
     </div>}
   </>;
 }
+function Invoices({ invoices, payments, customers, products, onAdd, onUpdate, onAddPayment, formatAmount, currentUserId, isAdmin }) {
+  const [show, setShow] = useState(false);
+  const [pay, setPay] = useState(null);
+  const [preview, setPreview] = useState(null);
+  const blank = {
+    invoice_number: `INV-${Date.now().toString().slice(-6)}`,
+    title: '',
+    customer_id: '',
+    product_id: '',
+    item_type: 'Product',
+    quantity: 1,
+    unit_price: 0,
+    amount: 0,
+    due_date: '',
+    payment_terms: 'Due on receipt',
+    status: 'Draft',
+    notes: ''
+  };
+  const [form, setForm] = useState(blank);
 
-function Invoices({ invoices, payments, customers, onAdd, onUpdate, onAddPayment, formatAmount, currentUserId, isAdmin }) { const [show, setShow] = useState(false); const [pay, setPay] = useState(null); const blank = { invoice_number: `INV-${Date.now().toString().slice(-6)}`, title: '', customer_id: '', amount: 0, due_date: '', status: 'Draft', notes: '' }; const [form, setForm] = useState(blank); const save = async e => { e.preventDefault(); try { await onAdd(form); setShow(false) } catch (err) { alert(err.message) } }; const paymentSave = async e => { e.preventDefault(); try { await onAddPayment({ ...pay, payment_method: pay.payment_method || 'Bank transfer' }); setPay(null) } catch (err) { alert(err.message) } }; return <><PageHeading eyebrow="BILLING" title="Invoices & payments" description="Track invoices, balances and payments." action="New invoice" onAction={() => { setForm({ ...blank, invoice_number: `INV-${Date.now().toString().slice(-6)}` }); setShow(true) }} /><div className="stats-grid"><StatCard label="Invoiced" value={formatAmount(invoices.reduce((s, x) => s + Number(x.amount || 0), 0))} hint={`${invoices.length} invoices`} tone="blue" icon="$" /><StatCard label="Paid" value={formatAmount(payments.reduce((s, x) => s + Number(x.amount || 0), 0))} hint={`${payments.length} payments`} tone="green" icon="✓" /><StatCard label="Outstanding" value={formatAmount(invoices.filter(x => !['Paid', 'Cancelled'].includes(x.status)).reduce((s, x) => s + Number(x.amount || 0), 0))} hint="Open balances" tone="orange" icon="!" /></div><div className="panel"><div className="table-wrap"><table><thead><tr><th>Invoice</th><th>Customer</th><th>Amount</th><th>Status</th><th>Due</th><th>Actions</th></tr></thead><tbody>{invoices.length === 0 ? <tr><td colSpan="6">No invoices yet.</td></tr> : invoices.map(i => <tr key={i.id}><td><strong>{i.invoice_number}</strong><div className="deal-customer">{i.title}</div></td><td>{i.customers?.name || '—'}</td><td>{formatAmount(i.amount)}</td><td>{i.status}</td><td>{i.due_date ? formatDate(i.due_date) : '—'}</td><td><div className="toolbar-actions">{(isAdmin || i.created_by === currentUserId) && <button className="secondary-btn" onClick={() => onUpdate(i.id, { status: i.status === 'Paid' ? 'Sent' : 'Paid' })}>{i.status === 'Paid' ? 'Reopen' : 'Mark paid'}</button>}{i.status !== 'Paid' && <button className="secondary-btn" onClick={() => setPay({ invoice_id: i.id, amount: i.amount, paid_at: new Date().toISOString().slice(0, 16), payment_method: 'Bank transfer' })}>Record payment</button>}</div></td></tr>)}</tbody></table></div></div>{show && <div className="modal-backdrop" onClick={() => setShow(false)}><form className="modal" onSubmit={save} onClick={e => e.stopPropagation()}><div className="modal-heading"><h2>New invoice</h2><button type="button" className="icon-btn" onClick={() => setShow(false)}><X size={18} /></button></div><label>Invoice number<input required value={form.invoice_number} onChange={e => setForm({ ...form, invoice_number: e.target.value })} /></label><label>Title<input required value={form.title} onChange={e => setForm({ ...form, title: e.target.value })} /></label><label>Customer<select value={form.customer_id} onChange={e => setForm({ ...form, customer_id: e.target.value })}><option value="">None</option>{customers.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}</select></label><label>Amount<input type="number" min="0" value={form.amount} onChange={e => setForm({ ...form, amount: Number(e.target.value) })} /></label><label>Due date<input type="date" value={form.due_date || ''} onChange={e => setForm({ ...form, due_date: e.target.value })} /></label><label>Status<select value={form.status} onChange={e => setForm({ ...form, status: e.target.value })}>{['Draft', 'Sent', 'Partially Paid', 'Paid', 'Overdue', 'Cancelled'].map(x => <option key={x}>{x}</option>)}</select></label><label>Notes<textarea value={form.notes || ''} onChange={e => setForm({ ...form, notes: e.target.value })} /></label><div className="modal-actions"><button type="button" className="secondary-btn" onClick={() => setShow(false)}>Cancel</button><button className="primary-btn">Create invoice</button></div></form></div>}{pay && <div className="modal-backdrop" onClick={() => setPay(null)}><form className="modal" onSubmit={paymentSave} onClick={e => e.stopPropagation()}><div className="modal-heading"><h2>Record payment</h2><button type="button" className="icon-btn" onClick={() => setPay(null)}><X size={18} /></button></div><label>Amount<input type="number" min="0" value={pay.amount} onChange={e => setPay({ ...pay, amount: Number(e.target.value) })} /></label><label>Method<select value={pay.payment_method} onChange={e => setPay({ ...pay, payment_method: e.target.value })}>{['Bank transfer', 'Card', 'Cash', 'Online', 'Other'].map(x => <option key={x}>{x}</option>)}</select></label><label>Date<input type="datetime-local" value={pay.paid_at} onChange={e => setPay({ ...pay, paid_at: e.target.value })} /></label><div className="modal-actions"><button type="button" className="secondary-btn" onClick={() => setPay(null)}>Cancel</button><button className="primary-btn">Save payment</button></div></form></div>}</> }
+  const setInvoiceField = (field, value) => {
+    setForm(prev => {
+      const next = { ...prev, [field]: value };
+      if (field === 'quantity' || field === 'unit_price') {
+        next.amount = Math.max(0, Number(next.quantity) || 0) * Math.max(0, Number(next.unit_price) || 0);
+      }
+      return next;
+    });
+  };
 
+  const availableInvoiceProducts = products.filter(product => (product.status || 'Active') === 'Active' && (product.type || 'Product') === form.item_type);
+
+  const setInvoiceProduct = productId => {
+    const product = products.find(item => item.id === productId);
+    if (!product) {
+      setForm(prev => ({ ...prev, product_id: '', title: '', unit_price: 0, amount: 0 }));
+      return;
+    }
+
+    const unitPrice = Math.max(0, Number(product.unit_price) || 0);
+    const quantity = Math.max(1, Number(form.quantity) || 1);
+    setForm(prev => ({
+      ...prev,
+      product_id: product.id,
+      title: product.name,
+      item_type: product.type || 'Product',
+      unit_price: unitPrice,
+      amount: quantity * unitPrice
+    }));
+  };
+
+  const setInvoiceItemType = value => {
+    setForm(prev => ({
+      ...prev,
+      item_type: value,
+      product_id: '',
+      title: '',
+      unit_price: 0,
+      amount: 0
+    }));
+  };
+
+  const setPaymentTerms = value => {
+    const today = new Date();
+    let dueDate = '';
+
+    if (value === 'Due on receipt') {
+      dueDate = today.toISOString().slice(0, 10);
+    } else if (value.startsWith('Net ')) {
+      const days = Number(value.replace('Net ', '')) || 0;
+      today.setDate(today.getDate() + days);
+      dueDate = today.toISOString().slice(0, 10);
+    }
+
+    setForm(prev => ({
+      ...prev,
+      payment_terms: value,
+      due_date: value === 'Custom' ? prev.due_date : dueDate
+    }));
+  };
+
+  const save = async e => {
+    e.preventDefault();
+    try {
+      const payload = {
+        invoice_number: form.invoice_number,
+        title: form.title,
+        customer_id: form.customer_id || null,
+        product_id: form.product_id || null,
+        item_type: form.item_type || 'Product',
+        quantity: Number(form.quantity) || 1,
+        unit_price: Number(form.unit_price) || 0,
+        amount: Number(form.amount) || 0,
+        due_date: form.due_date || null,
+        status: form.status,
+        notes: form.notes || ''
+      };
+      await onAdd(payload);
+      setShow(false);
+    } catch (err) {
+      alert(err.message);
+    }
+  };
+
+  const paymentSave = async e => {
+    e.preventDefault();
+    try {
+      await onAddPayment({ ...pay, payment_method: pay.payment_method || 'Bank transfer' });
+      setPay(null);
+    } catch (err) {
+      alert(err.message);
+    }
+  };
+
+  const getCustomer = invoice => {
+    return customers.find(customer => customer.id === invoice.customer_id) || null;
+  };
+
+  return <>
+    <PageHeading
+      eyebrow="BILLING"
+      title="Invoices & payments"
+      description="Track invoices, balances and payments."
+      action="New invoice"
+      onAction={() => {
+        setForm({ ...blank, invoice_number: `INV-${Date.now().toString().slice(-6)}` });
+        setShow(true);
+      }}
+    />
+
+    <div className="stats-grid">
+      <StatCard label="Invoiced" value={formatAmount(invoices.reduce((s, x) => s + Number(x.amount || 0), 0))} hint={`${invoices.length} invoices`} tone="blue" icon="$" />
+      <StatCard label="Paid" value={formatAmount(payments.reduce((s, x) => s + Number(x.amount || 0), 0))} hint={`${payments.length} payments`} tone="green" icon="✓" />
+      <StatCard label="Outstanding" value={formatAmount(invoices.filter(x => !['Paid', 'Cancelled'].includes(x.status)).reduce((s, x) => s + Number(x.amount || 0), 0))} hint="Open balances" tone="orange" icon="!" />
+    </div>
+
+    <div className="panel">
+      <div className="table-wrap">
+        <table>
+          <thead>
+            <tr><th>Invoice</th><th>Customer</th><th>Amount</th><th>Status</th><th>Due</th><th>Actions</th></tr>
+          </thead>
+          <tbody>
+            {invoices.length === 0 ? <tr><td colSpan="6">No invoices yet.</td></tr> : invoices.map(i => (
+              <tr key={i.id}>
+                <td><strong>{i.invoice_number}</strong><div className="deal-customer">{i.title}</div></td>
+                <td>{i.customers?.name || '—'}</td>
+                <td>{formatAmount(i.amount)}</td>
+                <td>{i.status}</td>
+                <td>{i.due_date ? formatDate(i.due_date) : '—'}</td>
+                <td>
+                  <div className="toolbar-actions">
+                    <button type="button" className="secondary-btn" onClick={() => setPreview(i)}>
+                      <FileText size={15} /> View
+                    </button>
+                    {(isAdmin || i.created_by === currentUserId) && <button className="secondary-btn" onClick={() => onUpdate(i.id, { status: i.status === 'Paid' ? 'Sent' : 'Paid' })}>{i.status === 'Paid' ? 'Reopen' : 'Mark paid'}</button>}
+                    {i.status !== 'Paid' && <button className="secondary-btn" onClick={() => setPay({ invoice_id: i.id, amount: i.amount, paid_at: new Date().toISOString().slice(0, 16), payment_method: 'Bank transfer' })}>Record payment</button>}
+                  </div>
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+    </div>
+
+    {show && <div className="modal-backdrop" onClick={() => setShow(false)}>
+      <form className="modal invoice-form-modal" onSubmit={save} onClick={e => e.stopPropagation()}>
+        <div className="modal-heading">
+          <div>
+            <h2>New invoice</h2>
+            <span className="invoice-form-subtitle">Create a simple professional invoice for your customer.</span>
+          </div>
+          <button type="button" className="icon-btn" onClick={() => setShow(false)}><X size={18} /></button>
+        </div>
+
+        <div className="invoice-form-section">
+          <div className="invoice-form-section-title">Invoice details</div>
+          <div className="invoice-form-grid">
+            <label>
+              Invoice number
+              <input required value={form.invoice_number} onChange={e => setForm({ ...form, invoice_number: e.target.value })} />
+            </label>
+
+            <label>
+              Customer
+              <select required value={form.customer_id} onChange={e => setForm({ ...form, customer_id: e.target.value })}>
+                <option value="">Select customer</option>
+                {customers.map(c => <option key={c.id} value={c.id}>{c.name}{c.company ? ` · ${c.company}` : ''}</option>)}
+              </select>
+            </label>
+
+            <label>
+              Invoice date
+              <input type="date" value={new Date().toISOString().slice(0, 10)} readOnly />
+            </label>
+
+            <label className="invoice-payment-terms-field">
+              Payment terms
+              <select value={form.payment_terms} onChange={e => setPaymentTerms(e.target.value)}>
+                <option>Due on receipt</option>
+                <option>Net 15</option>
+                <option>Net 30</option>
+                <option>Net 45</option>
+                <option>Net 60</option>
+                <option>Custom</option>
+              </select>
+              <span className="invoice-payment-term-help">
+                {form.payment_terms === 'Due on receipt'
+                  ? 'Payment is due when the invoice is received.'
+                  : form.payment_terms === 'Custom'
+                    ? 'Choose the exact due date below.'
+                    : `Payment is due ${form.payment_terms.replace('Net ', '')} days after the invoice date.`}
+              </span>
+            </label>
+
+            <label>
+              Due date
+              <input type="date" value={form.due_date || ''} onChange={e => setForm({ ...form, due_date: e.target.value })} />
+            </label>
+
+            <label>
+              Status
+              <select value={form.status} onChange={e => setForm({ ...form, status: e.target.value })}>
+                {['Draft', 'Sent', 'Partially Paid', 'Paid', 'Overdue', 'Cancelled'].map(x => <option key={x}>{x}</option>)}
+              </select>
+            </label>
+          </div>
+        </div>
+
+        <div className="invoice-form-section">
+          <div className="invoice-form-section-title">Items</div>
+          <div className="invoice-item-editor">
+            <label>
+              Type
+              <select value={form.item_type} onChange={e => setInvoiceItemType(e.target.value)}>
+                <option value="Product">Product</option>
+                <option value="Service">Service</option>
+              </select>
+            </label>
+
+            <label className="invoice-item-description">
+              Item / service
+              <select required value={form.product_id} onChange={e => setInvoiceProduct(e.target.value)}>
+                <option value="">Select from solutions</option>
+                {availableInvoiceProducts.map(product => (
+                  <option key={product.id} value={product.id}>
+                    {product.name}{product.vendor ? ` · ${product.vendor}` : ''}
+                  </option>
+                ))}
+              </select>
+            </label>
+
+            <label>
+              Qty
+              <input type="number" min="1" step="1" value={form.quantity} onChange={e => setInvoiceField('quantity', e.target.value)} />
+            </label>
+
+            <label>
+              Unit price
+              <input type="number" min="0" step="0.01" value={form.unit_price} readOnly />
+              <span className="invoice-payment-term-help">Pulled from the selected solution.</span>
+            </label>
+
+            <div className="invoice-item-total">
+              <span>Amount</span>
+              <strong>{formatAmount(form.amount)}</strong>
+            </div>
+          </div>
+          {form.item_type && availableInvoiceProducts.length === 0 && (
+            <div className="invoice-item-empty">No active {form.item_type.toLowerCase()} solutions have a selling price in the catalogue yet.</div>
+          )}
+
+          <div className="invoice-form-total">
+            <span>Total</span>
+            <strong>{formatAmount(form.amount)}</strong>
+          </div>
+        </div>
+
+        <div className="invoice-form-section">
+          <div className="invoice-form-section-title">Notes</div>
+          <label>
+            Customer notes
+            <textarea rows="3" placeholder="Thank you for your business." value={form.notes || ''} onChange={e => setForm({ ...form, notes: e.target.value })} />
+          </label>
+        </div>
+
+        <div className="modal-actions">
+          <button type="button" className="secondary-btn" onClick={() => setShow(false)}>Cancel</button>
+          <button className="primary-btn">Create invoice</button>
+        </div>
+      </form>
+    </div>}
+
+    {pay && <div className="modal-backdrop" onClick={() => setPay(null)}>
+      <form className="modal" onSubmit={paymentSave} onClick={e => e.stopPropagation()}>
+        <div className="modal-heading"><h2>Record payment</h2><button type="button" className="icon-btn" onClick={() => setPay(null)}><X size={18} /></button></div>
+        <label>Amount<input type="number" min="0" value={pay.amount} onChange={e => setPay({ ...pay, amount: Number(e.target.value) })} /></label>
+        <label>Method<select value={pay.payment_method} onChange={e => setPay({ ...pay, payment_method: e.target.value })}>{['Bank transfer', 'Card', 'Cash', 'Online', 'Other'].map(x => <option key={x}>{x}</option>)}</select></label>
+        <label>Date<input type="datetime-local" value={pay.paid_at} onChange={e => setPay({ ...pay, paid_at: e.target.value })} /></label>
+        <div className="modal-actions"><button type="button" className="secondary-btn" onClick={() => setPay(null)}>Cancel</button><button className="primary-btn">Save payment</button></div>
+      </form>
+    </div>}
+
+    {preview && (() => {
+      const customer = getCustomer(preview);
+      const invoiceDate = preview.created_at || new Date().toISOString();
+      const amount = Number(preview.amount || 0);
+      return <div className="invoice-preview-backdrop" onClick={() => setPreview(null)}>
+        <div className="invoice-preview-shell" onClick={e => e.stopPropagation()}>
+          <div className="invoice-preview-toolbar">
+            <div>
+              <strong>Invoice preview</strong>
+              <span>Temporary document template</span>
+            </div>
+            <div className="invoice-preview-actions">
+              <button type="button" className="secondary-btn" onClick={() => window.print()}><Download size={15} /> Print / Save PDF</button>
+              <button type="button" className="icon-btn" onClick={() => setPreview(null)}><X size={18} /></button>
+            </div>
+          </div>
+
+          <div className="invoice-print-sheet">
+            <header className="invoice-document-header">
+              <div className="invoice-company-block">
+                <img src="/storhet-logo.png" alt="Storhet Solutions" className="invoice-company-logo" />
+                <div>
+                  <h2>STORHET SOLUTIONS</h2>
+                  <p>Technology Solutions & Services</p>
+                </div>
+              </div>
+              <div className="invoice-title-block">
+                <div className="invoice-document-title">INVOICE</div>
+                <div className="invoice-status-pill">{preview.status || 'Draft'}</div>
+              </div>
+            </header>
+
+            <div className="invoice-document-rule" />
+
+            <section className="invoice-meta-grid">
+              <div>
+                <span className="invoice-label">BILL TO</span>
+                <strong>{customer?.name || preview.customers?.name || 'Customer'}</strong>
+                {customer?.company && <span>{customer.company}</span>}
+                {customer?.email && <span>{customer.email}</span>}
+                {customer?.phone && <span>{customer.phone}</span>}
+              </div>
+              <div className="invoice-details-box">
+                <div><span>Invoice #</span><strong>{preview.invoice_number}</strong></div>
+                <div><span>Invoice Date</span><strong>{formatDate(invoiceDate)}</strong></div>
+                <div><span>Due Date</span><strong>{preview.due_date ? formatDate(preview.due_date) : '—'}</strong></div>
+              </div>
+            </section>
+
+            <table className="invoice-document-table">
+              <thead><tr><th>#</th><th>ITEM &amp; DESCRIPTION</th><th>QTY</th><th>RATE</th><th>AMOUNT</th></tr></thead>
+              <tbody>
+                <tr>
+                  <td>1</td>
+                  <td><strong>{preview.title || 'Professional services'}</strong><span>{preview.item_type || 'Product'} · Storhet Solutions solution delivery</span></td>
+                  <td>{preview.quantity || 1}</td>
+                  <td>{formatAmount(preview.unit_price ?? amount)}</td>
+                  <td>{formatAmount(amount)}</td>
+                </tr>
+              </tbody>
+            </table>
+
+            <section className="invoice-bottom-grid">
+              <div className="invoice-notes-block">
+                <span className="invoice-label">NOTES</span>
+                <p>{preview.notes || 'Thank you for your business.'}</p>
+              </div>
+              <div className="invoice-totals-block">
+                <div><span>Subtotal</span><strong>{formatAmount(amount)}</strong></div>
+                <div><span>Discount</span><strong>{formatAmount(0)}</strong></div>
+                <div className="invoice-total-row"><span>TOTAL</span><strong>{formatAmount(amount)}</strong></div>
+                <div className="invoice-balance-row"><span>BALANCE DUE</span><strong>{formatAmount(amount)}</strong></div>
+              </div>
+            </section>
+
+            <footer className="invoice-document-footer">
+              <div>
+                <strong>Payment / Terms</strong>
+                <p>Please make payment by the stated due date. Payment details can be added here later.</p>
+              </div>
+              <div className="invoice-thank-you">Thank you for doing business with<br /><strong>STORHET SOLUTIONS</strong>.</div>
+            </footer>
+          </div>
+        </div>
+      </div>;
+    })()}
+  </>;
+}
 function Documents({ documents, customers, onUpload, onDownload, onDelete }) { const [customerId, setCustomerId] = useState(''); const upload = e => { const f = e.target.files?.[0]; if (!f) return; onUpload(f, customerId).catch(err => alert(err.message)); e.target.value = '' }; return <><PageHeading eyebrow="FILES" title="Documents" description="Store customer and CRM files in Supabase Storage." /><div className="panel"><div className="toolbar"><select value={customerId} onChange={e => setCustomerId(e.target.value)}><option value="">No customer link</option>{customers.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}</select><label className="secondary-btn" style={{ display: 'inline-flex', alignItems: 'center', gap: 8, cursor: 'pointer' }}><Upload size={15} /> Upload file<input type="file" hidden onChange={upload} /></label></div><div className="table-wrap"><table><thead><tr><th>File</th><th>Customer</th><th>Type</th><th>Size</th><th>Created</th><th>Actions</th></tr></thead><tbody>{documents.length === 0 ? <tr><td colSpan="6">No documents yet.</td></tr> : documents.map(d => <tr key={d.id}><td><strong>{d.name}</strong></td><td>{d.customers?.name || '—'}</td><td>{d.mime_type}</td><td>{Math.max(1, Math.round(Number(d.size_bytes || 0) / 1024))} KB</td><td>{formatDate(d.created_at)}</td><td><div className="toolbar-actions"><button className="secondary-btn" onClick={() => onDownload(d)}><Download size={14} /> Download</button><button className="icon-btn" onClick={() => onDelete(d)}><X size={16} /></button></div></td></tr>)}</tbody></table></div></div></> }
-
 function Automation({ workflows, onAdd, onUpdate }) { const [show, setShow] = useState(false); const blank = { name: '', description: '', trigger_type: 'customer_created', action_type: 'create_notification', active: true, config: {} }; const [form, setForm] = useState(blank); const save = async e => { e.preventDefault(); try { await onAdd(form); setShow(false); setForm(blank) } catch (err) { alert(err.message) } }; return <><PageHeading eyebrow="AUTOMATION" title="Workflow automation" description="Define rules that turn CRM events into actions." action="New workflow" onAction={() => setShow(true)} /><div className="panel"><div className="table-wrap"><table><thead><tr><th>Workflow</th><th>Trigger</th><th>Action</th><th>Status</th><th>Created</th><th>Toggle</th></tr></thead><tbody>{workflows.length === 0 ? <tr><td colSpan="6">No workflows yet.</td></tr> : workflows.map(w => <tr key={w.id}><td><strong>{w.name}</strong><div className="deal-customer">{w.description}</div></td><td>{w.trigger_type}</td><td>{w.action_type}</td><td>{w.active ? 'Active' : 'Paused'}</td><td>{formatDate(w.created_at)}</td><td><button className="secondary-btn" onClick={() => onUpdate(w.id, { active: !w.active })}>{w.active ? 'Pause' : 'Activate'}</button></td></tr>)}</tbody></table></div></div>{show && <div className="modal-backdrop" onClick={() => setShow(false)}><form className="modal" onSubmit={save} onClick={e => e.stopPropagation()}><div className="modal-heading"><h2>New workflow</h2><button type="button" className="icon-btn" onClick={() => setShow(false)}><X size={18} /></button></div><label>Name<input required value={form.name} onChange={e => setForm({ ...form, name: e.target.value })} /></label><label>Description<input value={form.description} onChange={e => setForm({ ...form, description: e.target.value })} /></label><label>Trigger<select value={form.trigger_type} onChange={e => setForm({ ...form, trigger_type: e.target.value })}>{['customer_created', 'lead_created', 'deal_stage_changed', 'ticket_created', 'invoice_overdue', 'activity_due'].map(x => <option key={x}>{x}</option>)}</select></label><label>Action<select value={form.action_type} onChange={e => setForm({ ...form, action_type: e.target.value })}>{['create_notification', 'create_activity', 'log_event', 'send_email'].map(x => <option key={x}>{x}</option>)}</select></label><div className="modal-actions"><button type="button" className="secondary-btn" onClick={() => setShow(false)}>Cancel</button><button className="primary-btn">Create workflow</button></div></form></div>}</> }
-
 function Segments({ segments, customers, onAdd, onUpdate }) { const [show, setShow] = useState(false); const [form, setForm] = useState({ name: '', description: '', rule_json: { status: 'Active' }, active: true }); const [selected, setSelected] = useState(null); const save = async e => { e.preventDefault(); try { await onAdd(form); setShow(false) } catch (err) { alert(err.message) } }; const count = s => customers.filter(c => (c.status || 'Active') === (s.rule_json?.status || 'Active')).length; return <><PageHeading eyebrow="CUSTOMER INTELLIGENCE" title="Segments" description="Group customers for targeted follow-up and reporting." action="New segment" onAction={() => setShow(true)} /><div className="panel"><div className="table-wrap"><table><thead><tr><th>Segment</th><th>Rule</th><th>Customers</th><th>Status</th><th>Actions</th></tr></thead><tbody>{segments.length === 0 ? <tr><td colSpan="5">No segments yet.</td></tr> : segments.map(s => <tr key={s.id}><td><strong>{s.name}</strong><div className="deal-customer">{s.description}</div></td><td>Status = {s.rule_json?.status || 'Active'}</td><td>{count(s)}</td><td>{s.active ? 'Active' : 'Paused'}</td><td><button className="secondary-btn" onClick={() => onUpdate(s.id, { active: !s.active })}>{s.active ? 'Pause' : 'Activate'}</button></td></tr>)}</tbody></table></div></div>{show && <div className="modal-backdrop" onClick={() => setShow(false)}><form className="modal" onSubmit={save} onClick={e => e.stopPropagation()}><div className="modal-heading"><h2>New segment</h2><button type="button" className="icon-btn" onClick={() => setShow(false)}><X size={18} /></button></div><label>Name<input required value={form.name} onChange={e => setForm({ ...form, name: e.target.value })} /></label><label>Description<input value={form.description} onChange={e => setForm({ ...form, description: e.target.value })} /></label><label>Customer status<select value={form.rule_json.status} onChange={e => setForm({ ...form, rule_json: { ...form.rule_json, status: e.target.value } })}>{['Active', 'Inactive', 'Prospect', 'VIP'].map(x => <option key={x}>{x}</option>)}</select></label><div className="modal-actions"><button type="button" className="secondary-btn" onClick={() => setShow(false)}>Cancel</button><button className="primary-btn">Create segment</button></div></form></div>}</> }
 
-function Forecast({ deals, formatAmount }) { const weighted = deals.filter(d => d.stage !== 'Lost' && d.stage !== 'Won').reduce((s, d) => s + (Number(d.amount) || 0) * stageProbability(d.stage), 0); const open = deals.filter(d => !['Lost', 'Won'].includes(d.stage)); return <><PageHeading eyebrow="SALES INTELLIGENCE" title="Sales forecast" description="Weighted forecast based on current pipeline stages." /><div className="stats-grid"><StatCard label="Weighted forecast" value={formatAmount(weighted)} hint="Open pipeline × stage probability" tone="purple" icon="↗" /><StatCard label="Open pipeline" value={formatAmount(open.reduce((s, d) => s + Number(d.amount || 0), 0))} hint={`${open.length} open deals`} tone="orange" icon="◈" /><StatCard label="Won revenue" value={formatAmount(deals.filter(d => d.stage === 'Won').reduce((s, d) => s + Number(d.amount || 0), 0))} hint="Closed won" tone="green" icon="✓" /></div><div className="panel"><h3>Forecast by stage</h3>{PIPELINE_STAGES.filter(s => s !== 'Lost').map(stage => { const list = deals.filter(d => d.stage === stage); const value = list.reduce((s, d) => s + Number(d.amount || 0), 0); return <BarRow key={stage} label={`${stage} (${Math.round(stageProbability(stage) * 100)}%)`} percent={weighted ? value * stageProbability(stage) / weighted * 100 : 0} display={formatAmount(value * stageProbability(stage))} /> })}</div></> }
-
+function Forecast({ deals, formatAmount }) {
+  const weighted = deals.filter(d => d.stage !== 'Lost' && d.stage !== 'Won').reduce((s, d) => s + (Number(d.amount) || 0) * stageProbability(d.stage), 0);
+  const open = deals.filter(d => !['Lost', 'Won'].includes(d.stage));
+  return <>
+    <PageHeading eyebrow="SALES INTELLIGENCE"
+      title="Sales forecast"
+      description="Weighted forecast based on current pipeline stages." />
+    {/* <div className="stats-grid">
+      <StatCard label="Weighted forecast" value={formatAmount(weighted)} hint="Open pipeline × stage probability" tone="purple" icon="↗" />
+      <StatCard label="Open pipeline" value={formatAmount(open.reduce((s, d) => s + Number(d.amount || 0), 0))} hint={`${open.length} open deals`} tone="orange" icon="◈" />
+      <StatCard label="Won revenue" value={formatAmount(deals.filter(d => d.stage === 'Won').reduce((s, d) => s + Number(d.amount || 0), 0))} hint="Closed won" tone="green" icon="✓" />
+    </div> */}
+    <div className="panel">
+      <h3>Forecast by stage</h3>
+      <h6 className='coming'>Coming soon</h6>
+      {/* {PIPELINE_STAGES.filter(s => s !== 'Lost').map(stage => {
+        const list = deals.filter(d => d.stage === stage);
+        const value = list.reduce((s, d) => s + Number(d.amount || 0), 0);
+        return <BarRow key={stage} label={`${stage} (${Math.round(stageProbability(stage) * 100)}%)`} percent={weighted ? value * stageProbability(stage) / weighted * 100 : 0} display={formatAmount(value * stageProbability(stage))} />
+      })} */}
+    </div>
+  </>
+}
 function stageProbability(stage) { return ({ 'New Lead': 0.1, 'Qualified': 0.25, 'Proposal': 0.5, 'Won': 1, 'Lost': 0 })[stage] ?? 0.2; }
-
 function AdvancedReports({ customers, deals, activities, tickets, leads, quotes, invoices, payments, formatAmount }) { const pipeline = deals.filter(d => !['Won', 'Lost'].includes(d.stage)).reduce((s, d) => s + Number(d.amount || 0), 0); const won = deals.filter(d => d.stage === 'Won').reduce((s, d) => s + Number(d.amount || 0), 0); const paid = payments.reduce((s, p) => s + Number(p.amount || 0), 0); const leadConversion = leads.length ? leads.filter(l => l.status === 'Converted').length / leads.length * 100 : 0; const overdue = invoices.filter(i => i.status === 'Overdue').length; const response = tickets.filter(t => ['Resolved', 'Closed'].includes(t.status)).length; return <><PageHeading eyebrow="INSIGHTS" title="Advanced reports" description="Cross-module performance, conversion and revenue intelligence." /><div className="stats-grid"><StatCard label="Won revenue" value={formatAmount(won)} hint={`${deals.filter(d => d.stage === 'Won').length} won deals`} tone="green" icon="✓" /><StatCard label="Weighted forecast" value={formatAmount(deals.filter(d => !['Won', 'Lost'].includes(d.stage)).reduce((s, d) => s + Number(d.amount || 0) * stageProbability(d.stage), 0))} hint="Probability weighted" tone="purple" icon="↗" /><StatCard label="Lead conversion" value={`${leadConversion.toFixed(1)}%`} hint={`${leads.filter(l => l.status === 'Converted').length}/${leads.length} converted`} tone="blue" icon="◉" /><StatCard label="Collected" value={formatAmount(paid)} hint="Recorded payments" tone="orange" icon="$" /></div><div className="report-grid"><div className="panel report-summary"><h3>Sales funnel</h3><BarRow label="Leads" percent={100} display={leads.length} /><BarRow label="Qualified" percent={leads.length ? (leads.filter(l => l.status === 'Qualified').length / leads.length * 100) : 0} display={leads.filter(l => l.status === 'Qualified').length} /><BarRow label="Won deals" percent={leads.length ? (deals.filter(d => d.stage === 'Won').length / leads.length * 100) : 0} display={deals.filter(d => d.stage === 'Won').length} /></div><div className="panel report-summary"><h3>Revenue</h3><BarRow label="Open pipeline" percent={pipeline + won ? (pipeline / (pipeline + won)) * 100 : 0} display={formatAmount(pipeline)} /><BarRow label="Won" percent={pipeline + won ? (won / (pipeline + won)) * 100 : 0} display={formatAmount(won)} /><BarRow label="Collected" percent={won ? Math.min(100, paid / won * 100) : 0} display={formatAmount(paid)} /></div><div className="panel report-summary"><h3>Operations</h3><BarRow label="Activities completed" percent={activities.length ? activities.filter(a => a.status === 'Completed').length / activities.length * 100 : 0} display={`${activities.filter(a => a.status === 'Completed').length}/${activities.length}`} /><BarRow label="Tickets resolved" percent={tickets.length ? response / tickets.length * 100 : 0} display={`${response}/${tickets.length}`} /><BarRow label="Overdue invoices" percent={invoices.length ? overdue / invoices.length * 100 : 0} display={overdue} /></div><div className="panel report-summary"><h3>Quotes</h3><BarRow label="Accepted" percent={quotes.length ? quotes.filter(q => q.status === 'Accepted').length / quotes.length * 100 : 0} display={quotes.filter(q => q.status === 'Accepted').length} /><BarRow label="Sent" percent={quotes.length ? quotes.filter(q => q.status === 'Sent').length / quotes.length * 100 : 0} display={quotes.filter(q => q.status === 'Sent').length} /><BarRow label="Rejected" percent={quotes.length ? quotes.filter(q => q.status === 'Rejected').length / quotes.length * 100 : 0} display={quotes.filter(q => q.status === 'Rejected').length} /></div></div></> }
-
 function SupportEngineers({ supportEngineers, solutionSupport, onAdd, onUpdate, onDeactivate, isAdmin }) {
   const primaryVendors = ['F5', 'Kong', 'IRONSCALES', 'SolarWinds', 'Utimaco'];
   const blank = { name: '', email: '', role: 'System Engineer', status: 'Active', solutionFamilies: [] };
@@ -6748,6 +6931,8 @@ function Products({ products, supportEngineers, solutionSupport, onAdd, onUpdate
     custom_category: '',
     vendor: '',
     logo_url: '',
+    type: 'Product',
+    unit_price: 0,
     status: 'Active'
   };
   const [form, setForm] = useState(blank);
@@ -6815,6 +7000,8 @@ function Products({ products, supportEngineers, solutionSupport, onAdd, onUpdate
         custom_category: form.category === 'Other' ? form.custom_category.trim() : null,
         vendor: form.vendor.trim() || null,
         logo_url: form.logo_url.trim() || null,
+        type: form.type || 'Product',
+        unit_price: Math.max(0, Number(form.unit_price) || 0),
         status: form.status
       };
 
@@ -6844,6 +7031,8 @@ function Products({ products, supportEngineers, solutionSupport, onAdd, onUpdate
       custom_category: product.custom_category || '',
       vendor: product.vendor || '',
       logo_url: product.logo_url || '',
+      type: product.type || 'Product',
+      unit_price: Number(product.unit_price || 0),
       status: product.status || 'Active'
     });
     setShow(true);
@@ -6915,7 +7104,8 @@ function Products({ products, supportEngineers, solutionSupport, onAdd, onUpdate
 
       <div className="product-category">{getCategoryLabel(product)}</div>
       <h3>{product.name}</h3>
-      {product.vendor && <div className="product-vendor">{product.vendor}</div>}
+      <div className="product-vendor">{product.vendor || 'Storhet'} · {product.type || 'Product'}</div>
+      {Number(product.unit_price || 0) > 0 && <div className="product-price">{formatAmount(product.unit_price)}</div>}
       <p>{product.description || 'No description added.'}</p>
       <small>Added {formatDate(product.created_at)}</small>
     </div>
@@ -7052,6 +7242,28 @@ function Products({ products, supportEngineers, solutionSupport, onAdd, onUpdate
                   value={form.vendor}
                   onChange={e => setForm({ ...form, vendor: e.target.value })}
                   placeholder="e.g. Kong"
+                />
+              </label>
+            </div>
+
+            <div className="product-form-grid">
+              <label>
+                Type
+                <select value={form.type} onChange={e => setForm({ ...form, type: e.target.value })}>
+                  <option value="Product">Product</option>
+                  <option value="Service">Service</option>
+                </select>
+              </label>
+
+              <label>
+                Selling price
+                <input
+                  type="number"
+                  min="0"
+                  step="0.01"
+                  value={form.unit_price}
+                  onChange={e => setForm({ ...form, unit_price: e.target.value })}
+                  placeholder="0.00"
                 />
               </label>
             </div>
@@ -7557,10 +7769,8 @@ function Chat() {
 function UserManagement({
   users = [], loading = false, error = '', onRefresh, onUpdateUser, currentUserId,
   pendingPortalAccounts = [], portalRequestsLoading = false, portalRequestsError = '', portalRequestsNotice = '',
-  onRefreshPortalRequests, onReviewPortalRequest, portalRequestActionId,
-  invitations = [], invitationsLoading = false, invitationsError = '', onRefreshInvitations, onRevokeInvitation, invitationActionId
+  onRefreshPortalRequests, onReviewPortalRequest, portalRequestActionId
 }) {
-  const invitationStatus = invite => invite.revoked_at ? 'Revoked' : invite.accepted_at ? 'Accepted' : new Date(invite.expires_at) < new Date() ? 'Expired' : 'Pending';
   return (
     <>
       <PageHeading eyebrow="ADMIN" title="User Management" description="Manage internal users and customer portal access separately." />
@@ -7614,33 +7824,9 @@ function UserManagement({
           </table></div>
         )}
       </div>
-
-      <div className="panel user-management-panel pending-customer-access-panel">
-        <div className="panel-header">
-          <div><h3>Portal Invitations</h3><p>Links staff have sent directly. These skip the approval queue above.</p></div>
-          <button type="button" className="secondary-btn" onClick={onRefreshInvitations} disabled={invitationsLoading}>{invitationsLoading ? 'Refreshing...' : 'Refresh'}</button>
-        </div>
-        {invitationsError && <div className="error-message">{invitationsError}</div>}
-        {invitationsLoading ? <p>Loading invitations...</p> : invitations.length === 0 ? <p>No invitations sent yet. Open a customer and click "Invite to portal".</p> : (
-          <div className="table-wrapper"><table className="data-table">
-            <thead><tr><th>Customer</th><th>Email</th><th>Sent</th><th>Expires</th><th>Status</th><th>Actions</th></tr></thead>
-            <tbody>{invitations.map(invite => { const status = invitationStatus(invite); return <tr key={invite.id}>
-              <td>{invite.customers?.name || '—'}{invite.customers?.company ? ` · ${invite.customers.company}` : ''}</td>
-              <td>{invite.email}</td>
-              <td>{invite.created_at ? new Date(invite.created_at).toLocaleDateString() : '—'}</td>
-              <td>{invite.expires_at ? new Date(invite.expires_at).toLocaleDateString() : '—'}</td>
-              <td><span className={`portal-request-status invite-status-${status.toLowerCase()}`}>{status}</span></td>
-              <td className="portal-request-actions">
-                {status === 'Pending' && <button type="button" className="secondary-btn" disabled={invitationActionId === invite.id} onClick={() => onRevokeInvitation(invite.id)}>{invitationActionId === invite.id ? 'Revoking...' : 'Revoke'}</button>}
-              </td>
-            </tr>; })}</tbody>
-          </table></div>
-        )}
-      </div>
     </>
   );
 }
-
 function OrbitLogo({ className = "w-8 h-8" }) {
   return (
     <svg
@@ -7650,12 +7836,12 @@ function OrbitLogo({ className = "w-8 h-8" }) {
       fill="none"
     >
       <defs>
-        <linearGradient id="storhetGrad1" x1="0%" y1="100%" x2="100%" y2="0%">
+        <linearGradient id="orbitGrad1" x1="0%" y1="100%" x2="100%" y2="0%">
           <stop offset="0%" stopColor="#10B981" />
           <stop offset="100%" stopColor="#059669" />
         </linearGradient>
 
-        <linearGradient id="storhetGrad2" x1="0%" y1="0%" x2="100%" y2="100%">
+        <linearGradient id="orbitGrad2" x1="0%" y1="0%" x2="100%" y2="100%">
           <stop offset="0%" stopColor="#6366F1" />
           <stop offset="100%" stopColor="#3B82F6" />
         </linearGradient>
@@ -7668,12 +7854,12 @@ function OrbitLogo({ className = "w-8 h-8" }) {
 
       <ellipse
         cx="50" cy="50" rx="38" ry="14"
-        stroke="url(#storhetGrad2)" strokeWidth="4.5" strokeLinecap="round"
+        stroke="url(#orbitGrad2)" strokeWidth="4.5" strokeLinecap="round"
         transform="rotate(-28 50 50)"
       />
       <ellipse
         cx="50" cy="50" rx="38" ry="14"
-        stroke="url(#storhetGrad1)" strokeWidth="5" strokeLinecap="round"
+        stroke="url(#orbitGrad1)" strokeWidth="5" strokeLinecap="round"
         transform="rotate(32 50 50)"
       />
       <circle cx="50" cy="50" r="15" fill="url(#coreGrad)" />
