@@ -11,6 +11,35 @@ import { LayoutDashboard, Users, Kanban, CalendarCheck, BarChart3, Settings, Bel
 // Lets every page heading refresh the latest workspace data without prop-drilling.
 const RefreshContext = createContext(null);
 
+// Light / dark appearance. The choice is stored on this device and applied to <html>
+// before the first render so the page never flashes the wrong theme.
+const THEME_STORAGE_KEY = 'orbit_theme';
+const readStoredTheme = () => {
+  try { return localStorage.getItem(THEME_STORAGE_KEY) === 'dark' ? 'dark' : 'light'; } catch { return 'light'; }
+};
+if (typeof document !== 'undefined') document.documentElement.setAttribute('data-theme', readStoredTheme());
+
+// Internal staff roles. `value` is what is stored in authorized_users.role.
+const ROLE_OPTIONS = [
+  { value: 'manager', label: 'Manager (MD)' },
+  { value: 'admin', label: 'Admin' },
+  { value: 'hr', label: 'HR' },
+  { value: 'head_of_sales', label: 'Head of Sales' },
+  { value: 'sales', label: 'Sales' },
+  { value: 'technical_support', label: 'Technical Support' }
+];
+const DEFAULT_ROLE = 'sales';
+// Roles that get the admin-only controls (User Management, deleting other people's records, etc.).
+// To give another role the same powers, add its value here, e.g. ['admin', 'manager'].
+const ADMIN_ROLES = ['admin'];
+const isAdminRole = role => ADMIN_ROLES.includes(role);
+const roleLabel = role => {
+  if (!role) return 'Staff';
+  const known = ROLE_OPTIONS.find(option => option.value === role);
+  if (known) return known.label;
+  return role.charAt(0).toUpperCase() + role.slice(1).replace(/_/g, ' '); // e.g. a legacy "member" row
+};
+
 function AuthScreen({ onGoogleSignIn, onEmailSignIn, onEmailSignUp, onPortalSignUp, authMode, setAuthMode, email, setEmail, password, setPassword,
   error,
   notice,
@@ -840,6 +869,11 @@ function App() {
   const [refreshing, setRefreshing] = useState(false);
   const [toast, setToast] = useState('');
 
+  const [theme, setTheme] = useState(readStoredTheme);
+  useEffect(() => {
+    document.documentElement.setAttribute('data-theme', theme);
+    try { localStorage.setItem(THEME_STORAGE_KEY, theme); } catch { /* storage unavailable */ }
+  }, [theme]);
   const [currency, setCurrency] = useState(() => {
     try { return localStorage.getItem('orbit_currency') || 'NGN'; } catch { return 'NGN'; }
   });
@@ -1038,7 +1072,7 @@ async function signUpWithEmail(event) {
           {
             user_id: newUser.id,
             email: trimmedEmail,
-            role: 'member',
+            role: DEFAULT_ROLE,
             status: 'pending'
           }
         ]);
@@ -1837,7 +1871,7 @@ async function signUpWithEmail(event) {
     setSupportEngineers(prev => prev.map(item => item.id === id ? { ...item, status: 'Inactive' } : item));
   }
   async function syncSolutionSupport(solutionFamily, engineerIds = []) {
-    if (authorizationProfile?.role !== 'admin') throw new Error('Only an admin can manage solution support assignments.');
+    if (!isAdminRole(authorizationProfile?.role)) throw new Error('Only an admin can manage solution support assignments.');
     const { error: deleteError } = await supabase.from('solution_support_engineers').delete().eq('solution_family', solutionFamily);
     if (deleteError) throw deleteError;
     const uniqueIds = [...new Set(engineerIds || [])];
@@ -1930,7 +1964,7 @@ async function signUpWithEmail(event) {
     }
   }
   useEffect(() => {
-    if (page === 'UserManagement' && authorizationProfile?.role === 'admin') {
+    if (page === 'UserManagement' && isAdminRole(authorizationProfile?.role)) {
       fetchPendingPortalAccounts();
     }
   }, [page, authorizationProfile?.role]);
@@ -1960,7 +1994,7 @@ async function signUpWithEmail(event) {
     return list;
   };
   const canManageTicket = ticket =>
-    authorizationProfile?.role === 'admin' ||
+    isAdminRole(authorizationProfile?.role) ||
     ticket.created_by === session?.user?.id ||
     ticket.assigned_to === session?.user?.id ||
     (ticket.source === 'portal' && !ticket.assigned_to);
@@ -2014,7 +2048,7 @@ async function signUpWithEmail(event) {
         fetchEmailIntegrations()
       ];
 
-      if (authorizationProfile?.role === 'admin') {
+      if (isAdminRole(authorizationProfile?.role)) {
         jobs.push(fetchAuthorizedUsers(), fetchPendingPortalAccounts());
       }
 
@@ -2156,7 +2190,7 @@ async function signUpWithEmail(event) {
   }, [session?.user?.id]);
 
   useEffect(() => {
-    if (!authorized || authorizationProfile?.role !== 'admin') {
+    if (!authorized || !isAdminRole(authorizationProfile?.role)) {
       return;
     }
 
@@ -3093,7 +3127,7 @@ async function signUpWithEmail(event) {
             ))}
           </div>
         ))}
-        {authorizationProfile?.role === 'admin' && (
+        {isAdminRole(authorizationProfile?.role) && (
           <div className="nav-section" style={{ marginBottom: 10 }}>
             <div className="nav-section-title" style={{ fontSize: 11, fontWeight: 700, letterSpacing: ".08em", opacity: .55, padding: "10px 14px 6px", textTransform: "uppercase" }}>Administration</div>
             <button className={`nav-item ${page === 'UserManagement' ? 'active' : ''}`} onClick={() => { setPage('UserManagement'); setSidebarOpen(false); }}>
@@ -3116,10 +3150,7 @@ async function signUpWithEmail(event) {
           <div className="profile-details">
             <strong>{displayUserName}</strong>
             <span>
-              {authorizationProfile?.role
-                ? authorizationProfile.role.charAt(0).toUpperCase() +
-                authorizationProfile.role.slice(1)
-                : 'Member'}
+              {roleLabel(authorizationProfile?.role)}
             </span>
           </div>
 
@@ -3153,22 +3184,9 @@ async function signUpWithEmail(event) {
             />
             <kbd>⌘ K</kbd>
             {globalSearch.trim() && (
-              <div
-                style={{
-                  position: 'absolute',
-                  top: 'calc(100% + 8px)',
-                  left: 0,
-                  right: 0,
-                  zIndex: 1000,
-                  background: 'white',
-                  border: '1px solid #e5e7eb',
-                  borderRadius: '10px',
-                  boxShadow: '0 10px 30px rgba(0,0,0,0.12)',
-                  overflow: 'hidden'
-                }}
-              >
+              <div className="global-search-dropdown">
                 {globalSearchResults.length === 0 ? (
-                  <div style={{ padding: '14px', fontSize: '14px', color: '#6b7280' }}>
+                  <div className="global-search-empty">
                     No results found.
                   </div>
                 ) : (
@@ -3184,22 +3202,13 @@ async function signUpWithEmail(event) {
                           setSelectedCustomer(result.customer);
                         }
                       }}
-                      style={{
-                        width: '100%',
-                        display: 'block',
-                        textAlign: 'left',
-                        padding: '12px 14px',
-                        border: 'none',
-                        borderBottom: '1px solid #f1f5f9',
-                        background: 'white',
-                        cursor: 'pointer'
-                      }}
+                      className="global-search-result"
                     >
-                      <strong style={{ display: 'block', fontSize: '14px' }}>
+                      <strong>
                         {result.title}
                       </strong>
 
-                      <span style={{ fontSize: '12px', color: '#6b7280' }}>
+                      <span>
                         {result.type} · {result.subtitle}
                       </span>
                     </button>
@@ -3253,13 +3262,13 @@ async function signUpWithEmail(event) {
             onEditCustomer={setEditingCustomer}
           />
         )}
-        {page === 'Products' && <Products products={products} supportEngineers={supportEngineers} solutionSupport={solutionSupport} onAdd={addProduct} onUpdate={updateProduct} onDelete={deleteProduct} onUpdateFamilySupport={syncSolutionSupport} currentUserId={session.user.id} isAdmin={authorizationProfile?.role === 'admin'} />}
-        {page === 'Technical Support' && <SupportEngineers supportEngineers={supportEngineers} solutionSupport={solutionSupport} onAdd={addSupportEngineer} onUpdate={updateSupportEngineer} onDeactivate={deactivateSupportEngineer} isAdmin={authorizationProfile?.role === 'admin'} />}
-        {page === 'Leads' && <Leads leads={leads} customers={customers} products={products} leadProducts={leadProducts} onAdd={addLead} onUpdate={updateLead} onSyncProducts={syncLeadProducts} onDelete={deleteLead} currentUserId={session.user.id} isAdmin={authorizationProfile?.role === 'admin'} />}
+        {page === 'Products' && <Products products={products} supportEngineers={supportEngineers} solutionSupport={solutionSupport} onAdd={addProduct} onUpdate={updateProduct} onDelete={deleteProduct} onUpdateFamilySupport={syncSolutionSupport} currentUserId={session.user.id} isAdmin={isAdminRole(authorizationProfile?.role)} />}
+        {page === 'Technical Support' && <SupportEngineers supportEngineers={supportEngineers} solutionSupport={solutionSupport} onAdd={addSupportEngineer} onUpdate={updateSupportEngineer} onDeactivate={deactivateSupportEngineer} isAdmin={isAdminRole(authorizationProfile?.role)} />}
+        {page === 'Leads' && <Leads leads={leads} customers={customers} products={products} leadProducts={leadProducts} onAdd={addLead} onUpdate={updateLead} onSyncProducts={syncLeadProducts} onDelete={deleteLead} currentUserId={session.user.id} isAdmin={isAdminRole(authorizationProfile?.role)} />}
         {page === 'Email' && <EmailPage emailLogs={emailLogs} customers={customers} integrations={emailIntegrations} loading={emailIntegrationLoading} error={emailIntegrationError} onConnect={connectEmailProvider} onDisconnect={disconnectEmailProvider} onAdd={async payload => { try { await addEmailLog(payload); showToast('Email logged.'); } catch (e) { alert(e.message); } }} />}
         {page === 'Calendar' && <CalendarPage events={calendarEvents} customers={customers} onAdd={addCalendarEvent} onUpdate={updateCalendarEvent} onDelete={deleteCalendarEvent} onRefresh={fetchCalendarEvents} />}
-        {page === 'Quotes' && <Quotes quotes={quotes} products={products} quoteItems={quoteItems} onLoadQuoteItems={loadQuoteItems} onAdd={addQuote} onUpdate={updateQuote} onDelete={deleteQuote} formatAmount={formatAmount} currentUserId={session.user.id} isAdmin={authorizationProfile?.role === 'admin'} />}
-        {page === 'Invoices' && <Invoices invoices={invoices} payments={payments} customers={customers} products={products} onAdd={addInvoice} onUpdate={updateInvoice} onAddPayment={addPayment} formatAmount={formatAmount} currentUserId={session.user.id} isAdmin={authorizationProfile?.role === 'admin'} />}
+        {page === 'Quotes' && <Quotes quotes={quotes} products={products} quoteItems={quoteItems} onLoadQuoteItems={loadQuoteItems} onAdd={addQuote} onUpdate={updateQuote} onDelete={deleteQuote} formatAmount={formatAmount} currentUserId={session.user.id} isAdmin={isAdminRole(authorizationProfile?.role)} />}
+        {page === 'Invoices' && <Invoices invoices={invoices} payments={payments} customers={customers} products={products} onAdd={addInvoice} onUpdate={updateInvoice} onAddPayment={addPayment} formatAmount={formatAmount} currentUserId={session.user.id} isAdmin={isAdminRole(authorizationProfile?.role)} />}
         {page === 'Documents' && <Documents documents={documents} customers={customers} onUpload={uploadDocument} onDownload={downloadDocument} onDelete={deleteDocument} />}
         {page === 'Automation' && <Automation workflows={workflows} onAdd={addWorkflow} onUpdate={updateWorkflow} />}
         {page === 'Segments' && <Segments segments={segments} customers={customers} onAdd={addSegment} onUpdate={updateSegment} />}
@@ -3275,7 +3284,7 @@ async function signUpWithEmail(event) {
             formatAmount={formatAmount}
             currentUserId={session.user.id}
             ownerProfiles={ownerProfiles}
-            isAdmin={authorizationProfile?.role === 'admin'}
+            isAdmin={isAdminRole(authorizationProfile?.role)}
             onEdit={deal => {
               setEditDealError('');
               setEditingDeal({
@@ -3295,7 +3304,7 @@ async function signUpWithEmail(event) {
           />
         )}
         {page === 'Activities' && (
-          <Activities activities={activities} customers={customers} ownerProfiles={ownerProfiles} currentUserEmail={session.user.email} onAdd={() => { setActivityError(''); setNewActivity(a => ({ ...a, customer_id: '' })); setShowActivityForm(true); }} onStatusChange={updateActivityStatus} onDelete={deleteActivity} onEdit={activity => { setEditActivityError(''); setEditingActivity({ ...activity, activity_date: formatDateTimeLocal(activity.activity_date) }); }} onView={setSelectedActivity} currentUserId={session.user.id} isAdmin={authorizationProfile?.role === 'admin'} />
+          <Activities activities={activities} customers={customers} ownerProfiles={ownerProfiles} currentUserEmail={session.user.email} onAdd={() => { setActivityError(''); setNewActivity(a => ({ ...a, customer_id: '' })); setShowActivityForm(true); }} onStatusChange={updateActivityStatus} onDelete={deleteActivity} onEdit={activity => { setEditActivityError(''); setEditingActivity({ ...activity, activity_date: formatDateTimeLocal(activity.activity_date) }); }} onView={setSelectedActivity} currentUserId={session.user.id} isAdmin={isAdminRole(authorizationProfile?.role)} />
         )}
         {page === 'Tickets' && (
           <Tickets
@@ -3307,7 +3316,7 @@ async function signUpWithEmail(event) {
             onEdit={ticket => { setEditTicketError(''); setEditingTicket(ticket); }}
             onView={setSelectedTicket}
             currentUserId={session.user.id}
-            isAdmin={authorizationProfile?.role === 'admin'}
+            isAdmin={isAdminRole(authorizationProfile?.role)}
             canManage={canManageTicket}
             staffName={staffName}
             staffOptions={getStaffOptions()}
@@ -3318,7 +3327,7 @@ async function signUpWithEmail(event) {
         {page === 'Reports' && <AdvancedReports customers={customers} deals={deals} activities={activities} tickets={tickets} leads={leads} quotes={quotes} invoices={invoices} payments={payments} formatAmount={formatAmount} />}
         {page === 'Email Logs' && <EmailLogs emailLogs={emailLogs} customers={customers} onAdd={addEmailLog} />}
         {page === 'UserManagement' && <UserManagement users={authorizedUsers} loading={usersLoading} error={usersError} onRefresh={fetchAuthorizedUsers} onUpdateUser={updateAuthorizedUser} currentUserId={session?.user?.id} pendingPortalAccounts={pendingPortalAccounts} portalRequestsLoading={portalRequestsLoading} portalRequestsError={portalRequestsError} portalRequestsNotice={portalRequestsNotice} onRefreshPortalRequests={fetchPendingPortalAccounts} onReviewPortalRequest={reviewPortalRequest} portalRequestActionId={portalRequestActionId} />}
-        {page === 'Settings' && <SettingsPage currency={currency} setCurrency={setCurrency} />}
+        {page === 'Settings' && <SettingsPage currency={currency} setCurrency={setCurrency} theme={theme} setTheme={setTheme} />}
       </section>
       </RefreshContext.Provider>
     </main>
@@ -4742,7 +4751,7 @@ function BirthdayReminders({ customers = [], leads = [] }) {
       {birthdayCustomers.length > 0 && <span className="count-badge">Today</span>}
     </div>
     {birthdayCustomers.length === 0 ? (
-      <div className="birthday-empty">When a contact has a birthday today, Orbit will surface them here with a ready-to-send greeting.</div>
+      <div className="birthday-empty">When a contact has a birthday today, Storhet will surface them here with a ready-to-send greeting.</div>
     ) : birthdayCustomers.map(customer => (
       <div className="birthday-row" key={customer.id}>
         <div className="birthday-avatar">🎉</div>
@@ -7453,7 +7462,7 @@ function Products({ products, supportEngineers, solutionSupport, onAdd, onUpdate
     </>
   );
 }
-function SettingsPage({ currency, setCurrency }) {
+function SettingsPage({ currency, setCurrency, theme, setTheme }) {
   const [selectedCurrency, setSelectedCurrency] = useState(currency);
   const [saved, setSaved] = useState(false);
 
@@ -7468,6 +7477,20 @@ function SettingsPage({ currency, setCurrency }) {
       <PageHeading eyebrow="WORKSPACE" title="Settings" description="Manage your workspace preferences." />
       <div className="panel settings-panel">
         <h3>Workspace settings</h3>
+        <div className="theme-setting">
+          <div>
+            <strong>Dark mode</strong>
+            <span>Use a darker colour scheme. Applies instantly and is saved on this device.</span>
+          </div>
+          <button
+            type="button"
+            role="switch"
+            aria-checked={theme === 'dark'}
+            aria-label="Dark mode"
+            className="theme-switch"
+            onClick={() => setTheme(theme === 'dark' ? 'light' : 'dark')}
+          />
+        </div>
         <label>Display currency
           <select value={selectedCurrency} onChange={e => setSelectedCurrency(e.target.value)}>
             <option value="NGN">NGN — Nigerian Naira (₦)</option>
@@ -7780,7 +7803,7 @@ function Chat() {
                   </div>
                   <div className="wa-contact-bottom">
                     <span className="wa-last-msg">{user.email}</span>
-                    <span className="wa-role-tag">{user.role}</span>
+                    <span className="wa-role-tag">{roleLabel(user.role)}</span>
                   </div>
                 </div>
               </div>
@@ -7815,7 +7838,7 @@ function Chat() {
 
               <div className="wa-chat-info">
                 <strong>{selectedUser.email.split('@')[0]}</strong>
-                <span>Active now · {selectedUser.role}</span>
+                <span>Active now · {roleLabel(selectedUser.role)}</span>
               </div>
 
               <div className="wa-header-actions">
@@ -7924,7 +7947,8 @@ function UserManagement({
               return <tr key={user.id}>
                 <td>{user.email}</td>
                 <td><select value={user.role} disabled={isCurrentUser} onChange={(event) => onUpdateUser(user.id, { role: event.target.value })}>
-                  <option value="admin">Admin</option><option value="manager">Manager</option><option value="member">Member</option>
+                  {!ROLE_OPTIONS.some(option => option.value === user.role) && <option value={user.role}>{roleLabel(user.role)} (legacy – reassign)</option>}
+                  {ROLE_OPTIONS.map(option => <option key={option.value} value={option.value}>{option.label}</option>)}
                 </select></td>
                 <td><select value={user.status} disabled={isCurrentUser} onChange={(event) => onUpdateUser(user.id, { status: event.target.value })}>
                   <option value="pending">Pending</option><option value="active">Active</option><option value="inactive">Inactive</option>
