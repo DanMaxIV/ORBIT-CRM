@@ -748,6 +748,22 @@ const navSections = [
   { title: 'System', items: [['Settings', Settings]] }
 ];
 
+// Remember the open page so a browser refresh doesn't send the user back to the Dashboard.
+const PAGE_STORAGE_KEY = 'orbit_page';
+const VALID_PAGES = new Set([
+  ...navSections.flatMap(section => section.items.map(([label]) => label)),
+  'UserManagement',
+  'Email Logs'
+]);
+const readStoredPage = () => {
+  try {
+    const stored = localStorage.getItem(PAGE_STORAGE_KEY);
+    return stored && VALID_PAGES.has(stored) ? stored : 'Dashboard';
+  } catch {
+    return 'Dashboard';
+  }
+};
+
 const EXCHANGE_RATES = {
   NGN: { symbol: '₦', rate: 1400 },
   USD: { symbol: '$', rate: 1 },
@@ -781,7 +797,14 @@ function App() {
   const [portalRequestsNotice, setPortalRequestsNotice] = useState('');
   const [portalRequestActionId, setPortalRequestActionId] = useState(null);
 
-  const [page, setPage] = useState('Dashboard');
+  const [page, setPage] = useState(readStoredPage);
+  useEffect(() => {
+    try { localStorage.setItem(PAGE_STORAGE_KEY, page); } catch { /* storage unavailable */ }
+  }, [page]);
+  // A saved admin-only page shouldn't strand a non-admin on a blank screen.
+  useEffect(() => {
+    if (page === 'UserManagement' && authorizationProfile && !isAdminRole(authorizationProfile.role)) setPage('Dashboard');
+  }, [page, authorizationProfile]);
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [customers, setCustomers] = useState([]);
   const [loading, setLoading] = useState(true);
