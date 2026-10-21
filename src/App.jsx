@@ -11,6 +11,35 @@ import { LayoutDashboard, Users, Kanban, CalendarCheck, BarChart3, Settings, Bel
 // Lets every page heading refresh the latest workspace data without prop-drilling.
 const RefreshContext = createContext(null);
 
+// Light / dark appearance. The choice is stored on this device and applied to <html>
+// before the first render so the page never flashes the wrong theme.
+const THEME_STORAGE_KEY = 'orbit_theme';
+const readStoredTheme = () => {
+  try { return localStorage.getItem(THEME_STORAGE_KEY) === 'dark' ? 'dark' : 'light'; } catch { return 'light'; }
+};
+if (typeof document !== 'undefined') document.documentElement.setAttribute('data-theme', readStoredTheme());
+
+// Internal staff roles. `value` is what is stored in authorized_users.role.
+const ROLE_OPTIONS = [
+  { value: 'manager', label: 'Manager (MD)' },
+  { value: 'admin', label: 'Admin' },
+  { value: 'hr', label: 'HR' },
+  { value: 'head_of_sales', label: 'Head of Sales' },
+  { value: 'sales', label: 'Sales' },
+  { value: 'technical_support', label: 'Technical Support' }
+];
+const DEFAULT_ROLE = 'sales';
+// Roles that get the admin-only controls (User Management, deleting other people's records, etc.).
+// To give another role the same powers, add its value here, e.g. ['admin', 'manager'].
+const ADMIN_ROLES = ['admin'];
+const isAdminRole = role => ADMIN_ROLES.includes(role);
+const roleLabel = role => {
+  if (!role) return 'Staff';
+  const known = ROLE_OPTIONS.find(option => option.value === role);
+  if (known) return known.label;
+  return role.charAt(0).toUpperCase() + role.slice(1).replace(/_/g, ' '); // e.g. a legacy "member" row
+};
+
 function AuthScreen({ onGoogleSignIn, onEmailSignIn, onEmailSignUp, onPortalSignUp, authMode, setAuthMode, email, setEmail, password, setPassword,
   error,
   notice,
@@ -25,14 +54,14 @@ function AuthScreen({ onGoogleSignIn, onEmailSignIn, onEmailSignUp, onPortalSign
     <div className="auth-page">
       <div className="auth-card">
         <div className="auth-brand">
-          <div className="brand-mark"><OrbitLogo /></div>
-          <span>
-            orbit<span className="brand-accent">CRM</span>
+          <div className="brand-mark"><img src="/storhetLogo.png" alt="Storhet CRM" /></div>
+          <span className="brand-name">
+           Storhet<span className="brand-accent">CRM</span>
           </span>
         </div>
         <div className="auth-heading">
           <h1>Welcome back</h1>
-          <p>Sign in to access your Orbit CRM workspace.</p>
+          <p>Sign in to access your Storhet CRM workspace.</p>
         </div>
         {error && (
           <div className="auth-error" role="alert">
@@ -132,7 +161,7 @@ function AuthScreen({ onGoogleSignIn, onEmailSignIn, onEmailSignUp, onPortalSign
           </button>
         </div>
         <p className="auth-footer">
-          Access to the internal CRM is restricted to authorized Orbit CRM users.
+          Access to the internal CRM is restricted to authorized Storhet CRM users.
         </p>
       </div>
 
@@ -152,7 +181,7 @@ function AuthScreen({ onGoogleSignIn, onEmailSignIn, onEmailSignUp, onPortalSign
             <div className="modal-heading">
               <div>
                 <h2>Create your account</h2>
-                <p>Sign up for Orbit CRM access.</p>
+                <p>Sign up for Storhet CRM access.</p>
               </div>
 
               <button
@@ -255,7 +284,7 @@ function AuthScreen({ onGoogleSignIn, onEmailSignIn, onEmailSignUp, onPortalSign
               Password
               <input type="password" autoComplete="new-password" placeholder="At least 6 characters" value={password} onChange={(event) => setPassword(event.target.value)} minLength={6} required />
             </label>
-            <p className="portal-signup-help">We’ll email you a verification link. For your security, your portal will only show records linked to your verified customer account and shared by the Orbit CRM team.</p>
+            <p className="portal-signup-help">We’ll email you a verification link. For your security, your portal will only show records linked to your verified customer account and shared by the Storhet CRM team.</p>
             <button type="submit" className="primary-btn" disabled={loading}>{loading ? 'Creating account...' : 'Create customer account'}</button>
             <p className="authSignUp">Already registered? <button type="button" className="auth-toggle-btn" onClick={() => setShowPortalSignup(false)} disabled={loading}>Return to sign in</button></p>
           </form>
@@ -272,7 +301,7 @@ function PortalStatusScreen({ account, email, onSignOut }) {
   return (
     <div className="auth-page">
       <div className="auth-card portal-status-card">
-        <div className="auth-brand"><div className="brand-mark"><OrbitLogo /></div><span>orbit<span className="brand-accent">CRM</span></span></div>
+        <div className="auth-brand"><div className="brand-mark"><img src="/storhetLogo.png" alt="Storhet CRM" /></div><span className="brand-name">Storhet<span className="brand-accent">CRM</span></span></div>
         <div className="portal-status-icon">{needsVerification ? '✉' : isActive ? 'O' : isRejected ? '×' : '✓'}</div>
         <div className="auth-heading">
           <h1>{needsVerification ? 'Check your email' : isActive ? 'Finish setting up your portal' : isRejected ? 'Portal access rejected' : 'Portal access pending'}</h1>
@@ -281,8 +310,8 @@ function PortalStatusScreen({ account, email, onSignOut }) {
             : isActive
               ? 'Your account is approved and linked. Your customer dashboard is being prepared.'
               : isRejected
-                ? 'Your customer portal access request was rejected. Please contact the Orbit CRM team if you believe this is a mistake.'
-                : 'Your email is verified. Your request is waiting for an Orbit CRM admin to review it. Portal access will remain blocked until it is approved.'}</p>
+                ? 'Your customer portal access request was rejected. Please contact the Storhet CRM team if you believe this is a mistake.'
+                : 'Your email is verified. Your request is waiting for a Storhet CRM admin to review it. Portal access will remain blocked until it is approved.'}</p>
         </div>
         <p className="portal-status-email">{email || account?.email || ''}</p>
         <button type="button" className="primary-btn" onClick={onSignOut}>Sign out</button>
@@ -303,7 +332,7 @@ function portalErrorMessage(error) {
   if (!error) return '';
   // PostgREST reports a missing function as PGRST202; Postgres uses 42883.
   if (error.code === 'PGRST202' || error.code === '42883') {
-    return 'Support tickets are not set up yet. Please ask your Orbit CRM administrator to finish the portal support setup.';
+    return 'Support tickets are not set up yet. Please ask your Storhet CRM administrator to finish the portal support setup.';
   }
   return error.message || 'Something went wrong. Please try again.';
 }
@@ -650,7 +679,7 @@ function CustomerPortalHome({ user, account, onSignOut }) {
   return (
     <div className="customer-portal-shell">
       <header className="customer-portal-topbar">
-        <div className="auth-brand"><div className="brand-mark"><OrbitLogo /></div><span>orbit<span className="brand-accent">CRM</span></span></div>
+        <div className="auth-brand"><div className="brand-mark"><img src="/storhetLogo.png" alt="Storhet CRM" /></div><span className="brand-name">Storhet<span className="brand-accent">CRM</span></span></div>
         <div className="customer-portal-top-actions">
           <select className="portal-currency" value={currency} onChange={event => setCurrency(event.target.value)} aria-label="Display currency">
             {Object.keys(EXCHANGE_RATES).map(code => <option key={code} value={code}>{code}</option>)}
@@ -705,7 +734,7 @@ function CustomerPortalHome({ user, account, onSignOut }) {
           )}
         </>}
       </main>
-      <footer className="customer-portal-footer">Orbit CRM · Secure customer access</footer>
+      <footer className="customer-portal-footer">Storhet CRM · Secure customer access</footer>
     </div>
   );
 }
@@ -840,6 +869,11 @@ function App() {
   const [refreshing, setRefreshing] = useState(false);
   const [toast, setToast] = useState('');
 
+  const [theme, setTheme] = useState(readStoredTheme);
+  useEffect(() => {
+    document.documentElement.setAttribute('data-theme', theme);
+    try { localStorage.setItem(THEME_STORAGE_KEY, theme); } catch { /* storage unavailable */ }
+  }, [theme]);
   const [currency, setCurrency] = useState(() => {
     try { return localStorage.getItem('orbit_currency') || 'NGN'; } catch { return 'NGN'; }
   });
@@ -1038,7 +1072,7 @@ async function signUpWithEmail(event) {
           {
             user_id: newUser.id,
             email: trimmedEmail,
-            role: 'member',
+            role: DEFAULT_ROLE,
             status: 'pending'
           }
         ]);
@@ -1086,7 +1120,7 @@ async function signUpWithEmail(event) {
         }
       });
       if (error) throw error;
-      setAuthNotice('Registration submitted. Verify your email if prompted, then wait for an Orbit CRM admin to review your customer portal access request.');
+      setAuthNotice('Registration submitted. Verify your email if prompted, then wait for an Storhet CRM admin to review your customer portal access request.');
       setPassword('');
       setPortalSignUpName(fullName.trim());
       return true;
@@ -1208,7 +1242,7 @@ async function signUpWithEmail(event) {
         setPortalAccount(account || null);
         setPortalSetupPending(!account);
         setAuthorizationLoading(false);
-        if (!account) setAuthNotice('Please verify your email address. Once verified, your request will remain pending until an Orbit CRM admin approves it.');
+        if (!account) setAuthNotice('Please verify your email address. Once verified, your request will remain pending until an Storhet CRM admin approves it.');
         return;
       } catch (portalError) {
         console.error('Customer portal authorization check failed:', portalError);
@@ -1837,7 +1871,7 @@ async function signUpWithEmail(event) {
     setSupportEngineers(prev => prev.map(item => item.id === id ? { ...item, status: 'Inactive' } : item));
   }
   async function syncSolutionSupport(solutionFamily, engineerIds = []) {
-    if (authorizationProfile?.role !== 'admin') throw new Error('Only an admin can manage solution support assignments.');
+    if (!isAdminRole(authorizationProfile?.role)) throw new Error('Only an admin can manage solution support assignments.');
     const { error: deleteError } = await supabase.from('solution_support_engineers').delete().eq('solution_family', solutionFamily);
     if (deleteError) throw deleteError;
     const uniqueIds = [...new Set(engineerIds || [])];
@@ -1930,7 +1964,7 @@ async function signUpWithEmail(event) {
     }
   }
   useEffect(() => {
-    if (page === 'UserManagement' && authorizationProfile?.role === 'admin') {
+    if (page === 'UserManagement' && isAdminRole(authorizationProfile?.role)) {
       fetchPendingPortalAccounts();
     }
   }, [page, authorizationProfile?.role]);
@@ -1960,7 +1994,7 @@ async function signUpWithEmail(event) {
     return list;
   };
   const canManageTicket = ticket =>
-    authorizationProfile?.role === 'admin' ||
+    isAdminRole(authorizationProfile?.role) ||
     ticket.created_by === session?.user?.id ||
     ticket.assigned_to === session?.user?.id ||
     (ticket.source === 'portal' && !ticket.assigned_to);
@@ -2014,7 +2048,7 @@ async function signUpWithEmail(event) {
         fetchEmailIntegrations()
       ];
 
-      if (authorizationProfile?.role === 'admin') {
+      if (isAdminRole(authorizationProfile?.role)) {
         jobs.push(fetchAuthorizedUsers(), fetchPendingPortalAccounts());
       }
 
@@ -2156,7 +2190,7 @@ async function signUpWithEmail(event) {
   }, [session?.user?.id]);
 
   useEffect(() => {
-    if (!authorized || authorizationProfile?.role !== 'admin') {
+    if (!authorized || !isAdminRole(authorizationProfile?.role)) {
       return;
     }
 
@@ -2185,7 +2219,7 @@ async function signUpWithEmail(event) {
   // Calendar reminders need an active checker. Previously they were only
   // evaluated when the calendar was fetched/refreshed, which meant a reminder
   // could be missed completely if no refresh happened at the right time.
-  // Check frequently while Orbit is open so reminders appear in the bell
+  // Check frequently while Storhet is open so reminders appear in the bell
   // without requiring a manual refresh.
   useEffect(() => {
     if (!session?.user?.id || !authorized) return;
@@ -2205,7 +2239,7 @@ async function signUpWithEmail(event) {
     const intervalId = window.setInterval(checkCalendarReminders, 15000);
 
     // Check immediately as well, so a reminder is picked up quickly after
-    // opening Orbit or returning to the tab.
+    // opening Storhet or returning to the tab.
     checkCalendarReminders();
 
     return () => window.clearInterval(intervalId);
@@ -3031,9 +3065,9 @@ async function signUpWithEmail(event) {
       <div className="auth-page">
         <div className="auth-card auth-loading">
           <div className="auth-brand">
-            <div className="brand-mark"><OrbitLogo /></div>
-            <span>
-              orbit<span className="brand-accent">CRM</span>
+            <div className="brand-mark"><img src="/storhetLogo.png" alt="Storhet CRM" /></div>
+            <span className="brand-name">
+              Storhet<span className="brand-accent">CRM</span>
             </span>
           </div>
           <p>
@@ -3077,8 +3111,8 @@ async function signUpWithEmail(event) {
   return <div className="app-shell">
     <aside className={`sidebar ${sidebarOpen ? 'sidebar-open' : ''}`}>
       <div className="brand">
-        <div className="brand-mark"><OrbitLogo /></div>
-        <span>orbit<span className="brand-accent">CRM</span></span>
+        <div className="brand-mark"><img src="/storhetLogo.png" alt="" /></div>
+        <span className="brand-name">Storhet<span className="brand-accent">CRM</span></span>
         <button className="icon-btn close-mobile" onClick={() => setSidebarOpen(false)}><X size={18} /></button>
       </div>
       <div className="workspace-label">WORKSPACE</div>
@@ -3093,7 +3127,7 @@ async function signUpWithEmail(event) {
             ))}
           </div>
         ))}
-        {authorizationProfile?.role === 'admin' && (
+        {isAdminRole(authorizationProfile?.role) && (
           <div className="nav-section" style={{ marginBottom: 10 }}>
             <div className="nav-section-title" style={{ fontSize: 11, fontWeight: 700, letterSpacing: ".08em", opacity: .55, padding: "10px 14px 6px", textTransform: "uppercase" }}>Administration</div>
             <button className={`nav-item ${page === 'UserManagement' ? 'active' : ''}`} onClick={() => { setPage('UserManagement'); setSidebarOpen(false); }}>
@@ -3116,10 +3150,7 @@ async function signUpWithEmail(event) {
           <div className="profile-details">
             <strong>{displayUserName}</strong>
             <span>
-              {authorizationProfile?.role
-                ? authorizationProfile.role.charAt(0).toUpperCase() +
-                authorizationProfile.role.slice(1)
-                : 'Member'}
+              {roleLabel(authorizationProfile?.role)}
             </span>
           </div>
 
@@ -3153,22 +3184,9 @@ async function signUpWithEmail(event) {
             />
             <kbd>⌘ K</kbd>
             {globalSearch.trim() && (
-              <div
-                style={{
-                  position: 'absolute',
-                  top: 'calc(100% + 8px)',
-                  left: 0,
-                  right: 0,
-                  zIndex: 1000,
-                  background: 'white',
-                  border: '1px solid #e5e7eb',
-                  borderRadius: '10px',
-                  boxShadow: '0 10px 30px rgba(0,0,0,0.12)',
-                  overflow: 'hidden'
-                }}
-              >
+              <div className="global-search-dropdown">
                 {globalSearchResults.length === 0 ? (
-                  <div style={{ padding: '14px', fontSize: '14px', color: '#6b7280' }}>
+                  <div className="global-search-empty">
                     No results found.
                   </div>
                 ) : (
@@ -3184,22 +3202,13 @@ async function signUpWithEmail(event) {
                           setSelectedCustomer(result.customer);
                         }
                       }}
-                      style={{
-                        width: '100%',
-                        display: 'block',
-                        textAlign: 'left',
-                        padding: '12px 14px',
-                        border: 'none',
-                        borderBottom: '1px solid #f1f5f9',
-                        background: 'white',
-                        cursor: 'pointer'
-                      }}
+                      className="global-search-result"
                     >
-                      <strong style={{ display: 'block', fontSize: '14px' }}>
+                      <strong>
                         {result.title}
                       </strong>
 
-                      <span style={{ fontSize: '12px', color: '#6b7280' }}>
+                      <span>
                         {result.type} · {result.subtitle}
                       </span>
                     </button>
@@ -3253,13 +3262,13 @@ async function signUpWithEmail(event) {
             onEditCustomer={setEditingCustomer}
           />
         )}
-        {page === 'Products' && <Products products={products} supportEngineers={supportEngineers} solutionSupport={solutionSupport} onAdd={addProduct} onUpdate={updateProduct} onDelete={deleteProduct} onUpdateFamilySupport={syncSolutionSupport} currentUserId={session.user.id} isAdmin={authorizationProfile?.role === 'admin'} />}
-        {page === 'Technical Support' && <SupportEngineers supportEngineers={supportEngineers} solutionSupport={solutionSupport} onAdd={addSupportEngineer} onUpdate={updateSupportEngineer} onDeactivate={deactivateSupportEngineer} isAdmin={authorizationProfile?.role === 'admin'} />}
-        {page === 'Leads' && <Leads leads={leads} customers={customers} products={products} leadProducts={leadProducts} onAdd={addLead} onUpdate={updateLead} onSyncProducts={syncLeadProducts} onDelete={deleteLead} currentUserId={session.user.id} isAdmin={authorizationProfile?.role === 'admin'} />}
+        {page === 'Products' && <Products products={products} supportEngineers={supportEngineers} solutionSupport={solutionSupport} onAdd={addProduct} onUpdate={updateProduct} onDelete={deleteProduct} onUpdateFamilySupport={syncSolutionSupport} currentUserId={session.user.id} isAdmin={isAdminRole(authorizationProfile?.role)} />}
+        {page === 'Technical Support' && <SupportEngineers supportEngineers={supportEngineers} solutionSupport={solutionSupport} onAdd={addSupportEngineer} onUpdate={updateSupportEngineer} onDeactivate={deactivateSupportEngineer} isAdmin={isAdminRole(authorizationProfile?.role)} />}
+        {page === 'Leads' && <Leads leads={leads} customers={customers} products={products} leadProducts={leadProducts} onAdd={addLead} onUpdate={updateLead} onSyncProducts={syncLeadProducts} onDelete={deleteLead} currentUserId={session.user.id} isAdmin={isAdminRole(authorizationProfile?.role)} />}
         {page === 'Email' && <EmailPage emailLogs={emailLogs} customers={customers} integrations={emailIntegrations} loading={emailIntegrationLoading} error={emailIntegrationError} onConnect={connectEmailProvider} onDisconnect={disconnectEmailProvider} onAdd={async payload => { try { await addEmailLog(payload); showToast('Email logged.'); } catch (e) { alert(e.message); } }} />}
         {page === 'Calendar' && <CalendarPage events={calendarEvents} customers={customers} onAdd={addCalendarEvent} onUpdate={updateCalendarEvent} onDelete={deleteCalendarEvent} onRefresh={fetchCalendarEvents} />}
-        {page === 'Quotes' && <Quotes quotes={quotes} products={products} quoteItems={quoteItems} onLoadQuoteItems={loadQuoteItems} onAdd={addQuote} onUpdate={updateQuote} onDelete={deleteQuote} formatAmount={formatAmount} currentUserId={session.user.id} isAdmin={authorizationProfile?.role === 'admin'} />}
-        {page === 'Invoices' && <Invoices invoices={invoices} payments={payments} customers={customers} products={products} onAdd={addInvoice} onUpdate={updateInvoice} onAddPayment={addPayment} formatAmount={formatAmount} currentUserId={session.user.id} isAdmin={authorizationProfile?.role === 'admin'} />}
+        {page === 'Quotes' && <Quotes quotes={quotes} products={products} quoteItems={quoteItems} onLoadQuoteItems={loadQuoteItems} onAdd={addQuote} onUpdate={updateQuote} onDelete={deleteQuote} formatAmount={formatAmount} currentUserId={session.user.id} isAdmin={isAdminRole(authorizationProfile?.role)} />}
+        {page === 'Invoices' && <Invoices invoices={invoices} payments={payments} customers={customers} products={products} onAdd={addInvoice} onUpdate={updateInvoice} onAddPayment={addPayment} formatAmount={formatAmount} currentUserId={session.user.id} isAdmin={isAdminRole(authorizationProfile?.role)} />}
         {page === 'Documents' && <Documents documents={documents} customers={customers} onUpload={uploadDocument} onDownload={downloadDocument} onDelete={deleteDocument} />}
         {page === 'Automation' && <Automation workflows={workflows} onAdd={addWorkflow} onUpdate={updateWorkflow} />}
         {page === 'Segments' && <Segments segments={segments} customers={customers} onAdd={addSegment} onUpdate={updateSegment} />}
@@ -3275,7 +3284,7 @@ async function signUpWithEmail(event) {
             formatAmount={formatAmount}
             currentUserId={session.user.id}
             ownerProfiles={ownerProfiles}
-            isAdmin={authorizationProfile?.role === 'admin'}
+            isAdmin={isAdminRole(authorizationProfile?.role)}
             onEdit={deal => {
               setEditDealError('');
               setEditingDeal({
@@ -3295,7 +3304,7 @@ async function signUpWithEmail(event) {
           />
         )}
         {page === 'Activities' && (
-          <Activities activities={activities} customers={customers} ownerProfiles={ownerProfiles} currentUserEmail={session.user.email} onAdd={() => { setActivityError(''); setNewActivity(a => ({ ...a, customer_id: '' })); setShowActivityForm(true); }} onStatusChange={updateActivityStatus} onDelete={deleteActivity} onEdit={activity => { setEditActivityError(''); setEditingActivity({ ...activity, activity_date: formatDateTimeLocal(activity.activity_date) }); }} onView={setSelectedActivity} currentUserId={session.user.id} isAdmin={authorizationProfile?.role === 'admin'} />
+          <Activities activities={activities} customers={customers} ownerProfiles={ownerProfiles} currentUserEmail={session.user.email} onAdd={() => { setActivityError(''); setNewActivity(a => ({ ...a, customer_id: '' })); setShowActivityForm(true); }} onStatusChange={updateActivityStatus} onDelete={deleteActivity} onEdit={activity => { setEditActivityError(''); setEditingActivity({ ...activity, activity_date: formatDateTimeLocal(activity.activity_date) }); }} onView={setSelectedActivity} currentUserId={session.user.id} isAdmin={isAdminRole(authorizationProfile?.role)} />
         )}
         {page === 'Tickets' && (
           <Tickets
@@ -3307,7 +3316,7 @@ async function signUpWithEmail(event) {
             onEdit={ticket => { setEditTicketError(''); setEditingTicket(ticket); }}
             onView={setSelectedTicket}
             currentUserId={session.user.id}
-            isAdmin={authorizationProfile?.role === 'admin'}
+            isAdmin={isAdminRole(authorizationProfile?.role)}
             canManage={canManageTicket}
             staffName={staffName}
             staffOptions={getStaffOptions()}
@@ -3318,7 +3327,7 @@ async function signUpWithEmail(event) {
         {page === 'Reports' && <AdvancedReports customers={customers} deals={deals} activities={activities} tickets={tickets} leads={leads} quotes={quotes} invoices={invoices} payments={payments} formatAmount={formatAmount} />}
         {page === 'Email Logs' && <EmailLogs emailLogs={emailLogs} customers={customers} onAdd={addEmailLog} />}
         {page === 'UserManagement' && <UserManagement users={authorizedUsers} loading={usersLoading} error={usersError} onRefresh={fetchAuthorizedUsers} onUpdateUser={updateAuthorizedUser} currentUserId={session?.user?.id} pendingPortalAccounts={pendingPortalAccounts} portalRequestsLoading={portalRequestsLoading} portalRequestsError={portalRequestsError} portalRequestsNotice={portalRequestsNotice} onRefreshPortalRequests={fetchPendingPortalAccounts} onReviewPortalRequest={reviewPortalRequest} portalRequestActionId={portalRequestActionId} />}
-        {page === 'Settings' && <SettingsPage currency={currency} setCurrency={setCurrency} />}
+        {page === 'Settings' && <SettingsPage currency={currency} setCurrency={setCurrency} theme={theme} setTheme={setTheme} />}
       </section>
       </RefreshContext.Provider>
     </main>
@@ -4269,7 +4278,7 @@ async function signUpWithEmail(event) {
     {profileModalOpen && (
       <div className="modal-backdrop" onClick={() => setProfileModalOpen(false)}>
         <form className="modal" onSubmit={saveProfile} onClick={event => event.stopPropagation()}>
-          <div className="modal-heading"><div><h2>Edit profile</h2><p>Your name is shown across Orbit CRM when provided.</p></div><button type="button" className="icon-btn" onClick={() => setProfileModalOpen(false)} aria-label="Close profile modal"><X size={18} /></button></div>
+          <div className="modal-heading"><div><h2>Edit profile</h2><p>Your name is shown across Storhet CRM when provided.</p></div><button type="button" className="icon-btn" onClick={() => setProfileModalOpen(false)} aria-label="Close profile modal"><X size={18} /></button></div>
           <label>Display name<input autoFocus value={profileDraft} onChange={event => setProfileDraft(event.target.value)} placeholder="Enter your name" maxLength={100} /></label>
           <label>Account email<input value={session?.user?.email || ''} readOnly /></label>
           <p className="settings-hint">Leave the name blank to use your account email. Profile photos are not used.</p>
@@ -4742,7 +4751,7 @@ function BirthdayReminders({ customers = [], leads = [] }) {
       {birthdayCustomers.length > 0 && <span className="count-badge">Today</span>}
     </div>
     {birthdayCustomers.length === 0 ? (
-      <div className="birthday-empty">When a contact has a birthday today, Orbit will surface them here with a ready-to-send greeting.</div>
+      <div className="birthday-empty">When a contact has a birthday today, Storhet will surface them here with a ready-to-send greeting.</div>
     ) : birthdayCustomers.map(customer => (
       <div className="birthday-row" key={customer.id}>
         <div className="birthday-avatar">🎉</div>
@@ -6231,7 +6240,7 @@ function CalendarPage({ events = [], customers = [], onAdd, onUpdate, onDelete, 
           <select value={form.reminder_minutes == null ? '' : String(form.reminder_minutes)} onChange={e => setForm({ ...form, reminder_minutes:e.target.value })}>
             {reminderOptions.map(option => <option key={option.value} value={option.value}>{option.label}</option>)}
           </select>
-          <span className="calendar-form-help">The reminder will appear in your Orbit notification bell.</span>
+          <span className="calendar-form-help">The reminder will appear in your Storhet notification bell.</span>
         </label>
 
         <label>Location
@@ -7453,7 +7462,7 @@ function Products({ products, supportEngineers, solutionSupport, onAdd, onUpdate
     </>
   );
 }
-function SettingsPage({ currency, setCurrency }) {
+function SettingsPage({ currency, setCurrency, theme, setTheme }) {
   const [selectedCurrency, setSelectedCurrency] = useState(currency);
   const [saved, setSaved] = useState(false);
 
@@ -7468,6 +7477,20 @@ function SettingsPage({ currency, setCurrency }) {
       <PageHeading eyebrow="WORKSPACE" title="Settings" description="Manage your workspace preferences." />
       <div className="panel settings-panel">
         <h3>Workspace settings</h3>
+        <div className="theme-setting">
+          <div>
+            <strong>Dark mode</strong>
+            <span>Use a darker colour scheme. Applies instantly and is saved on this device.</span>
+          </div>
+          <button
+            type="button"
+            role="switch"
+            aria-checked={theme === 'dark'}
+            aria-label="Dark mode"
+            className="theme-switch"
+            onClick={() => setTheme(theme === 'dark' ? 'light' : 'dark')}
+          />
+        </div>
         <label>Display currency
           <select value={selectedCurrency} onChange={e => setSelectedCurrency(e.target.value)}>
             <option value="NGN">NGN — Nigerian Naira (₦)</option>
@@ -7780,7 +7803,7 @@ function Chat() {
                   </div>
                   <div className="wa-contact-bottom">
                     <span className="wa-last-msg">{user.email}</span>
-                    <span className="wa-role-tag">{user.role}</span>
+                    <span className="wa-role-tag">{roleLabel(user.role)}</span>
                   </div>
                 </div>
               </div>
@@ -7815,7 +7838,7 @@ function Chat() {
 
               <div className="wa-chat-info">
                 <strong>{selectedUser.email.split('@')[0]}</strong>
-                <span>Active now · {selectedUser.role}</span>
+                <span>Active now · {roleLabel(selectedUser.role)}</span>
               </div>
 
               <div className="wa-header-actions">
@@ -7924,7 +7947,8 @@ function UserManagement({
               return <tr key={user.id}>
                 <td>{user.email}</td>
                 <td><select value={user.role} disabled={isCurrentUser} onChange={(event) => onUpdateUser(user.id, { role: event.target.value })}>
-                  <option value="admin">Admin</option><option value="manager">Manager</option><option value="member">Member</option>
+                  {!ROLE_OPTIONS.some(option => option.value === user.role) && <option value={user.role}>{roleLabel(user.role)} (legacy – reassign)</option>}
+                  {ROLE_OPTIONS.map(option => <option key={option.value} value={option.value}>{option.label}</option>)}
                 </select></td>
                 <td><select value={user.status} disabled={isCurrentUser} onChange={(event) => onUpdateUser(user.id, { status: event.target.value })}>
                   <option value="pending">Pending</option><option value="active">Active</option><option value="inactive">Inactive</option>
@@ -7961,50 +7985,6 @@ function UserManagement({
       </div>
     </>
   );
-}
-function OrbitLogo({ className = "w-8 h-8" }) {
-  return (
-    <svg
-      xmlns="http://www.w3.org/2000/svg"
-      viewBox="0 0 100 100"
-      className={className}
-      fill="none"
-    >
-      <defs>
-        <linearGradient id="orbitGrad1" x1="0%" y1="100%" x2="100%" y2="0%">
-          <stop offset="0%" stopColor="#10B981" />
-          <stop offset="100%" stopColor="#059669" />
-        </linearGradient>
-
-        <linearGradient id="orbitGrad2" x1="0%" y1="0%" x2="100%" y2="100%">
-          <stop offset="0%" stopColor="#6366F1" />
-          <stop offset="100%" stopColor="#3B82F6" />
-        </linearGradient>
-
-        <radialGradient id="coreGrad" cx="35%" cy="35%" r="65%">
-          <stop offset="0%" stopColor="#334155" />
-          <stop offset="100%" stopColor="#0F172A" />
-        </radialGradient>
-      </defs>
-
-      <ellipse
-        cx="50" cy="50" rx="38" ry="14"
-        stroke="url(#orbitGrad2)" strokeWidth="4.5" strokeLinecap="round"
-        transform="rotate(-28 50 50)"
-      />
-      <ellipse
-        cx="50" cy="50" rx="38" ry="14"
-        stroke="url(#orbitGrad1)" strokeWidth="5" strokeLinecap="round"
-        transform="rotate(32 50 50)"
-      />
-      <circle cx="50" cy="50" r="15" fill="url(#coreGrad)" />
-      <circle cx="18" cy="30" r="3.5" fill="#10B981" />
-      <circle cx="82" cy="70" r="3.5" fill="#10B981" />
-      <circle cx="75" cy="28" r="3" fill="#6366F1" />
-      <circle cx="25" cy="72" r="3" fill="#3B82F6" />
-      <circle cx="45" cy="45" r="2.5" fill="#F8FAFC" opacity="0.8" />
-    </svg>
-  )
 }
 
 export default App;
