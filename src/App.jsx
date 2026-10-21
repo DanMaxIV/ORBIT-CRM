@@ -25,14 +25,14 @@ function AuthScreen({ onGoogleSignIn, onEmailSignIn, onEmailSignUp, onPortalSign
     <div className="auth-page">
       <div className="auth-card">
         <div className="auth-brand">
-          <div className="brand-mark"><OrbitLogo /></div>
-          <span>
-            orbit<span className="brand-accent">CRM</span>
+          <div className="brand-mark"><img src="/storhetLogo.png" alt="Storhet CRM" /></div>
+          <span className="brand-name">
+           Storhet<span className="brand-accent">CRM</span>
           </span>
         </div>
         <div className="auth-heading">
           <h1>Welcome back</h1>
-          <p>Sign in to access your Orbit CRM workspace.</p>
+          <p>Sign in to access your Storhet CRM workspace.</p>
         </div>
         {error && (
           <div className="auth-error" role="alert">
@@ -132,7 +132,7 @@ function AuthScreen({ onGoogleSignIn, onEmailSignIn, onEmailSignUp, onPortalSign
           </button>
         </div>
         <p className="auth-footer">
-          Access to the internal CRM is restricted to authorized Orbit CRM users.
+          Access to the internal CRM is restricted to authorized Storhet CRM users.
         </p>
       </div>
 
@@ -152,7 +152,7 @@ function AuthScreen({ onGoogleSignIn, onEmailSignIn, onEmailSignUp, onPortalSign
             <div className="modal-heading">
               <div>
                 <h2>Create your account</h2>
-                <p>Sign up for Orbit CRM access.</p>
+                <p>Sign up for Storhet CRM access.</p>
               </div>
 
               <button
@@ -255,7 +255,7 @@ function AuthScreen({ onGoogleSignIn, onEmailSignIn, onEmailSignUp, onPortalSign
               Password
               <input type="password" autoComplete="new-password" placeholder="At least 6 characters" value={password} onChange={(event) => setPassword(event.target.value)} minLength={6} required />
             </label>
-            <p className="portal-signup-help">We’ll email you a verification link. For your security, your portal will only show records linked to your verified customer account and shared by the Orbit CRM team.</p>
+            <p className="portal-signup-help">We’ll email you a verification link. For your security, your portal will only show records linked to your verified customer account and shared by the Storhet CRM team.</p>
             <button type="submit" className="primary-btn" disabled={loading}>{loading ? 'Creating account...' : 'Create customer account'}</button>
             <p className="authSignUp">Already registered? <button type="button" className="auth-toggle-btn" onClick={() => setShowPortalSignup(false)} disabled={loading}>Return to sign in</button></p>
           </form>
@@ -272,7 +272,7 @@ function PortalStatusScreen({ account, email, onSignOut }) {
   return (
     <div className="auth-page">
       <div className="auth-card portal-status-card">
-        <div className="auth-brand"><div className="brand-mark"><OrbitLogo /></div><span>orbit<span className="brand-accent">CRM</span></span></div>
+        <div className="auth-brand"><div className="brand-mark"><img src="/storhetLogo.png" alt="Storhet CRM" /></div><span className="brand-name">Storhet<span className="brand-accent">CRM</span></span></div>
         <div className="portal-status-icon">{needsVerification ? '✉' : isActive ? 'O' : isRejected ? '×' : '✓'}</div>
         <div className="auth-heading">
           <h1>{needsVerification ? 'Check your email' : isActive ? 'Finish setting up your portal' : isRejected ? 'Portal access rejected' : 'Portal access pending'}</h1>
@@ -281,8 +281,8 @@ function PortalStatusScreen({ account, email, onSignOut }) {
             : isActive
               ? 'Your account is approved and linked. Your customer dashboard is being prepared.'
               : isRejected
-                ? 'Your customer portal access request was rejected. Please contact the Orbit CRM team if you believe this is a mistake.'
-                : 'Your email is verified. Your request is waiting for an Orbit CRM admin to review it. Portal access will remain blocked until it is approved.'}</p>
+                ? 'Your customer portal access request was rejected. Please contact the Storhet CRM team if you believe this is a mistake.'
+                : 'Your email is verified. Your request is waiting for a Storhet CRM admin to review it. Portal access will remain blocked until it is approved.'}</p>
         </div>
         <p className="portal-status-email">{email || account?.email || ''}</p>
         <button type="button" className="primary-btn" onClick={onSignOut}>Sign out</button>
@@ -303,7 +303,7 @@ function portalErrorMessage(error) {
   if (!error) return '';
   // PostgREST reports a missing function as PGRST202; Postgres uses 42883.
   if (error.code === 'PGRST202' || error.code === '42883') {
-    return 'Support tickets are not set up yet. Please ask your Orbit CRM administrator to finish the portal support setup.';
+    return 'Support tickets are not set up yet. Please ask your Storhet CRM administrator to finish the portal support setup.';
   }
   return error.message || 'Something went wrong. Please try again.';
 }
@@ -650,7 +650,7 @@ function CustomerPortalHome({ user, account, onSignOut }) {
   return (
     <div className="customer-portal-shell">
       <header className="customer-portal-topbar">
-        <div className="auth-brand"><div className="brand-mark"><OrbitLogo /></div><span>orbit<span className="brand-accent">CRM</span></span></div>
+        <div className="auth-brand"><div className="brand-mark"><img src="/storhetLogo.png" alt="Storhet CRM" /></div><span className="brand-name">Storhet<span className="brand-accent">CRM</span></span></div>
         <div className="customer-portal-top-actions">
           <select className="portal-currency" value={currency} onChange={event => setCurrency(event.target.value)} aria-label="Display currency">
             {Object.keys(EXCHANGE_RATES).map(code => <option key={code} value={code}>{code}</option>)}
@@ -705,7 +705,7 @@ function CustomerPortalHome({ user, account, onSignOut }) {
           )}
         </>}
       </main>
-      <footer className="customer-portal-footer">Orbit CRM · Secure customer access</footer>
+      <footer className="customer-portal-footer">Storhet CRM · Secure customer access</footer>
     </div>
   );
 }
@@ -1086,7 +1086,7 @@ async function signUpWithEmail(event) {
         }
       });
       if (error) throw error;
-      setAuthNotice('Registration submitted. Verify your email if prompted, then wait for an Orbit CRM admin to review your customer portal access request.');
+      setAuthNotice('Registration submitted. Verify your email if prompted, then wait for an Storhet CRM admin to review your customer portal access request.');
       setPassword('');
       setPortalSignUpName(fullName.trim());
       return true;
@@ -1208,7 +1208,7 @@ async function signUpWithEmail(event) {
         setPortalAccount(account || null);
         setPortalSetupPending(!account);
         setAuthorizationLoading(false);
-        if (!account) setAuthNotice('Please verify your email address. Once verified, your request will remain pending until an Orbit CRM admin approves it.');
+        if (!account) setAuthNotice('Please verify your email address. Once verified, your request will remain pending until an Storhet CRM admin approves it.');
         return;
       } catch (portalError) {
         console.error('Customer portal authorization check failed:', portalError);
@@ -2177,7 +2177,7 @@ async function signUpWithEmail(event) {
   // Calendar reminders need an active checker. Previously they were only
   // evaluated when the calendar was fetched/refreshed, which meant a reminder
   // could be missed completely if no refresh happened at the right time.
-  // Check frequently while Orbit is open so reminders appear in the bell
+  // Check frequently while Storhet is open so reminders appear in the bell
   // without requiring a manual refresh.
   useEffect(() => {
     if (!session?.user?.id || !authorized) return;
@@ -2197,7 +2197,7 @@ async function signUpWithEmail(event) {
     const intervalId = window.setInterval(checkCalendarReminders, 15000);
 
     // Check immediately as well, so a reminder is picked up quickly after
-    // opening Orbit or returning to the tab.
+    // opening Storhet or returning to the tab.
     checkCalendarReminders();
 
     return () => window.clearInterval(intervalId);
@@ -3005,9 +3005,9 @@ async function signUpWithEmail(event) {
       <div className="auth-page">
         <div className="auth-card auth-loading">
           <div className="auth-brand">
-            <div className="brand-mark"><OrbitLogo /></div>
-            <span>
-              orbit<span className="brand-accent">CRM</span>
+            <div className="brand-mark"><img src="/storhetLogo.png" alt="Storhet CRM" /></div>
+            <span className="brand-name">
+              Storhet<span className="brand-accent">CRM</span>
             </span>
           </div>
           <p>
@@ -3051,8 +3051,8 @@ async function signUpWithEmail(event) {
   return <div className="app-shell">
     <aside className={`sidebar ${sidebarOpen ? 'sidebar-open' : ''}`}>
       <div className="brand">
-        <div className="brand-mark"><OrbitLogo /></div>
-        <span>orbit<span className="brand-accent">CRM</span></span>
+        <div className="brand-mark"><img src="/storhetLogo.png" alt="" /></div>
+        <span className="brand-name">Storhet<span className="brand-accent">CRM</span></span>
         <button className="icon-btn close-mobile" onClick={() => setSidebarOpen(false)}><X size={18} /></button>
       </div>
       <div className="workspace-label">WORKSPACE</div>
@@ -4232,7 +4232,7 @@ async function signUpWithEmail(event) {
     {profileModalOpen && (
       <div className="modal-backdrop" onClick={() => setProfileModalOpen(false)}>
         <form className="modal" onSubmit={saveProfile} onClick={event => event.stopPropagation()}>
-          <div className="modal-heading"><div><h2>Edit profile</h2><p>Your name is shown across Orbit CRM when provided.</p></div><button type="button" className="icon-btn" onClick={() => setProfileModalOpen(false)} aria-label="Close profile modal"><X size={18} /></button></div>
+          <div className="modal-heading"><div><h2>Edit profile</h2><p>Your name is shown across Storhet CRM when provided.</p></div><button type="button" className="icon-btn" onClick={() => setProfileModalOpen(false)} aria-label="Close profile modal"><X size={18} /></button></div>
           <label>Display name<input autoFocus value={profileDraft} onChange={event => setProfileDraft(event.target.value)} placeholder="Enter your name" maxLength={100} /></label>
           <label>Account email<input value={session?.user?.email || ''} readOnly /></label>
           <p className="settings-hint">Leave the name blank to use your account email. Profile photos are not used.</p>
@@ -6096,7 +6096,7 @@ function CalendarPage({ events = [], customers = [], onAdd, onUpdate, onDelete, 
           <select value={form.reminder_minutes == null ? '' : String(form.reminder_minutes)} onChange={e => setForm({ ...form, reminder_minutes:e.target.value })}>
             {reminderOptions.map(option => <option key={option.value} value={option.value}>{option.label}</option>)}
           </select>
-          <span className="calendar-form-help">The reminder will appear in your Orbit notification bell.</span>
+          <span className="calendar-form-help">The reminder will appear in your Storhet notification bell.</span>
         </label>
 
         <label>Location
@@ -7826,50 +7826,6 @@ function UserManagement({
       </div>
     </>
   );
-}
-function OrbitLogo({ className = "w-8 h-8" }) {
-  return (
-    <svg
-      xmlns="http://www.w3.org/2000/svg"
-      viewBox="0 0 100 100"
-      className={className}
-      fill="none"
-    >
-      <defs>
-        <linearGradient id="orbitGrad1" x1="0%" y1="100%" x2="100%" y2="0%">
-          <stop offset="0%" stopColor="#10B981" />
-          <stop offset="100%" stopColor="#059669" />
-        </linearGradient>
-
-        <linearGradient id="orbitGrad2" x1="0%" y1="0%" x2="100%" y2="100%">
-          <stop offset="0%" stopColor="#6366F1" />
-          <stop offset="100%" stopColor="#3B82F6" />
-        </linearGradient>
-
-        <radialGradient id="coreGrad" cx="35%" cy="35%" r="65%">
-          <stop offset="0%" stopColor="#334155" />
-          <stop offset="100%" stopColor="#0F172A" />
-        </radialGradient>
-      </defs>
-
-      <ellipse
-        cx="50" cy="50" rx="38" ry="14"
-        stroke="url(#orbitGrad2)" strokeWidth="4.5" strokeLinecap="round"
-        transform="rotate(-28 50 50)"
-      />
-      <ellipse
-        cx="50" cy="50" rx="38" ry="14"
-        stroke="url(#orbitGrad1)" strokeWidth="5" strokeLinecap="round"
-        transform="rotate(32 50 50)"
-      />
-      <circle cx="50" cy="50" r="15" fill="url(#coreGrad)" />
-      <circle cx="18" cy="30" r="3.5" fill="#10B981" />
-      <circle cx="82" cy="70" r="3.5" fill="#10B981" />
-      <circle cx="75" cy="28" r="3" fill="#6366F1" />
-      <circle cx="25" cy="72" r="3" fill="#3B82F6" />
-      <circle cx="45" cy="45" r="2.5" fill="#F8FAFC" opacity="0.8" />
-    </svg>
-  )
 }
 
 export default App;
