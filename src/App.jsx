@@ -6,7 +6,7 @@ import timeGridPlugin from '@fullcalendar/react/timegrid';
 import listPlugin from '@fullcalendar/react/list';
 import interactionPlugin from '@fullcalendar/react/interaction';
 import '@fullcalendar/react/skeleton.css';
-import { LayoutDashboard, Users, Kanban, CalendarCheck, BarChart3, Settings, Bell, Search, Plus, ArrowUpRight, MoreHorizontal, Menu, X, UserRound, Pencil, Receipt, LogOut, UserCog, MessageCircle, UserPlus, Mail, CalendarDays, FileText, Workflow, TrendingUp, Tags, DollarSign, CreditCard, Upload, Download, Play, Target, CheckCircle2, ArrowLeft, ChevronRight, Building2, RefreshCw } from 'lucide-react';
+import { LayoutDashboard, Users, Kanban, CalendarCheck, BarChart3, Settings, Bell, Search, Plus, ArrowUpRight, MoreHorizontal, Menu, X, UserRound, Pencil, Receipt, LogOut, UserCog, MessageCircle, UserPlus, Mail, CalendarDays, FileText, Workflow, TrendingUp, Tags, DollarSign, CreditCard, Upload, Download, Play, Target, CheckCircle2, ArrowLeft, ChevronRight, Building2, RefreshCw, GripVertical } from 'lucide-react';
 
 // Lets every page heading refresh the latest workspace data without prop-drilling.
 const RefreshContext = createContext(null);
@@ -14,8 +14,17 @@ const RefreshContext = createContext(null);
 // Light / dark appearance. The choice is stored on this device and applied to <html>
 // before the first render so the page never flashes the wrong theme.
 const THEME_STORAGE_KEY = 'orbit_theme';
+const PAGE_STORAGE_KEY = 'orbit_current_page';
 const readStoredTheme = () => {
   try { return localStorage.getItem(THEME_STORAGE_KEY) === 'dark' ? 'dark' : 'light'; } catch { return 'light'; }
+};
+const readStoredPage = () => {
+  try {
+    const storedPage = localStorage.getItem(PAGE_STORAGE_KEY);
+    return storedPage || 'Dashboard';
+  } catch {
+    return 'Dashboard';
+  }
 };
 if (typeof document !== 'undefined') document.documentElement.setAttribute('data-theme', readStoredTheme());
 
@@ -33,6 +42,30 @@ const DEFAULT_ROLE = 'sales';
 // To give another role the same powers, add its value here, e.g. ['admin', 'manager'].
 const ADMIN_ROLES = ['admin'];
 const isAdminRole = role => ADMIN_ROLES.includes(role);
+const isSystemAdminOrMD = role => ['admin', 'manager'].includes(role);
+const isCommercialDeleter = role => ['admin', 'manager', 'head_of_sales'].includes(role);
+const isCommercialEditor = role => ['admin', 'manager'].includes(role);
+const ROLE_PANEL_PAGE = {
+  manager: 'MD Panel',
+  head_of_sales: 'HOS Panel',
+  hr: 'HR Panel',
+  technical_support: 'Technical Support Panel'
+};
+const rolePanelFor = role => ROLE_PANEL_PAGE[role] || null;
+const approvalRequirement = amount => {
+  const value = Number(amount) || 0;
+  if (value >= 50000) return { band: 'HOS_MD', label: 'HOS → MD' };
+  if (value >= 20000) return { band: 'HOS', label: 'HOS' };
+  return { band: 'SALES', label: 'Sales Rep' };
+};
+const canApproveForRole = (role, amount, approvalStatus = 'PENDING') => {
+  if (role === 'admin') return false;
+  const requirement = approvalRequirement(amount).band;
+  if (approvalStatus === 'HOS_PENDING' && role === 'head_of_sales') return requirement === 'HOS' || requirement === 'HOS_MD';
+  if (approvalStatus === 'MD_PENDING' && role === 'manager') return requirement === 'HOS_MD';
+  if (approvalStatus === 'SALES_PENDING' && role === 'sales') return requirement === 'SALES';
+  return false;
+};
 const roleLabel = role => {
   if (!role) return 'Staff';
   const known = ROLE_OPTIONS.find(option => option.value === role);
@@ -748,21 +781,12 @@ const navSections = [
   { title: 'System', items: [['Settings', Settings]] }
 ];
 
-// Remember the open page so a browser refresh doesn't send the user back to the Dashboard.
-const PAGE_STORAGE_KEY = 'orbit_page';
-const VALID_PAGES = new Set([
-  ...navSections.flatMap(section => section.items.map(([label]) => label)),
-  'UserManagement',
-  'Email Logs'
-]);
-const readStoredPage = () => {
-  try {
-    const stored = localStorage.getItem(PAGE_STORAGE_KEY);
-    return stored && VALID_PAGES.has(stored) ? stored : 'Dashboard';
-  } catch {
-    return 'Dashboard';
-  }
-};
+const rolePanelNav = [
+  ['MD Panel', BarChart3, 'manager'],
+  ['HOS Panel', CheckCircle2, 'head_of_sales'],
+  ['HR Panel', Users, 'hr'],
+  ['Technical Support Panel', UserCog, 'technical_support']
+];
 
 const EXCHANGE_RATES = {
   NGN: { symbol: '₦', rate: 1400 },
@@ -797,14 +821,10 @@ function App() {
   const [portalRequestsNotice, setPortalRequestsNotice] = useState('');
   const [portalRequestActionId, setPortalRequestActionId] = useState(null);
 
+  // Keep the user's current CRM page across browser refreshes.
+  // resetWorkspace() still explicitly sends the user to Dashboard when they sign out.
   const [page, setPage] = useState(readStoredPage);
-  useEffect(() => {
-    try { localStorage.setItem(PAGE_STORAGE_KEY, page); } catch { /* storage unavailable */ }
-  }, [page]);
-  // A saved admin-only page shouldn't strand a non-admin on a blank screen.
-  useEffect(() => {
-    if (page === 'UserManagement' && authorizationProfile && !isAdminRole(authorizationProfile.role)) setPage('Dashboard');
-  }, [page, authorizationProfile]);
+  useEffect(() => { if (authorizationProfile?.role === 'technical_support' && page === 'Tickets') setPage('Technical Support Panel'); }, [authorizationProfile?.role, page]);
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [customers, setCustomers] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -897,6 +917,12 @@ function App() {
     document.documentElement.setAttribute('data-theme', theme);
     try { localStorage.setItem(THEME_STORAGE_KEY, theme); } catch { /* storage unavailable */ }
   }, [theme]);
+
+  // Persist the active page so a browser refresh returns to the same CRM section
+  // instead of always starting from Dashboard.
+  useEffect(() => {
+    try { localStorage.setItem(PAGE_STORAGE_KEY, page); } catch { /* storage unavailable */ }
+  }, [page]);
   const [currency, setCurrency] = useState(() => {
     try { return localStorage.getItem('orbit_currency') || 'NGN'; } catch { return 'NGN'; }
   });
@@ -1680,6 +1706,9 @@ async function signUpWithEmail(event) {
   async function updateCalendarEvent(id, payload) { const { data, error } = await supabase.from('calendar_events').update(payload).eq('id', id).select('*, customers(name,company)').single(); if (error) throw error; setCalendarEvents(prev => prev.map(x => x.id === id ? data : x)); return data; }
   async function deleteCalendarEvent(id) { const { error } = await supabase.from('calendar_events').delete().eq('id', id); if (error) throw error; setCalendarEvents(prev => prev.filter(x => x.id !== id)); }
   async function addQuote(payload, items = []) {
+    const quoteAmount = Number(payload?.total) || 0;
+    const initialApproval = approvalRequirement(quoteAmount).band === 'SALES' ? 'SALES_PENDING' : 'HOS_PENDING';
+    payload = { ...payload, approval_status: initialApproval, approval_stage: approvalRequirement(quoteAmount).band === 'HOS_MD' ? 'HOS' : approvalRequirement(quoteAmount).band };
     // Generate the UUID on the client so the quote and its line items can be
     // saved with the same real UUID without relying on an INSERT ... RETURNING
     // SELECT permission. The human-facing quote number is separate and stays
@@ -1739,6 +1768,7 @@ async function signUpWithEmail(event) {
       }
     }
 
+    if (Number(quoteToInsert.total) >= 20000) await notifyRoles(['head_of_sales'], 'Quote approval required', `Quote ${quoteToInsert.quote_number} is waiting for HOS approval.`, 'Quotes');
     return quoteToInsert;
   }
 
@@ -1748,6 +1778,11 @@ async function signUpWithEmail(event) {
       ? await resolvePersistedQuote(currentQuote)
       : currentQuote || { id };
     const realId = persistedQuote.id;
+    const role = authorizationProfile?.role;
+    if (!isCommercialEditor(role) && persistedQuote.created_by !== session.user.id) throw new Error('You can only edit your own quote.');
+    if (persistedQuote.approval_status === 'REJECTED') {
+      payload = { ...payload, approval_status: 'HOS_PENDING', approval_stage: approvalRequirement(Number(payload.total ?? persistedQuote.total)).band === 'SALES' ? 'SALES' : 'HOS', resubmission_note: payload.resubmission_note || null };
+    }
 
     // Quote number is immutable after creation.
     const { quote_number: _ignoredQuoteNumber, ...editablePayload } = payload || {};
@@ -1817,6 +1852,7 @@ async function signUpWithEmail(event) {
   }
 
   async function deleteQuote(id) {
+    if (!isCommercialDeleter(authorizationProfile?.role)) throw new Error('You do not have permission to delete quotes.');
     const currentQuote = quotes.find(quote => quote.id === id);
     const persistedQuote = currentQuote?.id?.toString().startsWith('local-')
       ? await resolvePersistedQuote(currentQuote)
@@ -1839,8 +1875,66 @@ async function signUpWithEmail(event) {
     setQuoteItems(prev => prev.filter(item => item.quote_id !== id && item.quote_id !== realId));
   }
 
-  async function addInvoice(payload) { const { data, error } = await supabase.from('invoices').insert([{ ...payload, created_by: session.user.id }]).select('*, customers(name,company)').single(); if (error) throw error; setInvoices(prev => [data, ...prev]); return data; }
-  async function updateInvoice(id, payload) { const { data, error } = await supabase.from('invoices').update(payload).eq('id', id).select('*, customers(name,company)').single(); if (error) throw error; setInvoices(prev => prev.map(x => x.id === id ? data : x)); return data; }
+  async function approveCommercialRecord(type, id) {
+    const collection = type === 'deal' ? deals : type === 'quote' ? quotes : invoices;
+    const before = collection.find(item => item.id === id);
+    const { data, error } = await supabase.rpc('approve_commercial_record', { p_record_type: type, p_record_id: id });
+    if (error) throw error;
+    if (type === 'deal') await fetchDeals();
+    if (type === 'quote') await fetchQuotes();
+    if (type === 'invoice') await fetchInvoices();
+    const link = type === 'deal' ? 'Pipeline' : type === 'quote' ? 'Quotes' : 'Invoices';
+    if (data?.approval_status === 'MD_PENDING') {
+      await notifyRoles(['manager'], 'MD approval required', `${type} requires final MD approval.`, link);
+    } else if (before?.created_by && before.created_by !== session.user.id) {
+      await notifyRolesByUser([before.created_by], `${type} approved`, `${type} ${before.title || before.quote_number || before.invoice_number || ''} has been approved.`, link);
+    }
+    showToast(`${type[0].toUpperCase() + type.slice(1)} approved.`);
+    return data;
+  }
+
+  async function notifyRolesByUser(userIds, title, message, link) {
+    const rows = [...new Set(userIds || [])].filter(Boolean).map(user_id => ({ user_id, type: 'approval', title, message, link, read: false }));
+    if (!rows.length) return;
+    const { error } = await supabase.from('notifications').insert(rows);
+    if (error) console.error('Could not create user notification:', error);
+  }
+
+  async function notifyRoles(roles, title, message, link) {
+    const { data: recipients, error } = await supabase.from('authorized_users').select('user_id, role').eq('status', 'active').in('role', roles).not('user_id', 'is', null);
+    if (error) { console.error('Could not find notification recipients:', error); return; }
+    await notifyRolesByUser((recipients || []).map(row => row.user_id), title, message, link);
+  }
+
+  async function rejectCommercialRecord(type, id, note) {
+    const { data, error } = await supabase.rpc('reject_commercial_record', { p_record_type: type, p_record_id: id, p_note: note });
+    if (error) throw error;
+    if (type === 'deal') await fetchDeals();
+    if (type === 'quote') await fetchQuotes();
+    if (type === 'invoice') await fetchInvoices();
+
+    const table = type === 'deal' ? deals : type === 'quote' ? quotes : invoices;
+    const record = table.find(item => item.id === id);
+    if (record?.created_by && record.created_by !== session.user.id) {
+      await notifyRolesByUser([record.created_by], `${type} rejected`, `${type} ${record.title || record.quote_number || record.invoice_number || ''} was rejected. Note: ${note}`, type === 'deal' ? 'Pipeline' : type === 'quote' ? 'Quotes' : 'Invoices');
+    }
+    showToast(`${type[0].toUpperCase() + type.slice(1)} rejected. The owner has been notified.`);
+    return data;
+  }
+
+  async function addInvoice(payload) { const amount = Number(payload?.amount) || 0; payload = { ...payload, approval_status: approvalRequirement(amount).band === 'SALES' ? 'SALES_PENDING' : 'HOS_PENDING', approval_stage: approvalRequirement(amount).band === 'HOS_MD' ? 'HOS' : approvalRequirement(amount).band }; const { data, error } = await supabase.from('invoices').insert([{ ...payload, created_by: session.user.id }]).select('*, customers(name,company)').single(); if (error) throw error; setInvoices(prev => [data, ...prev]); if (amount >= 20000) await notifyRoles(['head_of_sales'], 'Invoice approval required', `Invoice ${data.invoice_number} is waiting for HOS approval.`, 'Invoices'); return data; }
+  async function updateInvoice(id, payload) {
+    const current = invoices.find(item => item.id === id);
+    const role = authorizationProfile?.role;
+    if (!isCommercialEditor(role) && current?.created_by !== session.user.id) throw new Error('You can only edit your own invoice.');
+    const { data, error } = await supabase.from('invoices').update(payload).eq('id', id).select('*, customers(name,company)').single(); if (error) throw error; setInvoices(prev => prev.map(x => x.id === id ? data : x)); return data;
+  }
+  async function deleteInvoice(id) {
+    if (!isCommercialDeleter(authorizationProfile?.role)) throw new Error('You do not have permission to delete invoices.');
+    const { error } = await supabase.from('invoices').delete().eq('id', id);
+    if (error) throw error;
+    setInvoices(prev => prev.filter(item => item.id !== id));
+  }
   async function addPayment(payload) { const { data, error } = await supabase.from('payments').insert([{ ...payload, created_by: session.user.id }]).select('*').single(); if (error) throw error; setPayments(prev => [data, ...prev]); await fetchInvoices(); return data; }
   async function addWorkflow(payload) { const { data, error } = await supabase.from('workflows').insert([{ ...payload, created_by: session.user.id }]).select('*').single(); if (error) throw error; setWorkflows(prev => [data, ...prev]); return data; }
   async function updateWorkflow(id, payload) { const { data, error } = await supabase.from('workflows').update(payload).eq('id', id).select('*').single(); if (error) throw error; setWorkflows(prev => prev.map(x => x.id === id ? data : x)); return data; }
@@ -1912,10 +2006,20 @@ async function signUpWithEmail(event) {
     setUsersLoading(true);
     setUsersError('');
 
-    const { data, error } = await supabase
+    let { data, error } = await supabase
       .from('authorized_users')
-      .select('id, email, role, status, created_at, user_id')
+      .select('id, email, role, status, created_at, user_id, parent_id')
       .order('created_at', { ascending: false });
+
+    if (error && (error.code === '42703' || /parent_id/i.test(error.message || ''))) {
+      const fallback = await supabase
+        .from('authorized_users')
+        .select('id, email, role, status, created_at, user_id')
+        .order('created_at', { ascending: false });
+      data = fallback.data;
+      error = fallback.error;
+    }
+
     if (error) {
       console.error('Failed to fetch authorized users:', error);
       setUsersError('Unable to load authorized users.');
@@ -2016,11 +2120,13 @@ async function signUpWithEmail(event) {
     if (session?.user?.id && !list.some(u => u.user_id === session.user.id)) list.unshift({ user_id: session.user.id, email: session.user.email });
     return list;
   };
-  const canManageTicket = ticket =>
-    isAdminRole(authorizationProfile?.role) ||
+  const canManageTicket = ticket => {
+    if (authorizationProfile?.role === 'hr') return false;
+    return ['admin','manager','head_of_sales'].includes(authorizationProfile?.role) ||
     ticket.created_by === session?.user?.id ||
     ticket.assigned_to === session?.user?.id ||
     (ticket.source === 'portal' && !ticket.assigned_to);
+  };
 
   async function fetchProfile() {
     if (!session?.user?.id) return;
@@ -2219,6 +2325,13 @@ async function signUpWithEmail(event) {
 
     fetchAuthorizedUsers();
   }, [authorized, authorizationProfile?.role]);
+  useEffect(() => {
+    if (!authorized) return;
+    const role = authorizationProfile?.role;
+    const allowedPanel = rolePanelFor(role);
+    if (page === 'UserManagement' && !isAdminRole(role)) setPage('Dashboard');
+    if (['MD Panel', 'HOS Panel', 'HR Panel', 'Technical Support Panel'].includes(page) && page !== allowedPanel) setPage('Dashboard');
+  }, [authorized, authorizationProfile?.role, page]);
   // Fetch notifications 
   useEffect(() => {
     if (!session?.user?.id) return;
@@ -2353,6 +2466,7 @@ async function signUpWithEmail(event) {
 
   async function addCustomer(e) {
     e.preventDefault();
+    if (!['admin','manager','head_of_sales','sales'].includes(authorizationProfile?.role)) { setCustomerError('You do not have permission to create customers.'); return; }
     setCustomerError('');
 
     if (!newCustomer.name.trim() || !newCustomer.email.trim()) {
@@ -2371,7 +2485,8 @@ async function signUpWithEmail(event) {
             phone: newCustomer.phone.trim() || null,
             job_title: newCustomer.job_title.trim() || null,
             birthday: newCustomer.birthday || null,
-            status: newCustomer.status || 'Active'
+            status: newCustomer.status || 'Active',
+            created_by: session.user.id
           }
         ])
         .select()
@@ -2406,6 +2521,7 @@ async function signUpWithEmail(event) {
     }
   }
   async function deleteCustomer(id) {
+    if (!isCommercialDeleter(authorizationProfile?.role)) { showToast('You do not have permission to delete customers.'); return; }
     const confirmed = window.confirm(
       'Are you sure you want to delete this customer?'
     );
@@ -2433,6 +2549,7 @@ async function signUpWithEmail(event) {
   }
   async function updateCustomer(e) {
     e.preventDefault();
+    if (!isCommercialEditor(authorizationProfile?.role) && !(authorizationProfile?.role === 'sales' && editingCustomer?.created_by === session.user.id)) { showToast('You can only edit your own customer records.'); return; }
 
     if (!editingCustomer?.name.trim() || !editingCustomer?.email.trim()) {
       alert('Name and email are required.');
@@ -2509,7 +2626,8 @@ async function signUpWithEmail(event) {
           company: newDeal.new_customer_company.trim() || newDeal.company.trim() || null,
           job_title: newDeal.new_customer_job_title.trim() || null,
           birthday: newDeal.new_customer_birthday || null,
-          status: 'Active'
+          status: 'Active',
+          created_by: session.user.id
         }).select().single();
         if (customerError) throw customerError;
         customerId = customerData.id;
@@ -2527,7 +2645,9 @@ async function signUpWithEmail(event) {
             contact_email: newDeal.contact_email.trim() || (newDeal.customer_id === '__new__' ? newDeal.new_customer_email.trim() : null) || null,
             contact_phone: newDeal.contact_phone.trim() || (newDeal.customer_id === '__new__' ? newDeal.new_customer_phone.trim() : null) || null,
             amount: Number(newDeal.amount),
-            stage: newDeal.stage,
+            stage: newDeal.stage === 'Won' ? 'New Lead' : newDeal.stage,
+            approval_status: approvalRequirement(Number(newDeal.amount)).band === 'SALES' ? 'SALES_PENDING' : 'HOS_PENDING',
+            approval_stage: approvalRequirement(Number(newDeal.amount)).band === 'HOS_MD' ? 'HOS' : approvalRequirement(Number(newDeal.amount)).band,
             customer_id: customerId,
             closure_start_at: newDeal.closure_start_at ? new Date(newDeal.closure_start_at).toISOString() : null,
             closure_end_at: newDeal.closure_end_at ? new Date(newDeal.closure_end_at).toISOString() : null,
@@ -2545,6 +2665,7 @@ async function signUpWithEmail(event) {
       }
 
       setDeals(prev => [data, ...prev]);
+      if (Number(data.amount) >= 20000) await notifyRoles(['head_of_sales'], 'Approval required', `Deal ${data.title} is waiting for HOS approval.`, 'Pipeline');
 
       const uniqueProductIds = [...new Set(selectedDealProductIds || [])];
       if (uniqueProductIds.length > 0) {
@@ -2610,6 +2731,14 @@ async function signUpWithEmail(event) {
     const previousDeal = deals.find(d => d.id === id);
     const previousStage = previousDeal?.stage;
     if (!previousDeal || previousStage === stage) return;
+
+    // A deal entering Won must be approved first.
+    if (stage === 'Won' && previousStage !== 'Won') {
+      if (previousDeal.approval_status !== 'APPROVED') {
+        showToast('This deal must complete its approval workflow before it can be marked Won.');
+        return;
+      }
+    }
 
     // A deal entering Won must be converted/linked to a Customer.
     // Lead-created deals have the information needed to create the customer.
@@ -2794,6 +2923,7 @@ async function signUpWithEmail(event) {
     }
   }
   async function deleteDeal(id) {
+    if (!isCommercialDeleter(authorizationProfile?.role)) { showToast('You do not have permission to delete deals.'); return; }
     const confirmed = window.confirm(
       'Are you sure you want to delete this deal?'
     );
@@ -2844,6 +2974,7 @@ async function signUpWithEmail(event) {
           contact_phone: editingDeal.contact_phone?.trim() || null,
           amount: Number(editingDeal.amount),
           stage: editingDeal.stage,
+          ...(editingDeal.approval_status === 'REJECTED' ? { approval_status: approvalRequirement(Number(editingDeal.amount)).band === 'SALES' ? 'SALES_PENDING' : 'HOS_PENDING', approval_stage: approvalRequirement(Number(editingDeal.amount)).band === 'HOS_MD' ? 'HOS' : approvalRequirement(Number(editingDeal.amount)).band, resubmission_note: editingDeal.resubmission_note?.trim() || null } : {}),
           customer_id: editingDeal.customer_id || null,
           closure_start_at: editingDeal.closure_start_at ? new Date(editingDeal.closure_start_at).toISOString() : null,
           closure_end_at: editingDeal.closure_end_at ? new Date(editingDeal.closure_end_at).toISOString() : null
@@ -3049,7 +3180,8 @@ async function signUpWithEmail(event) {
   }
 
   async function assignTicket(id, userId) {
-    const { data, error } = await supabase.from('tickets')
+    if (!['admin', 'manager', 'head_of_sales'].includes(authorizationProfile?.role)) { showToast('Only MD, Admin or Head of Sales can assign support tickets.'); return; }
+    const { data, error} = await supabase.from('tickets')
       .update({ assigned_to: userId || null, updated_at: new Date().toISOString() })
       .eq('id', id)
       .select(`*, customers (name, company)`)
@@ -3140,10 +3272,16 @@ async function signUpWithEmail(event) {
       </div>
       <div className="workspace-label">WORKSPACE</div>
       <nav className="nav-sections" style={{ overflowY: "auto", paddingBottom: 12 }}>
+        {rolePanelFor(authorizationProfile?.role) && (() => { const item = rolePanelNav.find(([label,,role]) => role === authorizationProfile?.role); if (!item) return null; const [label, Icon] = item; return (
+          <div className="nav-section role-panel-nav" style={{ marginBottom: 10 }}>
+            <div className="nav-section-title" style={{ fontSize: 11, fontWeight: 700, letterSpacing: '.08em', opacity: .55, padding: '10px 14px 6px', textTransform: 'uppercase' }}>ROLE PANEL</div>
+            <button key={label} className={`nav-item ${page === label ? 'active' : ''}`} onClick={() => { setPage(label); setSidebarOpen(false); }}><Icon size={18} /><span>{label}</span></button>
+          </div>
+        ); })()}
         {navSections.map(section => (
           <div className="nav-section" key={section.title} style={{ marginBottom: 10 }}>
             <div className="nav-section-title" style={{ fontSize: 11, fontWeight: 700, letterSpacing: ".08em", opacity: .55, padding: "10px 14px 6px", textTransform: "uppercase" }}>{section.title}</div>
-            {section.items.map(([label, Icon]) => (
+            {section.items.filter(([label]) => !(authorizationProfile?.role === 'technical_support' && label === 'Tickets')).map(([label, Icon]) => (
               <button key={label} className={`nav-item ${page === label ? 'active' : ''}`} onClick={() => { setPage(label); setSidebarOpen(false); }}>
                 <Icon size={18} /><span>{label}</span>
               </button>
@@ -3267,8 +3405,12 @@ async function signUpWithEmail(event) {
       <RefreshContext.Provider value={{ refreshAll, refreshing }}>
       <section className="page-content">
         {page === 'Dashboard' && (
-          <Dashboard revenue={revenue} customers={customers} leads={leads} deals={deals} activities={activities} tickets={tickets} setPage={setPage} formatAmount={formatAmount} onSelectCustomer={setSelectedCustomer} onEditCustomer={setEditingCustomer} onDeleteCustomer={deleteCustomer} />
+          <Dashboard revenue={revenue} customers={customers} leads={leads} deals={deals} activities={activities} tickets={tickets} setPage={setPage} formatAmount={formatAmount} onSelectCustomer={setSelectedCustomer} onEditCustomer={setEditingCustomer} onDeleteCustomer={deleteCustomer} currentUserId={session.user.id} role={authorizationProfile?.role} />
         )}
+        {page === 'MD Panel' && authorizationProfile?.role === 'manager' && <MDPanel deals={deals} quotes={quotes} invoices={invoices} customers={customers} formatAmount={formatAmount} onApprove={approveCommercialRecord} onReject={rejectCommercialRecord} />}
+        {page === 'HOS Panel' && authorizationProfile?.role === 'head_of_sales' && <HOSPanel deals={deals} quotes={quotes} invoices={invoices} tickets={tickets} formatAmount={formatAmount} currentUserId={session.user.id} role={authorizationProfile?.role} setPage={setPage} onApprove={approveCommercialRecord} onReject={rejectCommercialRecord} />}
+        {page === 'HR Panel' && authorizationProfile?.role === 'hr' && <HRPanel deals={deals} quotes={quotes} invoices={invoices} tickets={tickets} customers={customers} formatAmount={formatAmount} />}
+        {page === 'Technical Support Panel' && authorizationProfile?.role === 'technical_support' && <TechnicalSupportPanel tickets={tickets} customers={customers} formatAmount={formatAmount} currentUserId={session.user.id} ticketError={ticketError} onAddTicket={() => { setTicketError(''); setNewTicket(t => ({ ...t, customer_id: '' })); setShowTicketForm(true); }} onStatusChange={updateTicketStatus} onDeleteTicket={deleteTicket} onEditTicket={ticket => { setEditTicketError(''); setEditingTicket(ticket); }} onViewTicket={setSelectedTicket} isAdmin={isAdminRole(authorizationProfile?.role)} role={authorizationProfile?.role} canManage={canManageTicket} staffName={staffName} staffOptions={getStaffOptions()} onAssign={assignTicket} setPage={setPage} />}
         {page === 'Customers' && (
           <Customers customers={filteredCustomers}
             allCustomers={customers}
@@ -3283,15 +3425,17 @@ async function signUpWithEmail(event) {
             onSelectCustomer={setSelectedCustomer}
             onDeleteCustomer={deleteCustomer}
             onEditCustomer={setEditingCustomer}
+            currentUserId={session.user.id}
+            role={authorizationProfile?.role}
           />
         )}
-        {page === 'Products' && <Products products={products} supportEngineers={supportEngineers} solutionSupport={solutionSupport} onAdd={addProduct} onUpdate={updateProduct} onDelete={deleteProduct} onUpdateFamilySupport={syncSolutionSupport} currentUserId={session.user.id} isAdmin={isAdminRole(authorizationProfile?.role)} />}
-        {page === 'Technical Support' && <SupportEngineers supportEngineers={supportEngineers} solutionSupport={solutionSupport} onAdd={addSupportEngineer} onUpdate={updateSupportEngineer} onDeactivate={deactivateSupportEngineer} isAdmin={isAdminRole(authorizationProfile?.role)} />}
-        {page === 'Leads' && <Leads leads={leads} customers={customers} products={products} leadProducts={leadProducts} onAdd={addLead} onUpdate={updateLead} onSyncProducts={syncLeadProducts} onDelete={deleteLead} currentUserId={session.user.id} isAdmin={isAdminRole(authorizationProfile?.role)} />}
+        {page === 'Products' && <Products products={products} supportEngineers={supportEngineers} solutionSupport={solutionSupport} onAdd={addProduct} onUpdate={updateProduct} onDelete={deleteProduct} onUpdateFamilySupport={syncSolutionSupport} currentUserId={session.user.id} isAdmin={isSystemAdminOrMD(authorizationProfile?.role)} />}
+        {page === 'Technical Support' && <SupportEngineers supportEngineers={supportEngineers} solutionSupport={solutionSupport} onAdd={addSupportEngineer} onUpdate={updateSupportEngineer} onDeactivate={deactivateSupportEngineer} isAdmin={isSystemAdminOrMD(authorizationProfile?.role)} />}
+        {page === 'Leads' && <Leads leads={leads} customers={customers} products={products} leadProducts={leadProducts} onAdd={addLead} onUpdate={updateLead} onSyncProducts={syncLeadProducts} onDelete={deleteLead} currentUserId={session.user.id} isAdmin={['admin','manager','head_of_sales'].includes(authorizationProfile?.role)} />}
         {page === 'Email' && <EmailPage emailLogs={emailLogs} customers={customers} integrations={emailIntegrations} loading={emailIntegrationLoading} error={emailIntegrationError} onConnect={connectEmailProvider} onDisconnect={disconnectEmailProvider} onAdd={async payload => { try { await addEmailLog(payload); showToast('Email logged.'); } catch (e) { alert(e.message); } }} />}
         {page === 'Calendar' && <CalendarPage events={calendarEvents} customers={customers} onAdd={addCalendarEvent} onUpdate={updateCalendarEvent} onDelete={deleteCalendarEvent} onRefresh={fetchCalendarEvents} />}
-        {page === 'Quotes' && <Quotes quotes={quotes} products={products} quoteItems={quoteItems} onLoadQuoteItems={loadQuoteItems} onAdd={addQuote} onUpdate={updateQuote} onDelete={deleteQuote} formatAmount={formatAmount} currentUserId={session.user.id} isAdmin={isAdminRole(authorizationProfile?.role)} />}
-        {page === 'Invoices' && <Invoices invoices={invoices} payments={payments} customers={customers} products={products} onAdd={addInvoice} onUpdate={updateInvoice} onAddPayment={addPayment} formatAmount={formatAmount} currentUserId={session.user.id} isAdmin={isAdminRole(authorizationProfile?.role)} />}
+        {page === 'Quotes' && <Quotes quotes={quotes} products={products} quoteItems={quoteItems} onLoadQuoteItems={loadQuoteItems} onAdd={addQuote} onUpdate={updateQuote} onDelete={deleteQuote} formatAmount={formatAmount} currentUserId={session.user.id} isAdmin={isAdminRole(authorizationProfile?.role)} role={authorizationProfile?.role} onApprove={approveCommercialRecord} onReject={rejectCommercialRecord} />}
+        {page === 'Invoices' && <Invoices invoices={invoices} payments={payments} customers={customers} products={products} onAdd={addInvoice} onUpdate={updateInvoice} onDelete={deleteInvoice} onAddPayment={addPayment} formatAmount={formatAmount} currentUserId={session.user.id} isAdmin={isAdminRole(authorizationProfile?.role)} role={authorizationProfile?.role} onApprove={approveCommercialRecord} onReject={rejectCommercialRecord} />}
         {page === 'Documents' && <Documents documents={documents} customers={customers} onUpload={uploadDocument} onDownload={downloadDocument} onDelete={deleteDocument} />}
         {page === 'Automation' && <Automation workflows={workflows} onAdd={addWorkflow} onUpdate={updateWorkflow} />}
         {page === 'Segments' && <Segments segments={segments} customers={customers} onAdd={addSegment} onUpdate={updateSegment} />}
@@ -3308,6 +3452,9 @@ async function signUpWithEmail(event) {
             currentUserId={session.user.id}
             ownerProfiles={ownerProfiles}
             isAdmin={isAdminRole(authorizationProfile?.role)}
+            role={authorizationProfile?.role}
+            onApprove={approveCommercialRecord}
+            onReject={rejectCommercialRecord}
             onEdit={deal => {
               setEditDealError('');
               setEditingDeal({
@@ -3327,9 +3474,9 @@ async function signUpWithEmail(event) {
           />
         )}
         {page === 'Activities' && (
-          <Activities activities={activities} customers={customers} ownerProfiles={ownerProfiles} currentUserEmail={session.user.email} onAdd={() => { setActivityError(''); setNewActivity(a => ({ ...a, customer_id: '' })); setShowActivityForm(true); }} onStatusChange={updateActivityStatus} onDelete={deleteActivity} onEdit={activity => { setEditActivityError(''); setEditingActivity({ ...activity, activity_date: formatDateTimeLocal(activity.activity_date) }); }} onView={setSelectedActivity} currentUserId={session.user.id} isAdmin={isAdminRole(authorizationProfile?.role)} />
+          <Activities activities={activities} customers={customers} ownerProfiles={ownerProfiles} currentUserEmail={session.user.email} onAdd={() => { setActivityError(''); setNewActivity(a => ({ ...a, customer_id: '' })); setShowActivityForm(true); }} onStatusChange={updateActivityStatus} onDelete={deleteActivity} onEdit={activity => { setEditActivityError(''); setEditingActivity({ ...activity, activity_date: formatDateTimeLocal(activity.activity_date) }); }} onView={setSelectedActivity} currentUserId={session.user.id} isAdmin={isSystemAdminOrMD(authorizationProfile?.role)} />
         )}
-        {page === 'Tickets' && (
+        {page === 'Tickets' && authorizationProfile?.role !== 'technical_support' && (
           <Tickets
             tickets={tickets}
             error={ticketError}
@@ -3340,6 +3487,8 @@ async function signUpWithEmail(event) {
             onView={setSelectedTicket}
             currentUserId={session.user.id}
             isAdmin={isAdminRole(authorizationProfile?.role)}
+            role={authorizationProfile?.role}
+            canCreate={['admin','manager','head_of_sales'].includes(authorizationProfile?.role)}
             canManage={canManageTicket}
             staffName={staffName}
             staffOptions={getStaffOptions()}
@@ -4588,9 +4737,10 @@ function downloadCSV(filename, header, rows) {
   URL.revokeObjectURL(url);
 }
 
-function StatCard({ label, value, change, hint, icon, tone }) {
+function StatCard({ label, value, change, hint, icon, tone, onClick }) {
+  const clickable = typeof onClick === 'function';
   return (
-    <div className="stat-card">
+    <div className={`stat-card${clickable ? ' stat-card-clickable' : ''}`} onClick={onClick} role={clickable ? 'button' : undefined} tabIndex={clickable ? 0 : undefined} onKeyDown={event => { if (clickable && (event.key === 'Enter' || event.key === ' ')) onClick(event); }}> 
       <div className={`stat-icon ${tone}`}>{icon}</div>
       <div className="stat-label">{label}</div>
       <div className="stat-value">{value}</div>
@@ -4601,7 +4751,7 @@ function StatCard({ label, value, change, hint, icon, tone }) {
   );
 }
 
-function Dashboard({ revenue, customers, leads = [], deals, activities, tickets, setPage, formatAmount, onSelectCustomer, onEditCustomer, onDeleteCustomer }) {
+function Dashboard({ revenue, customers, leads = [], deals, activities, tickets, setPage, formatAmount, onSelectCustomer, onEditCustomer, onDeleteCustomer, currentUserId, role }) {
   const [range, setRange] = useState(6);
 
   const monthlyRevenue = useMemo(() => {
@@ -4664,15 +4814,15 @@ function Dashboard({ revenue, customers, leads = [], deals, activities, tickets,
   return <>
     <PageHeading eyebrow="OVERVIEW" title="Dashboard" description="Here's what's happening with your business today." />
     <div className="stats-grid">
-      <StatCard label="Revenue (won deals)" value={formatAmount(revenue)} change={trend(thisMonthRevenue, lastMonthRevenue)} tone="purple" icon="↗" />
-      <StatCard label="Customers" value={customers.length} change={trend(newCustomers, lastNewCustomers)} tone="blue" icon="♙" />
-      <StatCard label="Open pipeline" value={formatAmount(sumAmount(openDeals))} hint={`${openDeals.length} open deals`} tone="orange" icon="◈" />
+      <StatCard label="Revenue (won deals)" value={formatAmount(revenue)} change={trend(thisMonthRevenue, lastMonthRevenue)} tone="purple" icon="↗" onClick={() => setPage(role === 'head_of_sales' ? 'HOS Panel' : role === 'manager' ? 'MD Panel' : 'Reports')} />
+      <StatCard label="Customers" value={customers.length} change={trend(newCustomers, lastNewCustomers)} tone="blue" icon="♙" onClick={() => setPage('Customers')} />
+      <StatCard label="Open pipeline" value={formatAmount(sumAmount(openDeals))} hint={`${openDeals.length} open deals`} tone="orange" icon="◈" onClick={() => setPage('Pipeline')} />
       <StatCard label="Win rate" value={`${winRate.toFixed(1)}%`} hint={`${wonDeals.length} of ${deals.length} deals won`} tone="green" icon="◉" />
-      <StatCard label="Overdue activities" value={overdueCount} hint={overdueCount ? 'Needs attention' : 'You are on track'} tone="orange" icon="◷" />
-      <StatCard label="Due today" value={dueTodayCount} hint="Activity reminders" tone="blue" icon="!" />
-      <StatCard label="Open tickets" value={openTickets} hint={`${tickets.length} tickets in total`} tone="blue" icon="✉" />
+      <StatCard label="Overdue activities" value={overdueCount} hint={overdueCount ? 'Needs attention' : 'You are on track'} tone="orange" icon="◷" onClick={() => setPage('Activities')} />
+      <StatCard label="Due today" value={dueTodayCount} hint="Activity reminders" tone="blue" icon="!" onClick={() => setPage('Activities')} />
+      <StatCard label="Open tickets" value={openTickets} hint={`${tickets.length} tickets in total`} tone="blue" icon="✉" onClick={() => setPage(role === 'technical_support' ? 'Technical Support Panel' : 'Tickets')} />
       <StatCard label="Average deal size" value={formatAmount(avgDeal)} hint="Across won deals" tone="purple" icon="◆" />
-      <StatCard label="Deals won" value={wonDeals.length} hint={`${formatAmount(sumAmount(wonDeals))} closed`} tone="green" icon="✓" />
+      <StatCard label="Deals won" value={wonDeals.length} hint={`${formatAmount(sumAmount(wonDeals))} closed`} tone="green" icon="✓" onClick={() => setPage('Pipeline')} />
     </div>
     <div className="dashboard-grid">
       <div className="panel chart-panel">
@@ -4736,6 +4886,8 @@ function Dashboard({ revenue, customers, leads = [], deals, activities, tickets,
         onSelectCustomer={onSelectCustomer}
         onEditCustomer={onEditCustomer}
         onDeleteCustomer={onDeleteCustomer}
+        currentUserId={currentUserId}
+        role={role}
       />
     </div>
   </>;
@@ -4801,7 +4953,7 @@ function Activity({ icon, title, text, time }) {
   );
 }
 
-function CustomerTable({ customers, deals = [], formatAmount, onSelectCustomer, onEditCustomer, onDeleteCustomer }) {
+function CustomerTable({ customers, deals = [], formatAmount, onSelectCustomer, onEditCustomer, onDeleteCustomer, currentUserId, role }) {
   const [openMenuId, setOpenMenuId] = useState(null);
 
   useEffect(() => {
@@ -4873,8 +5025,8 @@ function CustomerTable({ customers, deals = [], formatAmount, onSelectCustomer, 
                     {openMenuId === c.id && (
                       <div className="customer-menu" onClick={e => e.stopPropagation()}>
                         <button className="secondary-btn" type="button" onClick={() => { setOpenMenuId(null); onSelectCustomer?.(c); }}>View</button>
-                        <button className="secondary-btn" type="button" onClick={() => { setOpenMenuId(null); onEditCustomer?.(c); }}>Edit</button>
-                        <button className="secondary-btn" type="button" onClick={() => { setOpenMenuId(null); onDeleteCustomer?.(c.id); }}>Delete</button>
+                        {(isCommercialEditor(role) || (role === 'sales' && c.created_by === currentUserId)) && <button className="secondary-btn" type="button" onClick={() => { setOpenMenuId(null); onEditCustomer?.(c); }}>Edit</button>}
+                        {isCommercialDeleter(role) && <button className="secondary-btn" type="button" onClick={() => { setOpenMenuId(null); onDeleteCustomer?.(c.id); }}>Delete</button>}
                       </div>
                     )}
                   </div>
@@ -4888,7 +5040,7 @@ function CustomerTable({ customers, deals = [], formatAmount, onSelectCustomer, 
   );
 }
 
-function Customers({ customers, allCustomers, deals, search, setSearch, statusFilter, setStatusFilter, onAdd, onImport, formatAmount, onSelectCustomer, onEditCustomer, onDeleteCustomer }) {
+function Customers({ customers, allCustomers, deals, search, setSearch, statusFilter, setStatusFilter, onAdd, onImport, formatAmount, onSelectCustomer, onEditCustomer, onDeleteCustomer, currentUserId, role }) {
   const fileRef = useRef(null);
 
   async function handleFile(event) {
@@ -4922,7 +5074,7 @@ function Customers({ customers, allCustomers, deals, search, setSearch, statusFi
 
   return (
     <>
-      <PageHeading eyebrow="RELATIONSHIPS" title="Customers" description="Manage customer contacts, job titles, birthdays and relationships." action="New customer" onAction={onAdd} />
+      <PageHeading eyebrow="RELATIONSHIPS" title="Customers" description="Manage customer contacts, job titles, birthdays and relationships." action={['admin','manager','head_of_sales','sales'].includes(role) ? 'New customer' : undefined} onAction={['admin','manager','head_of_sales','sales'].includes(role) ? onAdd : undefined} />
       <div className="panel">
         <div className="panel-heading">
           <div>
@@ -4965,6 +5117,8 @@ function Customers({ customers, allCustomers, deals, search, setSearch, statusFi
           onSelectCustomer={onSelectCustomer}
           onEditCustomer={onEditCustomer}
           onDeleteCustomer={onDeleteCustomer}
+          currentUserId={currentUserId}
+          role={role}
         />
       </div>
     </>
@@ -5137,7 +5291,7 @@ function CustomerDetail({ currentUserId, customer, deals, activities, tickets, q
     </div>
   );
 }
-function Pipeline({ deals, customers, dealSupport = [], supportEngineers = [], moveDeal, deleteDeal, onEdit, onAdd, formatAmount, currentUserId, ownerProfiles = {}, isAdmin }) {
+function Pipeline({ deals, customers, dealSupport = [], supportEngineers = [], moveDeal, deleteDeal, onEdit, onAdd, formatAmount, currentUserId, ownerProfiles = {}, isAdmin, role, onApprove, onReject }) {
   const [query, setQuery] = useState('');
   const [mineOnly, setMineOnly] = useState(false);
   const [dragOver, setDragOver] = useState(null);
@@ -5153,7 +5307,8 @@ function Pipeline({ deals, customers, dealSupport = [], supportEngineers = [], m
     (!mineOnly || d.created_by === currentUserId) &&
     (!q || `${d.title} ${d.company || ''}`.toLowerCase().includes(q))
   );
-  const canEditDeal = deal => isAdmin || deal.created_by === currentUserId;
+  const canEditDeal = deal => isCommercialEditor(role) || deal.created_by === currentUserId;
+  const canDeleteDeal = deal => isCommercialDeleter(role);
 
   return (
     <>
@@ -5215,10 +5370,10 @@ function Pipeline({ deals, customers, dealSupport = [], supportEngineers = [], m
                     </div>
                     <div className="deal-top">
                       <span className="deal-label">DEAL</span>
-                      {canEdit && (
+                      {(canEdit || canDeleteDeal(deal)) && (
                         <div className="deal-actions">
-                          <button type="button" className="icon-btn" title="Edit deal" onClick={() => onEdit(deal)}><Pencil size={16} /></button>
-                          <button type="button" className="icon-btn" title="Delete deal" onClick={() => deleteDeal(deal.id)}><X size={16} /></button>
+                          {canEdit && <button type="button" className="icon-btn" title="Edit deal" onClick={() => onEdit(deal)}><Pencil size={16} /></button>}
+                          {canDeleteDeal(deal) && <button type="button" className="icon-btn" title="Delete deal" onClick={() => deleteDeal(deal.id)}><X size={16} /></button>}
                         </div>
                       )}
                     </div>
@@ -5230,6 +5385,8 @@ function Pipeline({ deals, customers, dealSupport = [], supportEngineers = [], m
                       </small>
                     )}
                     <strong>{formatAmount(deal.amount)}</strong>
+                    {canApproveForRole(role, deal.amount, deal.approval_status || (approvalRequirement(deal.amount).band === 'SALES' ? 'SALES_PENDING' : 'HOS_PENDING')) && <div className="approval-inline-actions"><button type="button" className="primary-btn" onClick={() => onApprove('deal', deal.id)}>Approve</button><button type="button" className="secondary-btn" onClick={() => { const note = window.prompt('Rejection reason / note:'); if (note) onReject('deal', deal.id, note); }}>Reject</button></div>}
+                    {deal.approval_status === 'REJECTED' && (canEdit || isCommercialEditor(role)) && <div className="approval-rejection-note"><strong>Rejected:</strong> {deal.rejection_note || 'No note provided.'}</div>}
                     {dealSupport.filter(row => row.deal_id === deal.id && row.support_engineers?.status === 'Active').length > 0 && (
                       <div className="deal-customer" style={{ marginTop: 8 }}>
                         <strong style={{ display: 'block', marginBottom: 4 }}>Technical Support</strong>
@@ -5320,7 +5477,7 @@ function ActivityDetail({ activity, customer, ownerProfiles = {}, currentUserEma
   );
 }
 
-function Tickets({ tickets, error, onAdd, onStatusChange, onDelete, onEdit, onView, currentUserId, isAdmin, canManage, staffName, staffOptions, onAssign }) {
+function Tickets({ tickets, error, onAdd, onStatusChange, onDelete, onEdit, onView, currentUserId, isAdmin, canManage, canCreate = true, role, staffName, staffOptions, onAssign }) {
   const [query, setQuery] = useState('');
   const [status, setStatus] = useState('All');
   const [priority, setPriority] = useState('All');
@@ -6290,7 +6447,7 @@ function CalendarPage({ events = [], customers = [], onAdd, onUpdate, onDelete, 
   </>;
 }
 
-function Quotes({ quotes = [], products = [], quoteItems = [], onLoadQuoteItems, onAdd, onUpdate, onDelete, formatAmount, currentUserId, isAdmin }) {
+function Quotes({ quotes = [], products = [], quoteItems = [], onLoadQuoteItems, onAdd, onUpdate, onDelete, formatAmount, currentUserId, isAdmin, role, onApprove, onReject }) {
   const [show, setShow] = useState(false);
   const [editing, setEditing] = useState(null);
   const [saving, setSaving] = useState(false);
@@ -6313,7 +6470,8 @@ function Quotes({ quotes = [], products = [], quoteItems = [], onLoadQuoteItems,
     payment_terms: '',
     delivery_terms: '',
     notes: '',
-    terms: ''
+    terms: '',
+    resubmission_note: ''
   };
 
   const emptyItem = () => ({
@@ -6415,6 +6573,7 @@ function Quotes({ quotes = [], products = [], quoteItems = [], onLoadQuoteItems,
     if (!form.customer_name.trim() && !form.company.trim()) return setError('Enter a customer name or company.');
     if (form.email.trim() && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(form.email.trim())) return setError('Enter a valid customer email address.');
     if (!validItems.length) return setError('Add at least one product or solution to the quote.');
+    if (form.status === 'Accepted' && editing?.approval_status !== 'APPROVED') return setError('A quote must be approved before it can be marked Accepted.');
     if (validItems.some(item => moneyNumber(item.quantity) <= 0)) return setError('Each line item must have a quantity greater than 0.');
 
     const payload = {
@@ -6435,7 +6594,9 @@ function Quotes({ quotes = [], products = [], quoteItems = [], onLoadQuoteItems,
       payment_terms: form.payment_terms.trim() || null,
       delivery_terms: form.delivery_terms.trim() || null,
       notes: form.notes.trim() || null,
-      terms: form.terms.trim() || null
+      terms: form.terms.trim() || null,
+      resubmission_note: form.resubmission_note?.trim() || null,
+      ...(editing && editing.approval_status === 'REJECTED' ? { approval_status: approvalRequirement(total).band === 'SALES' ? 'SALES_PENDING' : 'HOS_PENDING', approval_stage: approvalRequirement(total).band === 'HOS_MD' ? 'HOS' : approvalRequirement(total).band } : {})
     };
 
     const itemPayload = validItems.map(item => ({
@@ -6494,7 +6655,11 @@ function Quotes({ quotes = [], products = [], quoteItems = [], onLoadQuoteItems,
                 <td>{q.status}</td>
                 <td>{q.valid_until ? formatDate(q.valid_until) : '—'}</td>
                 <td>{q.created_at ? formatDate(q.created_at) : '—'}</td>
-                <td>{(isAdmin || q.created_by === currentUserId) && <div className="toolbar-actions"><button className="secondary-btn" onClick={() => openEdit(q)}>Edit</button><button type="button" className="icon-btn" title="Delete quote" onClick={async () => { if (!window.confirm('Delete this quote?')) return; try { await onDelete(q.id); } catch (err) { alert(err.message || 'Unable to delete quote.'); } }}><X size={16} /></button></div>}</td>
+                <td><div className="toolbar-actions">
+                  {(isCommercialEditor(role) || q.created_by === currentUserId) && <button className="secondary-btn" onClick={() => openEdit(q)}>Edit</button>}
+                  {isCommercialDeleter(role) && <button type="button" className="icon-btn" title="Delete quote" onClick={async () => { if (!window.confirm('Delete this quote?')) return; try { await onDelete(q.id); } catch (err) { alert(err.message || 'Unable to delete quote.'); } }}><X size={16} /></button>}
+                  {canApproveForRole(role, q.total, q.approval_status || (approvalRequirement(q.total).band === 'SALES' ? 'SALES_PENDING' : 'HOS_PENDING')) && <><button type="button" className="primary-btn approval-btn" onClick={async () => { try { await onApprove('quote', q.id); } catch (err) { alert(err.message); } }}>Approve</button><button type="button" className="secondary-btn approval-btn" onClick={async () => { const note = window.prompt('Rejection reason / note:'); if (note) try { await onReject('quote', q.id, note); } catch (err) { alert(err.message); } }}>Reject</button></>}
+                </div></td>
               </tr>
             ))}
           </tbody>
@@ -6520,6 +6685,7 @@ function Quotes({ quotes = [], products = [], quoteItems = [], onLoadQuoteItems,
           <label>Quote date<input type="date" required value={form.quote_date || ''} onChange={e => setForm({ ...form, quote_date: e.target.value })} /></label>
           <label>Valid until<input type="date" value={form.valid_until || ''} onChange={e => setForm({ ...form, valid_until: e.target.value })} /></label>
           <label>Status<select value={form.status} onChange={e => setForm({ ...form, status: e.target.value })}>{['Draft', 'Sent', 'Accepted', 'Rejected', 'Expired'].map(x => <option key={x}>{x}</option>)}</select></label>
+          {editing?.approval_status === 'REJECTED' && <label className="full-width-form-field">Resubmission note<textarea rows="3" required placeholder="Explain what changed before resubmitting..." value={form.resubmission_note || ''} onChange={e => setForm({ ...form, resubmission_note: e.target.value })} /></label>}
           <label>Customer name<input placeholder="Contact / customer name" value={form.customer_name} onChange={e => setForm({ ...form, customer_name: e.target.value })} /></label>
           <label>Company<input placeholder="Company name" value={form.company} onChange={e => setForm({ ...form, company: e.target.value })} /></label>
           <label>Email<input type="email" placeholder="customer@company.com" value={form.email} onChange={e => setForm({ ...form, email: e.target.value })} /></label>
@@ -6616,7 +6782,7 @@ function Quotes({ quotes = [], products = [], quoteItems = [], onLoadQuoteItems,
     </div>}
   </>;
 }
-function Invoices({ invoices, payments, customers, products, onAdd, onUpdate, onAddPayment, formatAmount, currentUserId, isAdmin }) {
+function Invoices({ invoices, payments, customers, products, onAdd, onUpdate, onDelete, onAddPayment, formatAmount, currentUserId, isAdmin, role, onApprove, onReject }) {
   const [show, setShow] = useState(false);
   const [pay, setPay] = useState(null);
   const [preview, setPreview] = useState(null);
@@ -6632,7 +6798,8 @@ function Invoices({ invoices, payments, customers, products, onAdd, onUpdate, on
     due_date: '',
     payment_terms: 'Due on receipt',
     status: 'Draft',
-    notes: ''
+    notes: '',
+    resubmission_note: ''
   };
   const [form, setForm] = useState(blank);
 
@@ -6700,6 +6867,7 @@ function Invoices({ invoices, payments, customers, products, onAdd, onUpdate, on
   const save = async e => {
     e.preventDefault();
     try {
+      if (['Paid','Partially Paid'].includes(form.status) && form.approval_status !== 'APPROVED' && !form.id) { throw new Error('An invoice must be approved before payment can be recorded.'); }
       const payload = {
         invoice_number: form.invoice_number,
         title: form.title,
@@ -6713,7 +6881,8 @@ function Invoices({ invoices, payments, customers, products, onAdd, onUpdate, on
         status: form.status,
         notes: form.notes || ''
       };
-      await onAdd(payload);
+      if (form.id) await onUpdate(form.id, { ...payload, approval_status: form.approval_status === 'REJECTED' ? (approvalRequirement(payload.amount).band === 'SALES' ? 'SALES_PENDING' : 'HOS_PENDING') : form.approval_status, approval_stage: form.approval_status === 'REJECTED' ? (approvalRequirement(payload.amount).band === 'HOS_MD' ? 'HOS' : approvalRequirement(payload.amount).band) : form.approval_stage, resubmission_note: form.resubmission_note?.trim() || null });
+      else await onAdd(payload);
       setShow(false);
     } catch (err) {
       alert(err.message);
@@ -6766,15 +6935,15 @@ function Invoices({ invoices, payments, customers, products, onAdd, onUpdate, on
                 <td>{formatAmount(i.amount)}</td>
                 <td>{i.status}</td>
                 <td>{i.due_date ? formatDate(i.due_date) : '—'}</td>
-                <td>
-                  <div className="toolbar-actions">
-                    <button type="button" className="secondary-btn" onClick={() => setPreview(i)}>
-                      <FileText size={15} /> View
-                    </button>
-                    {(isAdmin || i.created_by === currentUserId) && <button className="secondary-btn" onClick={() => onUpdate(i.id, { status: i.status === 'Paid' ? 'Sent' : 'Paid' })}>{i.status === 'Paid' ? 'Reopen' : 'Mark paid'}</button>}
-                    {i.status !== 'Paid' && <button className="secondary-btn" onClick={() => setPay({ invoice_id: i.id, amount: i.amount, paid_at: new Date().toISOString().slice(0, 16), payment_method: 'Bank transfer' })}>Record payment</button>}
-                  </div>
-                </td>
+                <td><div className="toolbar-actions">
+                    <button type="button" className="secondary-btn" onClick={() => setPreview(i)}><FileText size={15} /> View</button>
+                    {(isCommercialEditor(role) || i.created_by === currentUserId) && <button className="secondary-btn" onClick={() => { setForm({ ...blank, ...i, resubmission_note: '' }); setShow(true); }}>Edit</button>}
+                    {i.status === 'Draft' && <button type="button" className="secondary-btn" onClick={async () => { try { await onUpdate(i.id, { status: 'Sent' }); } catch (err) { alert(err.message); } }}>Send</button>}
+                    {canApproveForRole(role, i.amount, i.approval_status || (approvalRequirement(i.amount).band === 'SALES' ? 'SALES_PENDING' : 'HOS_PENDING')) && <><button type="button" className="primary-btn approval-btn" onClick={async () => { try { await onApprove('invoice', i.id); } catch (err) { alert(err.message); } }}>Approve</button><button type="button" className="secondary-btn approval-btn" onClick={async () => { const note = window.prompt('Rejection reason / note:'); if (note) try { await onReject('invoice', i.id, note); } catch (err) { alert(err.message); } }}>Reject</button></>}
+                    {isCommercialDeleter(role) && <button type="button" className="icon-btn" title="Delete invoice" onClick={async () => { if (!window.confirm('Delete this invoice?')) return; try { await onDelete(i.id); } catch (err) { alert(err.message); } }}><X size={16} /></button>}
+                    {i.status !== 'Paid' && i.approval_status === 'APPROVED' && <button className="secondary-btn" onClick={() => setPay({ invoice_id: i.id, amount: i.amount, paid_at: new Date().toISOString().slice(0, 16), payment_method: 'Bank transfer' })}>Record payment</button>}
+                    {(isCommercialEditor(role) || i.created_by === currentUserId) && i.status !== 'Paid' && i.approval_status === 'APPROVED' && <button className="secondary-btn" onClick={() => onUpdate(i.id, { status: i.status === 'Paid' ? 'Sent' : 'Paid' })}>Mark paid</button>}
+                  </div></td>
               </tr>
             ))}
           </tbody>
@@ -6786,7 +6955,7 @@ function Invoices({ invoices, payments, customers, products, onAdd, onUpdate, on
       <form className="modal invoice-form-modal" onSubmit={save} onClick={e => e.stopPropagation()}>
         <div className="modal-heading">
           <div>
-            <h2>New invoice</h2>
+            <h2>{form.id ? 'Edit invoice' : 'New invoice'}</h2>
             <span className="invoice-form-subtitle">Create a simple professional invoice for your customer.</span>
           </div>
           <button type="button" className="icon-btn" onClick={() => setShow(false)}><X size={18} /></button>
@@ -7947,42 +8116,511 @@ function Chat() {
     </div>
   );
 }
+function MDPanel({ deals = [], quotes = [], invoices = [], customers = [], formatAmount, onApprove, onReject }) {
+  const approvals = [...deals.map(x=>({...x,_type:'deal'})), ...quotes.map(x=>({...x,_type:'quote'})), ...invoices.map(x=>({...x,_type:'invoice'}))].filter(item => item.approval_status === 'MD_PENDING');
+  const pending = [...deals, ...quotes, ...invoices].filter(item => ['SALES_PENDING','HOS_PENDING','MD_PENDING'].includes(item.approval_status)).length;
+  return <><PageHeading eyebrow="EXECUTIVE" title="MD Panel" description="Executive overview and final approval queue." /><div className="stats-grid"><StatCard label="Customers" value={customers.length} hint="Active customer records" tone="blue" icon="C" onClick={() => document.getElementById('md-customers')?.scrollIntoView({ behavior: 'smooth' })} /><StatCard label="Won revenue" value={formatAmount(deals.filter(d => d.stage === 'Won').reduce((s,d)=>s+Number(d.amount||0),0))} hint="Pipeline revenue" tone="green" icon="$" onClick={() => document.getElementById('md-revenue')?.scrollIntoView({ behavior: 'smooth' })} /><StatCard label="Pending approvals" value={pending} hint="Commercial approval queue" tone="orange" icon="!" onClick={() => document.getElementById('md-approval-queue')?.scrollIntoView({ behavior: 'smooth' })} /><StatCard label="Open invoices" value={invoices.filter(i => !['Paid','Cancelled'].includes(i.status)).length} hint="Outstanding billing" tone="purple" icon="I" onClick={() => setPage?.('Invoices')} /></div><div className="panel" id="md-revenue"><div className="panel-heading"><div><h3>MD executive revenue</h3><p>Company-wide revenue visibility.</p></div></div><div className="panel-subsection" id="md-customers"><p>Customers: <strong>{customers.length}</strong> · Won revenue: <strong>{formatAmount(deals.filter(d => d.stage === 'Won').reduce((s,d)=>s+Number(d.amount||0),0))}</strong> · Open invoices: <strong>{invoices.filter(i => !['Paid','Cancelled'].includes(i.status)).length}</strong></p></div></div><div className="panel" id="md-approval-queue"><div className="panel-heading"><div><h3>MD final approval queue</h3><p>Only $50,000+ records reach this queue after HOS approval.</p></div></div><div className="table-wrap"><table><thead><tr><th>Type</th><th>Record</th><th>Amount</th><th>Action</th></tr></thead><tbody>{approvals.length===0?<tr><td colSpan="4">No MD approvals pending.</td></tr>:approvals.map(item=><tr key={`${item._type}-${item.id}`}><td>{item._type}</td><td>{item.title||item.quote_number||item.invoice_number||'Record'}</td><td>{formatAmount(item.total??item.amount)}</td><td><div className="toolbar-actions"><button className="primary-btn" onClick={async()=>{try{await onApprove(item._type,item.id)}catch(e){alert(e.message)}}}>Approve</button><button className="secondary-btn" onClick={async()=>{const note=window.prompt('Rejection reason / note:');if(note)try{await onReject(item._type,item.id,note)}catch(e){alert(e.message)}}}>Reject</button></div></td></tr>)}</tbody></table></div></div></>;
+}
+
+function HOSPanel({ deals = [], quotes = [], invoices = [], tickets = [], formatAmount, onApprove, onReject, role, setPage }) {
+  const [revenueTarget, setRevenueTarget] = useState(() => {
+    try { return Number(localStorage.getItem('storhet_revenue_target') || 0); } catch { return 0; }
+  });
+  const approvals = [...deals.map(x=>({...x,_type:'deal'})), ...quotes.map(x=>({...x,_type:'quote'})), ...invoices.map(x=>({...x,_type:'invoice'}))].filter(item => ['HOS_PENDING'].includes(item.approval_status) || (!item.approval_status && Number(item.total ?? item.amount ?? 0) >= 20000));
+  const openDeals = deals.filter(d => !['Won','Lost'].includes(d.stage));
+  const achievedRevenue = deals.filter(d => d.stage === 'Won').reduce((sum, d) => sum + Number(d.amount || 0), 0);
+  const remainingRevenue = Math.max(Number(revenueTarget || 0) - achievedRevenue, 0);
+  const openTicketCount = tickets.filter(t=>!['Resolved','Closed'].includes(t.status)).length;
+  const saveRevenueTarget = value => {
+    const numeric = Math.max(0, Number(value) || 0);
+    setRevenueTarget(numeric);
+    try { localStorage.setItem('storhet_revenue_target', String(numeric)); } catch {}
+  };
+  return <>
+    <PageHeading eyebrow="SALES LEADERSHIP" title="HOS Panel" description="Manage the sales team, revenue performance and commercial approvals." />
+    <div className="stats-grid">
+      <StatCard label="Revenue to be achieved" value={formatAmount(revenueTarget)} hint="Team revenue target" tone="purple" icon="◎" onClick={() => document.getElementById('hos-revenue-analysis')?.scrollIntoView({ behavior: 'smooth', block: 'start' })} />
+      <StatCard label="Revenue actually achieved" value={formatAmount(achievedRevenue)} hint="Won deals" tone="green" icon="✓" onClick={() => setPage?.('Pipeline')} />
+      <StatCard label="Revenue remaining" value={formatAmount(remainingRevenue)} hint="Target less achieved" tone="orange" icon="↗" onClick={() => setPage?.('Pipeline')} />
+      <StatCard label="Pending approvals" value={approvals.length} hint="HOS approval queue" tone="orange" icon="!" onClick={() => document.getElementById('hos-approval-queue')?.scrollIntoView({ behavior: 'smooth', block: 'start' })} />
+      <StatCard label="Open deals" value={openDeals.length} hint="Across Sales Reps" tone="blue" icon="D" onClick={() => setPage?.('Pipeline')} />
+      <StatCard label="Open tickets" value={openTicketCount} hint="Support work" tone="green" icon="T" onClick={() => setPage?.('Tickets')} />
+    </div>
+    <div className="panel revenue-analysis-panel" id="hos-revenue-analysis">
+      <div className="panel-heading"><div><h3>Revenue &amp; Performance</h3><p>HOS owns Sales Rep revenue performance and target tracking.</p></div></div>
+      <div className="revenue-target-row">
+        <div><label htmlFor="hos-revenue-target">Revenue target</label><small>Set the team's target for the current tracking period.</small></div>
+        <div className="revenue-target-input"><span>$</span><input id="hos-revenue-target" type="number" min="0" step="1000" value={revenueTarget || ''} placeholder="0" onChange={e => saveRevenueTarget(e.target.value)} /></div>
+      </div>
+      <div className="revenue-performance-grid">
+        <div className="revenue-performance-card"><span>To be achieved</span><strong>{formatAmount(revenueTarget)}</strong></div>
+        <div className="revenue-performance-card"><span>Actually achieved</span><strong>{formatAmount(achievedRevenue)}</strong></div>
+        <div className="revenue-performance-card"><span>Remaining</span><strong>{formatAmount(remainingRevenue)}</strong></div>
+      </div>
+      <div className="panel-subsection">
+        <div className="panel-heading"><div><h3>Sales team performance</h3><p>Click a rep's row to inspect their deals.</p></div><button className="text-btn" onClick={() => setPage?.('Pipeline')}>View Sales Performance</button></div>
+        <div className="table-wrap"><table><thead><tr><th>Sales Rep</th><th>Won Revenue</th><th>Open Deals</th><th>Won Deals</th></tr></thead><tbody>
+          {(() => {
+            const ownerIds = [...new Set(deals.map(d => d.owner_id || d.assigned_to).filter(Boolean))];
+            if (!ownerIds.length) return <tr><td colSpan="4">No assigned Sales Rep performance data yet.</td></tr>;
+            return ownerIds.map(id => { const repDeals = deals.filter(d => (d.owner_id || d.assigned_to) === id); const won = repDeals.filter(d => d.stage === 'Won'); return <tr key={id} className="table-row-clickable" onClick={() => setPage?.('Pipeline')}><td>{id}</td><td>{formatAmount(won.reduce((sum,d)=>sum+Number(d.amount||0),0))}</td><td>{repDeals.filter(d=>!['Won','Lost'].includes(d.stage)).length}</td><td>{won.length}</td></tr>; });
+          })()}
+        </tbody></table></div>
+      </div>
+    </div>
+    <div className="panel" id="hos-approval-queue"><div className="panel-heading"><div><h3>Approval queue</h3><p>HOS can approve or reject; ownership stays with the Sales Rep.</p></div></div><div className="table-wrap"><table><thead><tr><th>Type</th><th>Record</th><th>Amount</th><th>Status</th><th>Action</th></tr></thead><tbody>{approvals.length===0?<tr><td colSpan="5">No HOS approvals pending.</td></tr>:approvals.map(item=><tr key={`${item._type}-${item.id}`}><td>{item._type}</td><td>{item.title||item.quote_number||item.invoice_number||'Record'}</td><td>{formatAmount(item.total??item.amount)}</td><td>{item.approval_status||'Pending'}</td><td><div className="toolbar-actions"><button className="primary-btn" onClick={async()=>{try{await onApprove(item._type,item.id)}catch(e){alert(e.message)}}}>Approve</button><button className="secondary-btn" onClick={async()=>{const note=window.prompt('Rejection reason / note:');if(note)try{await onReject(item._type,item.id,note)}catch(e){alert(e.message)}}}>Reject</button></div></td></tr>)}</tbody></table></div></div>
+  </>;
+}
+
+function HRPanel({ deals = [], quotes = [], invoices = [], tickets = [], customers = [], formatAmount }) {
+  const pending = [...deals,...quotes,...invoices].filter(x=>['SALES_PENDING','HOS_PENDING','MD_PENDING'].includes(x.approval_status)).length;
+  const openTickets = tickets.filter(t=>!['Resolved','Closed'].includes(t.status)).length;
+  return <><PageHeading eyebrow="PEOPLE & SUPERVISION" title="HR Panel" description="Supervise pending work across all departments." /><div className="stats-grid"><StatCard label="Pending work" value={pending} hint="Commercial approvals" tone="orange" icon="!" onClick={() => document.getElementById('hr-supervision')?.scrollIntoView({ behavior: 'smooth' })} /><StatCard label="Open support" value={openTickets} hint="Support tickets" tone="blue" icon="T" onClick={() => document.getElementById('hr-supervision')?.scrollIntoView({ behavior: 'smooth' })} /><StatCard label="Customers" value={customers.length} hint="CRM relationships" tone="green" icon="C" /><StatCard label="Invoice value" value={formatAmount(invoices.reduce((s,i)=>s+Number(i.amount||0),0))} hint="Supervision view" tone="purple" icon="$" /></div><div className="panel role-panel-summary" id="hr-supervision"><h3>Supervision only</h3><p>HR can monitor pending work across departments but does not edit, delete or approve commercial records.</p></div></>;
+}
+
+function TechnicalSupportPanel({ tickets = [], customers = [], formatAmount, currentUserId, ticketError, onAddTicket, onStatusChange, onDeleteTicket, onEditTicket, onViewTicket, isAdmin, role, canManage, staffName, staffOptions, onAssign, setPage }) {
+  const open = tickets.filter(t=>!['Resolved','Closed'].includes(t.status));
+  const assigned = tickets.filter(t=>t.assigned_to === currentUserId && !['Resolved','Closed'].includes(t.status));
+  const solved = tickets.filter(t=>['Resolved','Closed'].includes(t.status));
+  return <>
+    <PageHeading eyebrow="TECHNICAL SUPPORT" title="Technical Support Panel" description="Support workload, assigned tickets and customer commercial context." />
+    <div className="stats-grid">
+      <StatCard label="Open tickets" value={open.length} hint="All open support work" tone="orange" icon="!" onClick={() => document.getElementById('technical-support-tickets')?.scrollIntoView({ behavior: 'smooth', block: 'start' })} />
+      <StatCard label="Assigned tickets" value={assigned.length} hint="Assigned to you" tone="blue" icon="A" onClick={() => document.getElementById('technical-support-tickets')?.scrollIntoView({ behavior: 'smooth', block: 'start' })} />
+      <StatCard label="Solved tickets" value={solved.length} hint="Resolved or closed" tone="green" icon="✓" onClick={() => document.getElementById('technical-support-tickets')?.scrollIntoView({ behavior: 'smooth', block: 'start' })} />
+      <StatCard label="Customers" value={customers.length} hint="Commercial context available" tone="purple" icon="C" onClick={() => setPage?.('Customers')} />
+    </div>
+    <div className="panel role-panel-summary"><h3>Customer context</h3><p>Technical Support can view customer commercial information and prices when supporting a customer.</p></div>
+    <div className="panel technical-ticket-panel" id="technical-support-tickets">
+      <div className="panel-heading"><div><h3>Support Tickets</h3><p>Ticket management lives here for Technical Support, so it is not duplicated in the main navigation.</p></div></div>
+      <Tickets tickets={tickets} error={ticketError} onAdd={onAddTicket} onStatusChange={onStatusChange} onDelete={onDeleteTicket} onEdit={onEditTicket} onView={onViewTicket} currentUserId={currentUserId} isAdmin={isAdmin} role={role} canCreate={false} canManage={canManage} staffName={staffName} staffOptions={staffOptions} onAssign={onAssign} />
+    </div>
+  </>;
+}
+
 function UserManagement({
   users = [], loading = false, error = '', onRefresh, onUpdateUser, currentUserId,
   pendingPortalAccounts = [], portalRequestsLoading = false, portalRequestsError = '', portalRequestsNotice = '',
   onRefreshPortalRequests, onReviewPortalRequest, portalRequestActionId
 }) {
-  return (
-    <>
-      <PageHeading eyebrow="ADMIN" title="User Management" description="Manage internal users and customer portal access separately." />
+  const [draggedUserId, setDraggedUserId] = useState(null);
+  const [dropTargetRole, setDropTargetRole] = useState(null);
+  const [search, setSearch] = useState('');
+  const [view, setView] = useState('chart');
+  const [pageByRole, setPageByRole] = useState({ hr: 1, head_of_sales: 1, technical_support: 1, sales: 1 });
+  const [selectedHeadId, setSelectedHeadId] = useState('');
 
-      <div className="panel user-management-panel">
-        <div className="panel-header">
-          <div><h3>Authorized Users</h3><p>Manage internal CRM users and their permissions.</p></div>
-          <button type="button" className="secondary-btn" onClick={onRefresh} disabled={loading}>{loading ? 'Refreshing...' : 'Refresh'}</button>
+  const PAGE_SIZE = 8;
+
+  const ROLE_META = {
+    manager: { label: 'MD', short: 'MD', tone: 'md', parentRole: null, color: 'green' },
+    admin: { label: 'Admin', short: 'Admin', tone: 'admin', parentRole: null, color: 'blue' },
+    hr: { label: 'HR', short: 'HR', tone: 'hr', parentRole: 'manager', color: 'yellow' },
+    head_of_sales: { label: 'Head of Sales', short: 'Sales', tone: 'sales', parentRole: 'manager', color: 'green' },
+    technical_support: { label: 'Technical Support', short: 'Technical', tone: 'technical', parentRole: 'manager', color: 'purple' },
+    sales: { label: 'Sales Rep', short: 'Sales Reps', tone: 'sales', parentRole: 'head_of_sales', color: 'green' }
+  };
+
+  const usersById = useMemo(() => new Map(users.map(user => [user.id, user])), [users]);
+  const mdUsers = useMemo(() => users.filter(user => user.role === 'manager'), [users]);
+  const headOfSalesUsers = useMemo(() => users.filter(user => user.role === 'head_of_sales'), [users]);
+
+  const getDisplayName = user => {
+    if (!user) return 'Unknown user';
+    const local = String(user.email || '').split('@')[0].replace(/[._-]+/g, ' ').trim();
+    return local ? local.replace(/\b\w/g, char => char.toUpperCase()) : 'Unknown user';
+  };
+
+  const getInitials = user => getDisplayName(user).split(/\s+/).filter(Boolean).slice(0, 2).map(part => part[0]).join('').toUpperCase() || '?';
+
+  const getParentId = user => {
+    if (user?.parent_id && usersById.has(user.parent_id) && user.parent_id !== user.id) {
+      const parent = usersById.get(user.parent_id);
+      if (ROLE_META[user.role]?.parentRole === parent?.role) return user.parent_id;
+    }
+    if (user?.role === 'sales') return headOfSalesUsers[0]?.id || null;
+    if (ROLE_META[user?.role]?.parentRole === 'manager') return mdUsers[0]?.id || null;
+    return null;
+  };
+
+  const roleUsers = role => users.filter(user => {
+    if (user.role !== role) return false;
+    const query = search.trim().toLowerCase();
+    if (!query) return true;
+    return `${getDisplayName(user)} ${user.email}`.toLowerCase().includes(query);
+  });
+
+  const pageUsers = role => {
+    const items = roleUsers(role);
+    const page = pageByRole[role] || 1;
+    const totalPages = Math.max(1, Math.ceil(items.length / PAGE_SIZE));
+    const safePage = Math.min(page, totalPages);
+    return {
+      items: items.slice((safePage - 1) * PAGE_SIZE, safePage * PAGE_SIZE),
+      page: safePage,
+      totalPages,
+      total: items.length
+    };
+  };
+
+  const teamRoles = ['hr', 'head_of_sales', 'technical_support'];
+  const adminPage = pageUsers('admin');
+  const salesPage = pageUsers('sales');
+
+  useEffect(() => {
+    setPageByRole(previous => ({ ...previous, hr: 1, head_of_sales: 1, technical_support: 1, sales: 1 }));
+  }, [search]);
+
+  useEffect(() => {
+    if (!selectedHeadId && headOfSalesUsers[0]) setSelectedHeadId(headOfSalesUsers[0].id);
+    if (selectedHeadId && !headOfSalesUsers.some(user => user.id === selectedHeadId)) {
+      setSelectedHeadId(headOfSalesUsers[0]?.id || '');
+    }
+  }, [headOfSalesUsers, selectedHeadId]);
+
+  const setPage = (role, nextPage) => {
+    setPageByRole(previous => ({ ...previous, [role]: Math.max(1, nextPage) }));
+  };
+
+  const handleDragStart = (event, user) => {
+    if (user.user_id === currentUserId) return;
+    setDraggedUserId(user.id);
+    event.dataTransfer.effectAllowed = 'move';
+    event.dataTransfer.setData('text/plain', user.id);
+  };
+
+  const handleDragEnd = () => {
+    setDraggedUserId(null);
+    setDropTargetRole(null);
+  };
+
+  const canMoveToRole = (user, role) => {
+    if (!user || !ROLE_META[role] || user.user_id === currentUserId) return false;
+    if (user.role === role) return true;
+    return role !== 'manager';
+  };
+
+  const handleDrop = async (event, role) => {
+    event.preventDefault();
+    const sourceId = event.dataTransfer.getData('text/plain') || draggedUserId;
+    const source = usersById.get(sourceId);
+    setDropTargetRole(null);
+
+    if (!source || !canMoveToRole(source, role)) return;
+
+    let parent_id = null;
+    if (role === 'sales') parent_id = selectedHeadId || headOfSalesUsers[0]?.id || null;
+    if (ROLE_META[role]?.parentRole === 'manager') parent_id = mdUsers[0]?.id || null;
+    if (role === 'admin') parent_id = null;
+
+    const updates = {
+      role,
+      parent_id
+    };
+
+    const saved = await onUpdateUser(source.id, updates);
+    if (saved) setDraggedUserId(null);
+  };
+
+  const updateRole = async (user, role) => {
+    if (user.user_id === currentUserId || !ROLE_META[role]) return;
+    let parent_id = null;
+    if (role === 'sales') parent_id = selectedHeadId || headOfSalesUsers[0]?.id || null;
+    if (ROLE_META[role]?.parentRole === 'manager') parent_id = mdUsers[0]?.id || null;
+    if (role === 'admin') parent_id = null;
+    await onUpdateUser(user.id, { role, parent_id });
+  };
+
+  const renderUserRow = (user, compact = false) => {
+    const meta = ROLE_META[user.role] || { label: roleLabel(user.role), tone: 'other' };
+    const isCurrentUser = user.user_id === currentUserId;
+    const isDragging = draggedUserId === user.id;
+
+    return (
+      <div
+        key={user.id}
+        className={`org-team-user ${isDragging ? 'is-dragging' : ''}`}
+        draggable={!isCurrentUser}
+        onDragStart={event => handleDragStart(event, user)}
+        onDragEnd={handleDragEnd}
+      >
+        <div className={`org-user-avatar tone-${meta.tone}`}>{getInitials(user)}</div>
+        <div className="org-team-user-main">
+          <strong>{getDisplayName(user)}</strong>
+          <span>{user.email}</span>
         </div>
-        {error && <div className="error-message">{error}</div>}
-        {loading ? <p>Loading users...</p> : users.length === 0 ? <p>No authorized users found.</p> : (
-          <div className="table-wrapper"><table className="data-table">
-            <thead><tr><th>Email</th><th>Role</th><th>Status</th><th>Created</th><th>Actions</th></tr></thead>
-            <tbody>{users.map((user) => {
-              const isCurrentUser = user.user_id === currentUserId;
-              return <tr key={user.id}>
-                <td>{user.email}</td>
-                <td><select value={user.role} disabled={isCurrentUser} onChange={(event) => onUpdateUser(user.id, { role: event.target.value })}>
-                  {!ROLE_OPTIONS.some(option => option.value === user.role) && <option value={user.role}>{roleLabel(user.role)} (legacy – reassign)</option>}
-                  {ROLE_OPTIONS.map(option => <option key={option.value} value={option.value}>{option.label}</option>)}
-                </select></td>
-                <td><select value={user.status} disabled={isCurrentUser} onChange={(event) => onUpdateUser(user.id, { status: event.target.value })}>
-                  <option value="pending">Pending</option><option value="active">Active</option><option value="inactive">Inactive</option>
-                </select></td>
-                <td>{user.created_at ? new Date(user.created_at).toLocaleDateString() : '—'}</td>
-                <td>{user.status === 'pending' ? <button type="button" className="primary-btn" onClick={() => onUpdateUser(user.id, { status: 'active' })}>Approve</button> : <span className="user-management-edit-label">{isCurrentUser ? 'Current account' : 'Editable'}</span>}</td>
-              </tr>;
-            })}</tbody>
-          </table></div>
+        <span className={`org-status-dot ${user.status || 'inactive'}`} title={user.status || 'inactive'} />
+        {!compact && (
+          <select
+            value={user.role}
+            disabled={isCurrentUser}
+            onChange={event => updateRole(user, event.target.value)}
+            aria-label={`Role for ${getDisplayName(user)}`}
+          >
+            {ROLE_OPTIONS.map(option => (
+              <option key={option.value} value={option.value}>{option.label}</option>
+            ))}
+          </select>
+        )}
+        <GripVertical className="org-user-drag-handle" size={16} />
+      </div>
+    );
+  };
+
+  const renderTeamCard = role => {
+    const meta = ROLE_META[role];
+    const data = pageUsers(role);
+    const isDropTarget = dropTargetRole === role;
+
+    return (
+      <div
+        className={`org-team-card tone-${meta.tone} ${isDropTarget ? 'is-drop-target' : ''}`}
+        onDragOver={event => {
+          const source = usersById.get(draggedUserId);
+          if (!source || !canMoveToRole(source, role)) return;
+          event.preventDefault();
+          event.dataTransfer.dropEffect = 'move';
+          setDropTargetRole(role);
+        }}
+        onDragLeave={() => setDropTargetRole(previous => previous === role ? null : previous)}
+        onDrop={event => handleDrop(event, role)}
+      >
+        <div className="org-team-card-head">
+          <div className={`org-team-icon tone-${meta.tone}`}>{meta.short.slice(0, 2).toUpperCase()}</div>
+          <div className="org-team-title">
+            <div>
+              <strong>{meta.label}</strong>
+              <span>{users.filter(user => user.role === role).length} {role === 'sales' ? 'sales reps' : 'members'}</span>
+            </div>
+            <button type="button" className="org-team-more" title="Team options"><MoreHorizontal size={17} /></button>
+          </div>
+        </div>
+
+        {role === 'head_of_sales' && headOfSalesUsers.length > 1 && (
+          <label className="org-manager-select">
+            Sales reports to
+            <select value={selectedHeadId} onChange={event => setSelectedHeadId(event.target.value)}>
+              {headOfSalesUsers.map(head => <option key={head.id} value={head.id}>{getDisplayName(head)}</option>)}
+            </select>
+          </label>
+        )}
+
+        <div className="org-team-user-list">
+          {data.items.length === 0 ? (
+            <div className="org-team-empty">{search ? 'No matching users.' : `No ${meta.label.toLowerCase()} users yet.`}</div>
+          ) : data.items.map(user => renderUserRow(user))}
+        </div>
+
+        {data.totalPages > 1 && (
+          <div className="org-team-pagination">
+            <button type="button" className="icon-btn" disabled={data.page <= 1} onClick={() => setPage(role, data.page - 1)} aria-label="Previous page">‹</button>
+            <span>{data.page} / {data.totalPages}</span>
+            <button type="button" className="icon-btn" disabled={data.page >= data.totalPages} onClick={() => setPage(role, data.page + 1)} aria-label="Next page">›</button>
+          </div>
         )}
       </div>
+    );
+  };
+
+  const md = mdUsers[0] || null;
+
+  return (
+    <>
+      <PageHeading
+        eyebrow="ADMIN"
+        title="User Management"
+        description="Manage your organization, teams and reporting structure."
+      />
+
+      <div className="user-management-toolbar">
+        <div className="user-management-search">
+          <Search size={16} />
+          <input
+            value={search}
+            onChange={event => setSearch(event.target.value)}
+            placeholder="Search users by name or email..."
+            aria-label="Search users"
+          />
+        </div>
+
+        <div className="user-management-toolbar-actions">
+          <div className="org-view-toggle" role="tablist" aria-label="User management view">
+            <button type="button" className={view === 'chart' ? 'active' : ''} onClick={() => setView('chart')}>Organization Chart</button>
+            <button type="button" className={view === 'list' ? 'active' : ''} onClick={() => setView('list')}>List View</button>
+          </div>
+          <button type="button" className="secondary-btn" onClick={onRefresh} disabled={loading}>
+            <RefreshCw size={14} /> {loading ? 'Refreshing...' : 'Refresh'}
+          </button>
+          <button type="button" className="primary-btn" onClick={() => alert('User creation can be connected to your existing authorization flow next.')}>
+            <UserPlus size={15} /> Add User
+          </button>
+        </div>
+      </div>
+
+      <div className="user-management-summary">
+        <div><span>Total users</span><strong>{users.length}</strong></div>
+        <div><span>Sales Reps</span><strong>{users.filter(user => user.role === 'sales').length}</strong></div>
+        <div><span>Technical Support</span><strong>{users.filter(user => user.role === 'technical_support').length}</strong></div>
+        <div><span>HR</span><strong>{users.filter(user => user.role === 'hr').length}</strong></div>
+        <div><span>Admins</span><strong>{users.filter(user => user.role === 'admin').length}</strong></div>
+      </div>
+
+      {error && <div className="error-message">{error}</div>}
+
+      {view === 'chart' ? (
+        <div className="panel user-management-panel org-management-shell">
+          <div className="org-management-header">
+            <div>
+              <h3>Organization Structure</h3>
+              <p>Drag a user onto a team to move them. The reporting lines follow the company hierarchy.</p>
+            </div>
+            <div className="org-hierarchy-legend">
+              <span><i className="legend-line" /> Reporting structure</span>
+              <span><GripVertical size={14} /> Drag & drop</span>
+            </div>
+          </div>
+
+          {loading ? (
+            <div className="org-loading">Loading organization...</div>
+          ) : users.length === 0 ? (
+            <div className="org-tree-empty"><strong>No authorized users found</strong><p>Authorized staff will appear here once they are added.</p></div>
+          ) : (
+            <div className="modern-org-chart">
+              <div className="org-level org-level-md">
+                {md ? (
+                  <div
+                    className={`org-md-card ${draggedUserId === md.id ? 'is-dragging' : ''}`}
+                    draggable={md.user_id !== currentUserId}
+                    onDragStart={event => handleDragStart(event, md)}
+                    onDragEnd={handleDragEnd}
+                  >
+                    <div className="org-md-avatar">{getInitials(md)}</div>
+                    <div>
+                      <span className="org-card-eyebrow">MANAGING DIRECTOR</span>
+                      <strong>{getDisplayName(md)}</strong>
+                      <small>{md.email}</small>
+                    </div>
+                    <span className="org-active-dot" />
+                  </div>
+                ) : (
+                  <div className="org-missing-md">
+                    <strong>MD not assigned</strong>
+                    <span>Assign a user to the Manager (MD) role to create the organization root.</span>
+                  </div>
+                )}
+              </div>
+
+              <div className="org-connector org-connector-main" />
+
+              <div className="org-direct-reports">
+                {teamRoles.map(role => (
+                  <div className="org-department-column" key={role}>
+                    <div className="org-department-connector" />
+                    {renderTeamCard(role)}
+                    {role === 'head_of_sales' && (
+                      <>
+                        <div className="org-sales-connector" />
+                        <div className="org-sales-section">
+                          <div className="org-sales-heading">
+                            <div>
+                              <span>TEAM</span>
+                              <strong>Sales Reps</strong>
+                            </div>
+                            <b>{salesPage.total}</b>
+                          </div>
+                          <div
+                            className={`org-sales-card ${dropTargetRole === 'sales' ? 'is-drop-target' : ''}`}
+                            onDragOver={event => {
+                              const source = usersById.get(draggedUserId);
+                              if (!source || !canMoveToRole(source, 'sales')) return;
+                              event.preventDefault();
+                              event.dataTransfer.dropEffect = 'move';
+                              setDropTargetRole('sales');
+                            }}
+                            onDragLeave={() => setDropTargetRole(previous => previous === 'sales' ? null : previous)}
+                            onDrop={event => handleDrop(event, 'sales')}
+                          >
+                            {salesPage.items.length === 0 ? (
+                              <div className="org-team-empty">{search ? 'No matching sales reps.' : 'No sales reps yet.'}</div>
+                            ) : salesPage.items.map(user => renderUserRow(user, true))}
+                          </div>
+                          {salesPage.totalPages > 1 && (
+                            <div className="org-team-pagination">
+                              <button type="button" className="icon-btn" disabled={salesPage.page <= 1} onClick={() => setPage('sales', salesPage.page - 1)}>‹</button>
+                              <span>{salesPage.page} / {salesPage.totalPages}</span>
+                              <button type="button" className="icon-btn" disabled={salesPage.page >= salesPage.totalPages} onClick={() => setPage('sales', salesPage.page + 1)}>›</button>
+                            </div>
+                          )}
+                        </div>
+                      </>
+                    )}
+                  </div>
+                ))}
+              </div>
+
+              <div className="org-admin-section">
+                <div className="org-admin-section-head">
+                  <div>
+                    <span>SYSTEM ACCESS</span>
+                    <strong>Administrators</strong>
+                    <p>Admin remains a full internal role. It is managed separately from the reporting hierarchy above.</p>
+                  </div>
+                  <b>{adminPage.total}</b>
+                </div>
+                <div
+                  className={`org-admin-card ${dropTargetRole === 'admin' ? 'is-drop-target' : ''}`}
+                  onDragOver={event => {
+                    const source = usersById.get(draggedUserId);
+                    if (!source || !canMoveToRole(source, 'admin')) return;
+                    event.preventDefault();
+                    event.dataTransfer.dropEffect = 'move';
+                    setDropTargetRole('admin');
+                  }}
+                  onDragLeave={() => setDropTargetRole(previous => previous === 'admin' ? null : previous)}
+                  onDrop={event => handleDrop(event, 'admin')}
+                >
+                  {adminPage.items.length === 0 ? (
+                    <div className="org-team-empty">{search ? 'No matching admins.' : 'No administrators yet.'}</div>
+                  ) : adminPage.items.map(user => renderUserRow(user, true))}
+                </div>
+                {adminPage.totalPages > 1 && (
+                  <div className="org-team-pagination">
+                    <button type="button" className="icon-btn" disabled={adminPage.page <= 1} onClick={() => setPage('admin', adminPage.page - 1)}>‹</button>
+                    <span>{adminPage.page} / {adminPage.totalPages}</span>
+                    <button type="button" className="icon-btn" disabled={adminPage.page >= adminPage.totalPages} onClick={() => setPage('admin', adminPage.page + 1)}>›</button>
+                  </div>
+                )}
+              </div>
+            </div>
+          )}
+        </div>
+      ) : (
+        <div className="panel user-management-panel org-list-panel">
+          <div className="panel-header">
+            <div><h3>All Internal Users</h3><p>Search and manage individual users without rendering the entire organization at once.</p></div>
+          </div>
+          <div className="org-list">
+            {users.filter(user => {
+              const query = search.trim().toLowerCase();
+              return !query || `${getDisplayName(user)} ${user.email}`.toLowerCase().includes(query);
+            }).map(user => (
+              <div className="org-list-row" key={user.id}>
+                <div className={`org-user-avatar tone-${ROLE_META[user.role]?.tone || 'other'}`}>{getInitials(user)}</div>
+                <div className="org-list-user">
+                  <strong>{getDisplayName(user)}</strong>
+                  <span>{user.email}</span>
+                </div>
+                <span className={`org-role-badge tone-${ROLE_META[user.role]?.tone || 'other'}`}>{ROLE_META[user.role]?.label || roleLabel(user.role)}</span>
+                <span className={`org-status-dot ${user.status || 'inactive'}`} />
+                <select value={user.role} disabled={user.user_id === currentUserId} onChange={event => updateRole(user, event.target.value)}>
+                  {ROLE_OPTIONS.map(option => <option key={option.value} value={option.value}>{option.label}</option>)}
+                </select>
+                <GripVertical size={16} className="org-user-drag-handle" />
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
 
       <div className="panel user-management-panel pending-customer-access-panel">
         <div className="panel-header">
@@ -7995,10 +8633,8 @@ function UserManagement({
           <div className="table-wrapper"><table className="data-table">
             <thead><tr><th>Customer name</th><th>Email</th><th>Registered</th><th>Status</th><th>Actions</th></tr></thead>
             <tbody>{pendingPortalAccounts.map((request) => <tr key={request.id}>
-              <td>{request.full_name || '—'}</td><td>{request.email}</td>
-              <td>{request.created_at ? new Date(request.created_at).toLocaleDateString() : '—'}</td>
-              <td><span className="portal-request-status">Pending</span></td>
-              <td className="portal-request-actions">
+              <td>{request.full_name || '—'}</td><td>{request.email}</td><td>{request.created_at ? new Date(request.created_at).toLocaleDateString() : '—'}</td>
+              <td><span className="portal-request-status">Pending</span></td><td className="portal-request-actions">
                 <button type="button" className="primary-btn" disabled={portalRequestActionId === request.user_id} onClick={() => onReviewPortalRequest(request.user_id, 'approve')}>{portalRequestActionId === request.user_id ? 'Processing...' : 'Approve & Create Customer'}</button>
                 <button type="button" className="secondary-btn" disabled={portalRequestActionId === request.user_id} onClick={() => onReviewPortalRequest(request.user_id, 'reject')}>Reject</button>
               </td>
@@ -8009,5 +8645,4 @@ function UserManagement({
     </>
   );
 }
-
 export default App;

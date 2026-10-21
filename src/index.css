@@ -9784,3 +9784,1664 @@ select {
 :root[data-theme="dark"] .theme-setting span { color: #9aa1b2; }
 :root[data-theme="dark"] .theme-switch { background: #3a4050; }
 :root[data-theme="dark"] .theme-switch[aria-checked="true"] { background: #0693e3; }
+/* ============================================================
+   USER MANAGEMENT — ORGANIZATION TREE
+   Matches the MD -> Admin -> departments -> Sales Rep structure.
+   ============================================================ */
+.user-management-panel .panel-header {
+  align-items: flex-start;
+}
+
+.org-hierarchy-legend {
+  display: flex;
+  align-items: center;
+  gap: 18px;
+  margin: 4px 0 22px;
+  color: #7a8495;
+  font-size: 11px;
+  font-weight: 600;
+}
+
+.org-hierarchy-legend span {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.legend-line {
+  width: 18px;
+  height: 2px;
+  display: inline-block;
+  background: #cbd5df;
+  border-radius: 999px;
+}
+
+.org-tree {
+  width: 100%;
+  overflow-x: auto;
+  padding: 12px 8px 28px;
+}
+
+.org-tree-node {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  min-width: 190px;
+}
+
+.org-tree-node > .org-user-card {
+  position: relative;
+  z-index: 2;
+}
+
+.org-user-card {
+  width: min(310px, 100%);
+  min-height: 72px;
+  display: flex;
+  align-items: center;
+  gap: 11px;
+  padding: 11px 13px;
+  box-sizing: border-box;
+  border: 1px solid #e4e8ee;
+  border-radius: 12px;
+  background: #fff;
+  box-shadow: 0 5px 18px rgba(23, 32, 51, .06);
+  cursor: grab;
+  transition: border-color .16s ease, box-shadow .16s ease, transform .16s ease, background .16s ease;
+}
+
+.org-user-card:active {
+  cursor: grabbing;
+}
+
+.org-user-card:hover {
+  border-color: #b9d8ca;
+  box-shadow: 0 8px 24px rgba(23, 32, 51, .09);
+}
+
+.org-user-card.is-dragging {
+  opacity: .48;
+  transform: scale(.98);
+}
+
+.org-user-card.is-drop-target {
+  border-color: #10b981;
+  box-shadow: 0 0 0 3px rgba(16, 185, 129, .13), 0 10px 28px rgba(16, 185, 129, .12);
+  background: #f7fffb;
+}
+
+.org-tree-rail {
+  position: absolute;
+  top: 9px;
+  right: 9px;
+  z-index: 3;
+}
+
+.org-tree-toggle {
+  width: 21px;
+  height: 21px;
+  padding: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid #dce2e9;
+  border-radius: 6px;
+  background: #fff;
+  color: #667085;
+  font-size: 14px;
+  line-height: 1;
+  cursor: pointer;
+}
+
+.org-tree-toggle:hover {
+  border-color: #b8c7d4;
+  background: #f7faf9;
+}
+
+.org-user-avatar {
+  flex: 0 0 38px;
+  width: 38px;
+  height: 38px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 10px;
+  font-size: 11px;
+  font-weight: 800;
+  letter-spacing: .03em;
+}
+
+.org-user-avatar.tone-manager,
+.org-role-badge.tone-manager {
+  background: #eef7f2;
+  color: #16734a;
+}
+
+.org-user-avatar.tone-admin,
+.org-role-badge.tone-admin {
+  background: #eef4ff;
+  color: #315ea8;
+}
+
+.org-user-avatar.tone-hr,
+.org-role-badge.tone-hr {
+  background: #fff5e8;
+  color: #a05a12;
+}
+
+.org-user-avatar.tone-sales,
+.org-role-badge.tone-sales {
+  background: #f1efff;
+  color: #6253a4;
+}
+
+.org-user-avatar.tone-technical,
+.org-role-badge.tone-technical {
+  background: #edf8fb;
+  color: #167287;
+}
+
+.org-user-main {
+  min-width: 0;
+  flex: 1;
+}
+
+.org-user-name-row,
+.org-user-meta,
+.org-user-actions {
+  display: flex;
+  align-items: center;
+}
+
+.org-user-name-row {
+  min-width: 0;
+  gap: 6px;
+  padding-right: 18px;
+}
+
+.org-user-name-row strong {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: #202938;
+  font-size: 12px;
+}
+
+.org-current-badge {
+  flex: 0 0 auto;
+  padding: 2px 6px;
+  border-radius: 999px;
+  background: #edf8f3;
+  color: #18764d;
+  font-size: 9px;
+  font-weight: 800;
+}
+
+.org-user-meta {
+  gap: 6px;
+  margin-top: 5px;
+}
+
+.org-role-badge {
+  padding: 3px 7px;
+  border-radius: 999px;
+  font-size: 9px;
+  font-weight: 800;
+  line-height: 1;
+}
+
+.org-status-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: #c2c8d1;
+}
+
+.org-status-dot.active {
+  background: #16a36b;
+}
+
+.org-status-dot.pending {
+  background: #e6a33b;
+}
+
+.org-status-dot.inactive {
+  background: #aab1bd;
+}
+
+.org-user-meta > span:last-child {
+  color: #8b94a4;
+  font-size: 10px;
+}
+
+.org-user-actions {
+  flex: 0 0 auto;
+  gap: 8px;
+}
+
+.org-drag-hint {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  color: #9aa3b1;
+  font-size: 9px;
+  font-weight: 700;
+}
+
+.org-user-actions select {
+  max-width: 120px;
+  height: 30px;
+  padding: 0 7px;
+  border: 1px solid #dfe4ea;
+  border-radius: 7px;
+  background: #fff;
+  color: #5d6675;
+  font-size: 10px;
+}
+
+.org-tree-children {
+  position: relative;
+  display: flex;
+  justify-content: center;
+  gap: 18px;
+  width: max-content;
+  min-width: 100%;
+  margin-top: 30px;
+  padding: 0 18px 0;
+  box-sizing: border-box;
+}
+
+.org-tree-children::before {
+  content: '';
+  position: absolute;
+  top: -15px;
+  left: 50%;
+  width: 1px;
+  height: 15px;
+  background: #ccd5de;
+}
+
+.org-tree-children > .org-tree-node::before {
+  content: '';
+  position: absolute;
+  top: -15px;
+  left: 50%;
+  width: 1px;
+  height: 15px;
+  background: #ccd5de;
+}
+
+.org-tree-children > .org-tree-node:not(:first-child)::after,
+.org-tree-children > .org-tree-node:first-child::after {
+  content: '';
+  position: absolute;
+  top: -15px;
+  height: 1px;
+  background: #ccd5de;
+}
+
+.org-tree-children > .org-tree-node:first-child::after {
+  left: 50%;
+  right: -9px;
+}
+
+.org-tree-children > .org-tree-node:not(:first-child)::after {
+  left: -9px;
+  right: 50%;
+}
+
+.org-tree-empty {
+  padding: 30px 20px;
+  border: 1px dashed #d8dee6;
+  border-radius: 12px;
+  background: #fafbfc;
+  text-align: center;
+  color: #7d8796;
+}
+
+.org-tree-empty strong {
+  display: block;
+  margin-bottom: 5px;
+  color: #394454;
+}
+
+.org-tree-empty p {
+  margin: 0;
+  font-size: 12px;
+}
+
+:root[data-theme="dark"] .org-user-card {
+  border-color: #303641;
+  background: #171b26;
+  box-shadow: 0 6px 20px rgba(0, 0, 0, .18);
+}
+
+:root[data-theme="dark"] .org-user-card:hover {
+  border-color: #405047;
+}
+
+:root[data-theme="dark"] .org-user-card.is-drop-target {
+  border-color: #10b981;
+  background: #17231f;
+}
+
+:root[data-theme="dark"] .org-tree-toggle,
+:root[data-theme="dark"] .org-user-actions select {
+  border-color: #343a45;
+  background: #171b26;
+  color: #aeb6c4;
+}
+
+:root[data-theme="dark"] .org-user-name-row strong {
+  color: #d5d9e2;
+}
+
+:root[data-theme="dark"] .org-user-meta > span:last-child,
+:root[data-theme="dark"] .org-drag-hint,
+:root[data-theme="dark"] .org-hierarchy-legend {
+  color: #8993a3;
+}
+
+:root[data-theme="dark"] .org-tree-children::before,
+:root[data-theme="dark"] .org-tree-children > .org-tree-node::before,
+:root[data-theme="dark"] .org-tree-children > .org-tree-node::after,
+:root[data-theme="dark"] .legend-line {
+  background: #414955;
+}
+
+@media (max-width: 900px) {
+  .org-user-card {
+    width: min(280px, 92vw);
+  }
+
+  .org-user-actions .org-drag-hint {
+    display: none;
+  }
+}
+
+@media (max-width: 650px) {
+  .org-tree {
+    padding-left: 0;
+    padding-right: 0;
+  }
+
+  .org-user-card {
+    width: 270px;
+  }
+
+  .org-user-actions select {
+    display: none;
+  }
+}
+
+
+/* =========================================================
+   STORHET CRM — MODERN USER MANAGEMENT / ORG CHART
+   Final hierarchy:
+   MD
+   ├── HR
+   ├── HEAD OF SALES
+   │    └── SALES REPS
+   └── TECHNICAL SUPPORT
+   ========================================================= */
+
+.user-management-toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  margin: -4px 0 18px;
+  flex-wrap: wrap;
+}
+
+.user-management-search {
+  min-width: min(420px, 100%);
+  flex: 1 1 320px;
+  height: 42px;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 0 13px;
+  background: #fff;
+  border: 1px solid #e5e7ed;
+  border-radius: 10px;
+  color: #9aa2b1;
+}
+
+.user-management-search input {
+  width: 100%;
+  border: 0;
+  outline: 0;
+  background: transparent;
+  font: inherit;
+  font-size: 12px;
+  color: #202938;
+}
+
+.user-management-toolbar-actions {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  flex-wrap: wrap;
+}
+
+.org-view-toggle {
+  display: inline-flex;
+  align-items: center;
+  padding: 3px;
+  border: 1px solid #e4e7ed;
+  border-radius: 9px;
+  background: #f7f8fb;
+}
+
+.org-view-toggle button {
+  border: 0;
+  background: transparent;
+  color: #7c8493;
+  padding: 8px 11px;
+  border-radius: 7px;
+  font: inherit;
+  font-size: 11px;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.org-view-toggle button.active {
+  background: #fff;
+  color: #202938;
+  box-shadow: 0 2px 7px rgba(23, 32, 51, .08);
+}
+
+.user-management-summary {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 12px;
+  margin-bottom: 18px;
+}
+
+.user-management-summary > div {
+  background: #fff;
+  border: 1px solid #e9eaf0;
+  border-radius: 12px;
+  padding: 15px 17px;
+}
+
+.user-management-summary span {
+  display: block;
+  color: #8d96a6;
+  font-size: 10px;
+  margin-bottom: 7px;
+}
+
+.user-management-summary strong {
+  font-size: 21px;
+  letter-spacing: -.5px;
+  color: #202938;
+}
+
+.org-management-shell {
+  padding: 22px;
+  overflow: hidden;
+}
+
+.org-management-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 18px;
+  margin-bottom: 18px;
+}
+
+.org-management-header h3 {
+  margin: 0 0 5px;
+  font-size: 15px;
+}
+
+.org-management-header p {
+  margin: 0;
+  color: #929aaa;
+  font-size: 11px;
+}
+
+.org-hierarchy-legend {
+  display: flex;
+  align-items: center;
+  gap: 15px;
+  color: #929aaa;
+  font-size: 10px;
+  white-space: nowrap;
+}
+
+.org-hierarchy-legend span {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.modern-org-chart {
+  min-width: 920px;
+  padding: 16px 10px 10px;
+}
+
+.org-level {
+  display: flex;
+  justify-content: center;
+}
+
+.org-md-card {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  min-width: 260px;
+  padding: 13px 16px;
+  border: 1px solid #dfe7e2;
+  border-radius: 14px;
+  background: #fff;
+  box-shadow: 0 8px 24px rgba(23, 32, 51, .07);
+  cursor: grab;
+}
+
+.org-md-card:active {
+  cursor: grabbing;
+}
+
+.org-md-card.is-dragging {
+  opacity: .5;
+}
+
+.org-md-avatar {
+  width: 45px;
+  height: 45px;
+  display: grid;
+  place-items: center;
+  flex: 0 0 auto;
+  border-radius: 12px;
+  background: #e9f7ef;
+  color: #18764d;
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.org-md-card > div:nth-child(2) {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+
+.org-card-eyebrow {
+  color: #199260;
+  font-size: 8px;
+  font-weight: 800;
+  letter-spacing: .12em;
+}
+
+.org-md-card strong {
+  color: #202938;
+  font-size: 13px;
+}
+
+.org-md-card small {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: #929aaa;
+  font-size: 10px;
+  max-width: 180px;
+}
+
+.org-active-dot {
+  width: 7px;
+  height: 7px;
+  margin-left: auto;
+  align-self: flex-start;
+  border-radius: 50%;
+  background: #18a66c;
+}
+
+.org-missing-md {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 5px;
+  padding: 16px 22px;
+  border: 1px dashed #d5dce5;
+  border-radius: 13px;
+  background: #fafbfc;
+  color: #697386;
+  text-align: center;
+}
+
+.org-missing-md strong {
+  color: #344054;
+  font-size: 12px;
+}
+
+.org-missing-md span {
+  font-size: 10px;
+}
+
+.org-connector {
+  width: 1px;
+  height: 28px;
+  margin: 0 auto;
+  background: #cbd5df;
+}
+
+.org-direct-reports {
+  position: relative;
+  display: grid;
+  grid-template-columns: repeat(3, minmax(270px, 1fr));
+  gap: 18px;
+  padding-top: 28px;
+}
+
+.org-direct-reports::before {
+  content: '';
+  position: absolute;
+  top: 0;
+  left: 16.666%;
+  right: 16.666%;
+  height: 1px;
+  background: #cbd5df;
+}
+
+.org-department-column {
+  position: relative;
+  min-width: 0;
+}
+
+.org-department-connector {
+  position: absolute;
+  top: -28px;
+  left: 50%;
+  width: 1px;
+  height: 28px;
+  background: #cbd5df;
+}
+
+.org-team-card {
+  position: relative;
+  min-height: 220px;
+  padding: 15px;
+  border: 1px solid #e5e8ee;
+  border-radius: 14px;
+  background: #fff;
+  box-shadow: 0 5px 18px rgba(23, 32, 51, .05);
+  transition: border-color .16s ease, box-shadow .16s ease, background .16s ease, transform .16s ease;
+}
+
+.org-team-card.is-drop-target,
+.org-sales-card.is-drop-target {
+  border-color: #10b981;
+  background: #f7fffb;
+  box-shadow: 0 0 0 3px rgba(16, 185, 129, .11), 0 10px 25px rgba(16, 185, 129, .1);
+}
+
+.org-team-card-head {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding-bottom: 13px;
+  border-bottom: 1px solid #f0f2f5;
+}
+
+.org-team-icon {
+  width: 35px;
+  height: 35px;
+  display: grid;
+  place-items: center;
+  border-radius: 10px;
+  font-size: 9px;
+  font-weight: 800;
+}
+
+.org-team-icon.tone-hr {
+  background: #fff4df;
+  color: #a76316;
+}
+
+.org-team-icon.tone-sales {
+  background: #e9f8ef;
+  color: #16804f;
+}
+
+.org-team-icon.tone-technical {
+  background: #f0eaff;
+  color: #7252b5;
+}
+
+.org-team-title {
+  min-width: 0;
+  flex: 1;
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.org-team-title > div {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.org-team-title strong {
+  color: #202938;
+  font-size: 12px;
+}
+
+.org-team-title span {
+  color: #929aaa;
+  font-size: 9px;
+}
+
+.org-team-more {
+  display: grid;
+  place-items: center;
+  padding: 4px;
+  border: 0;
+  background: transparent;
+  color: #a1a8b5;
+  cursor: pointer;
+}
+
+.org-team-user-list {
+  display: flex;
+  flex-direction: column;
+  gap: 7px;
+  margin-top: 12px;
+}
+
+.org-team-user {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  padding: 8px;
+  border: 1px solid #edf0f3;
+  border-radius: 9px;
+  background: #fbfcfd;
+  cursor: grab;
+  transition: border-color .14s ease, background .14s ease, transform .14s ease;
+}
+
+.org-team-user:hover {
+  border-color: #d5dde5;
+  background: #fff;
+}
+
+.org-team-user:active {
+  cursor: grabbing;
+}
+
+.org-team-user.is-dragging {
+  opacity: .42;
+  transform: scale(.985);
+}
+
+.org-team-user-main {
+  min-width: 0;
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+
+.org-team-user-main strong {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: #344054;
+  font-size: 10px;
+}
+
+.org-team-user-main span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: #98a1af;
+  font-size: 8px;
+}
+
+.org-team-user .org-user-avatar {
+  width: 30px;
+  height: 30px;
+  flex-basis: 30px;
+  border-radius: 8px;
+  font-size: 8px;
+}
+
+.org-team-user .org-status-dot {
+  flex: 0 0 auto;
+}
+
+.org-team-user select {
+  width: 105px;
+  height: 27px;
+  border: 1px solid #e1e5eb;
+  border-radius: 6px;
+  background: #fff;
+  color: #6b7280;
+  font: inherit;
+  font-size: 9px;
+}
+
+.org-user-drag-handle {
+  flex: 0 0 auto;
+  color: #b2bac6;
+}
+
+.org-team-empty {
+  padding: 25px 10px;
+  color: #a0a8b5;
+  font-size: 10px;
+  text-align: center;
+}
+
+.org-team-pagination {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  margin-top: 11px;
+  color: #929aaa;
+  font-size: 9px;
+}
+
+.org-team-pagination .icon-btn {
+  width: 25px;
+  height: 25px;
+  padding: 0;
+  border: 1px solid #e3e7ec;
+  background: #fff;
+}
+
+.org-team-pagination .icon-btn:disabled {
+  opacity: .4;
+  cursor: not-allowed;
+}
+
+.org-manager-select {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  margin-top: 10px;
+  color: #8c95a4;
+  font-size: 9px;
+}
+
+.org-manager-select select {
+  flex: 1;
+  min-width: 0;
+  border: 1px solid #e1e5eb;
+  border-radius: 7px;
+  padding: 6px 7px;
+  background: #fff;
+  color: #566171;
+  font: inherit;
+  font-size: 9px;
+}
+
+.org-sales-connector {
+  width: 1px;
+  height: 26px;
+  margin: 0 auto;
+  background: #cbd5df;
+}
+
+.org-sales-section {
+  position: relative;
+}
+
+.org-sales-heading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin: 0 4px 8px;
+}
+
+.org-sales-heading > div {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+
+.org-sales-heading span {
+  color: #199260;
+  font-size: 8px;
+  font-weight: 800;
+  letter-spacing: .1em;
+}
+
+.org-sales-heading strong {
+  color: #344054;
+  font-size: 11px;
+}
+
+.org-sales-heading b {
+  min-width: 26px;
+  height: 24px;
+  display: grid;
+  place-items: center;
+  border-radius: 7px;
+  background: #e9f8ef;
+  color: #16804f;
+  font-size: 9px;
+}
+
+.org-sales-card {
+  min-height: 80px;
+  padding: 9px;
+  border: 1px solid #e6ebe8;
+  border-radius: 12px;
+  background: #f9fcfa;
+}
+
+.org-sales-card .org-team-user {
+  background: #fff;
+}
+
+.org-sales-card .org-team-user select {
+  display: none;
+}
+
+.org-legacy-note {
+  display: flex;
+  align-items: flex-start;
+  gap: 9px;
+  margin-top: 18px;
+  padding: 11px 13px;
+  border: 1px dashed #e2cfae;
+  border-radius: 9px;
+  background: #fffaf1;
+  color: #8c6a39;
+  font-size: 9px;
+}
+
+.org-legacy-note strong {
+  white-space: nowrap;
+}
+
+.org-loading {
+  padding: 45px 20px;
+  color: #929aaa;
+  text-align: center;
+  font-size: 12px;
+}
+
+.org-list-panel {
+  padding: 22px;
+}
+
+.org-list {
+  display: flex;
+  flex-direction: column;
+  gap: 7px;
+}
+
+.org-list-row {
+  display: grid;
+  grid-template-columns: 34px minmax(180px, 1fr) 150px 10px 145px 18px;
+  align-items: center;
+  gap: 12px;
+  padding: 10px 12px;
+  border: 1px solid #edf0f3;
+  border-radius: 10px;
+  background: #fff;
+}
+
+.org-list-user {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+
+.org-list-user strong {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: #344054;
+  font-size: 11px;
+}
+
+.org-list-user span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: #98a1af;
+  font-size: 9px;
+}
+
+.org-list-row select {
+  height: 31px;
+  border: 1px solid #e1e5eb;
+  border-radius: 7px;
+  background: #fff;
+  color: #5f6877;
+  font: inherit;
+  font-size: 9px;
+}
+
+.org-list-row select:disabled {
+  opacity: .55;
+}
+
+.org-user-avatar.tone-md,
+.org-role-badge.tone-md {
+  background: #e9f8ef;
+  color: #16804f;
+}
+
+.org-user-avatar.tone-other,
+.org-role-badge.tone-other {
+  background: #f0f2f5;
+  color: #667085;
+}
+
+@media (max-width: 1100px) {
+  .modern-org-chart {
+    overflow-x: auto;
+  }
+
+  .user-management-summary {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .org-direct-reports {
+    grid-template-columns: repeat(3, 300px);
+  }
+}
+
+@media (max-width: 760px) {
+  .user-management-toolbar,
+  .org-management-header {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .user-management-search {
+    min-width: 0;
+  }
+
+  .user-management-toolbar-actions {
+    width: 100%;
+  }
+
+  .org-view-toggle {
+    flex: 1;
+  }
+
+  .org-view-toggle button {
+    flex: 1;
+  }
+
+  .user-management-toolbar-actions .primary-btn,
+  .user-management-toolbar-actions .secondary-btn {
+    flex: 1;
+  }
+
+  .user-management-summary {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .org-hierarchy-legend {
+    flex-wrap: wrap;
+    white-space: normal;
+  }
+
+  .org-list-row {
+    grid-template-columns: 34px minmax(0, 1fr) auto 10px;
+  }
+
+  .org-list-row select,
+  .org-list-row .org-user-drag-handle {
+    display: none;
+  }
+}
+
+:root[data-theme="dark"] .user-management-search,
+:root[data-theme="dark"] .user-management-summary > div,
+:root[data-theme="dark"] .org-management-shell,
+:root[data-theme="dark"] .org-md-card,
+:root[data-theme="dark"] .org-team-card,
+:root[data-theme="dark"] .org-list-row {
+  background: #171b26;
+  border-color: #303641;
+}
+
+:root[data-theme="dark"] .user-management-search input,
+:root[data-theme="dark"] .user-management-summary strong,
+:root[data-theme="dark"] .org-management-header h3,
+:root[data-theme="dark"] .org-md-card strong,
+:root[data-theme="dark"] .org-team-title strong,
+:root[data-theme="dark"] .org-team-user-main strong,
+:root[data-theme="dark"] .org-list-user strong,
+:root[data-theme="dark"] .org-sales-heading strong {
+  color: #d5d9e2;
+}
+
+:root[data-theme="dark"] .org-team-user,
+:root[data-theme="dark"] .org-sales-card,
+:root[data-theme="dark"] .org-view-toggle {
+  background: #121620;
+  border-color: #303641;
+}
+
+:root[data-theme="dark"] .org-view-toggle button.active,
+:root[data-theme="dark"] .org-team-user select,
+:root[data-theme="dark"] .org-manager-select select,
+:root[data-theme="dark"] .org-list-row select,
+:root[data-theme="dark"] .org-team-pagination .icon-btn {
+  background: #171b26;
+  border-color: #343a45;
+  color: #c5cbd6;
+}
+
+:root[data-theme="dark"] .org-direct-reports::before,
+:root[data-theme="dark"] .org-connector,
+:root[data-theme="dark"] .org-department-connector,
+:root[data-theme="dark"] .org-sales-connector {
+  background: #414955;
+}
+
+
+/* Admin role: preserved as a separate system-access group, not removed from User Management. */
+.org-admin-section {
+  margin-top: 28px;
+  border: 1px solid #dbe5f0;
+  border-radius: 18px;
+  background: #fbfdff;
+  padding: 18px;
+}
+.org-admin-section-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+  margin-bottom: 14px;
+}
+.org-admin-section-head > div { min-width: 0; }
+.org-admin-section-head span {
+  display: block;
+  font-size: 10px;
+  font-weight: 800;
+  letter-spacing: .08em;
+  text-transform: uppercase;
+  color: #64748b;
+  margin-bottom: 4px;
+}
+.org-admin-section-head strong { display: block; font-size: 16px; color: #0f172a; }
+.org-admin-section-head p { margin: 4px 0 0; color: #64748b; font-size: 12px; }
+.org-admin-section-head > b {
+  min-width: 32px;
+  height: 32px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 10px;
+  background: #eaf2ff;
+  color: #2563eb;
+  font-size: 13px;
+}
+.org-admin-card {
+  border: 1px solid #dbe5f0;
+  border-radius: 14px;
+  background: #fff;
+  padding: 8px;
+  min-height: 56px;
+  transition: border-color .18s ease, box-shadow .18s ease, background .18s ease;
+}
+.org-admin-card.is-drop-target {
+  border-color: #2563eb;
+  background: #eff6ff;
+  box-shadow: 0 0 0 3px rgba(37,99,235,.10);
+}
+.tone-admin { color: #2563eb; }
+.org-user-avatar.tone-admin, .org-team-icon.tone-admin {
+  background: #eaf2ff;
+  color: #2563eb;
+}
+.org-role-badge.tone-admin {
+  background: #eaf2ff;
+  color: #2563eb;
+}
+@media (max-width: 760px) {
+  .org-admin-section-head { align-items: stretch; }
+}
+
+/* ============================================================
+   Storhet CRM — role panels & approval workflow
+   ============================================================ */
+.role-panel-nav .nav-item.active {
+  background: #eaf8f0;
+  color: #159447;
+}
+
+.role-panel-summary {
+  max-width: 900px;
+}
+
+.role-panel-summary p {
+  margin: 8px 0 0;
+  color: #73798a;
+  line-height: 1.7;
+  font-size: 12px;
+}
+
+.approval-inline-actions,
+.approval-btn {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.approval-inline-actions {
+  margin-top: 12px;
+  flex-wrap: wrap;
+}
+
+.approval-inline-actions .primary-btn,
+.approval-inline-actions .secondary-btn,
+.approval-btn {
+  padding: 7px 10px;
+  font-size: 10px;
+}
+
+.approval-rejection-note {
+  margin-top: 9px;
+  padding: 8px 10px;
+  border-radius: 7px;
+  background: #fff5f5;
+  color: #a13b3b;
+  font-size: 10px;
+  line-height: 1.5;
+}
+
+.full-width-form-field {
+  grid-column: 1 / -1;
+}
+
+.org-admin-section {
+  margin-top: 24px;
+}
+
+
+/* =========================================================
+   STORHET CRM — ROLE / REVENUE / DASHBOARD UPDATE
+   Added for MD, HOS, HR, Technical Support, Sales Rep views
+   ========================================================= */
+
+/* Clickable dashboard KPI / metric cards */
+.dashboard-metric-clickable,
+.kpi-card-clickable,
+.stat-card-clickable,
+.dashboard-card-clickable {
+  cursor: pointer;
+  transition: transform .16s ease, box-shadow .16s ease, border-color .16s ease;
+}
+
+.dashboard-metric-clickable:hover,
+.kpi-card-clickable:hover,
+.stat-card-clickable:hover,
+.dashboard-card-clickable:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 8px 24px rgba(32, 33, 43, .08);
+}
+
+.dashboard-metric-clickable:focus-visible,
+.kpi-card-clickable:focus-visible,
+.stat-card-clickable:focus-visible,
+.dashboard-card-clickable:focus-visible {
+  outline: 2px solid #7357f0;
+  outline-offset: 2px;
+}
+
+/* Revenue performance */
+.revenue-performance-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 16px;
+  margin-bottom: 20px;
+}
+
+.revenue-kpi-card {
+  min-width: 0;
+}
+
+.revenue-target-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 14px 16px;
+  border: 1px solid #e8eaf1;
+  border-radius: 12px;
+  background: #fff;
+}
+
+.revenue-target-label {
+  font-size: 13px;
+  font-weight: 600;
+  color: #686b78;
+}
+
+.revenue-target-value {
+  font-size: 20px;
+  font-weight: 700;
+  color: #20212b;
+}
+
+.revenue-target-input {
+  min-width: 140px;
+  padding: 10px 12px;
+  border: 1px solid #dfe2eb;
+  border-radius: 9px;
+  background: #fff;
+  color: #20212b;
+  font: inherit;
+}
+
+.revenue-target-input:focus {
+  outline: none;
+  border-color: #7357f0;
+  box-shadow: 0 0 0 3px rgba(115, 87, 240, .10);
+}
+
+.revenue-achieved {
+  color: #16834b;
+}
+
+.revenue-remaining {
+  color: #c56a00;
+}
+
+.revenue-performance-table {
+  width: 100%;
+  overflow-x: auto;
+}
+
+.revenue-performance-table table {
+  width: 100%;
+  min-width: 680px;
+}
+
+.revenue-progress {
+  width: 100%;
+  height: 8px;
+  overflow: hidden;
+  border-radius: 999px;
+  background: #eceef4;
+}
+
+.revenue-progress > span {
+  display: block;
+  height: 100%;
+  border-radius: inherit;
+  background: #7357f0;
+  transition: width .25s ease;
+}
+
+/* Role panel sections */
+.role-panel-grid {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 16px;
+}
+
+.role-panel-card {
+  min-width: 0;
+}
+
+.role-panel-card.clickable {
+  cursor: pointer;
+}
+
+/* Approval / work / ticket KPI cards */
+.approval-kpi-grid,
+.ticket-kpi-grid,
+.work-kpi-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 16px;
+}
+
+.ticket-kpi-card {
+  cursor: pointer;
+  transition: transform .16s ease, box-shadow .16s ease;
+}
+
+.ticket-kpi-card:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 8px 24px rgba(32, 33, 43, .08);
+}
+
+/* Clickable table rows used by dashboard drill-down */
+.table-row-clickable {
+  cursor: pointer;
+  transition: background .15s ease;
+}
+
+.table-row-clickable:hover {
+  background: rgba(115, 87, 240, .045);
+}
+
+/* Dashboard drill-down / filter indicator */
+.dashboard-filter-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 10px;
+  border-radius: 999px;
+  background: rgba(115, 87, 240, .09);
+  color: #6044d9;
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.dashboard-section-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.dashboard-section-action {
+  border: 0;
+  background: transparent;
+  color: #7357f0;
+  font: inherit;
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.dashboard-section-action:hover {
+  text-decoration: underline;
+}
+
+/* Ticket module */
+.ticket-status-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 16px;
+}
+
+.ticket-status-card {
+  cursor: pointer;
+  border: 1px solid #e8eaf1;
+  border-radius: 12px;
+  background: #fff;
+  transition: transform .16s ease, box-shadow .16s ease, border-color .16s ease;
+}
+
+.ticket-status-card:hover {
+  transform: translateY(-2px);
+  border-color: #d9d3fb;
+  box-shadow: 0 8px 24px rgba(32, 33, 43, .07);
+}
+
+/* Technical Support panel */
+.technical-support-panel-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 16px;
+}
+
+/* MD / HOS executive revenue blocks */
+.executive-revenue-summary {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 16px;
+}
+
+.executive-revenue-card {
+  padding: 18px;
+  border: 1px solid #e8eaf1;
+  border-radius: 14px;
+  background: #fff;
+}
+
+.executive-revenue-card .value {
+  margin-top: 6px;
+  font-size: 24px;
+  font-weight: 700;
+}
+
+.executive-revenue-card .label {
+  color: #686b78;
+  font-size: 13px;
+  font-weight: 600;
+}
+
+/* Responsive role/revenue layouts */
+@media (max-width: 1100px) {
+  .role-panel-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .executive-revenue-summary {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
+@media (max-width: 800px) {
+  .revenue-performance-grid,
+  .approval-kpi-grid,
+  .ticket-kpi-grid,
+  .work-kpi-grid,
+  .ticket-status-grid,
+  .technical-support-panel-grid,
+  .role-panel-grid,
+  .executive-revenue-summary {
+    grid-template-columns: 1fr;
+  }
+
+  .revenue-target-row {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+
+  .revenue-target-input {
+    width: 100%;
+    box-sizing: border-box;
+  }
+}
+
+
+/* =========================================================
+   STORHET CRM — HOS PANEL POLISH
+   ========================================================= */
+
+.hos-panel,
+.hos-revenue-panel {
+  scroll-margin-top: 24px;
+}
+
+.hos-team-performance {
+  margin-top: 20px;
+}
+
+.hos-team-performance .table-wrap {
+  border-radius: 12px;
+  overflow: hidden;
+}
+
+.hos-team-performance table {
+  min-width: 680px;
+}
+
+.hos-team-performance tbody tr {
+  transition: background .15s ease;
+}
+
+.hos-team-performance tbody tr:hover {
+  background: rgba(115, 87, 240, .045);
+}
+
+.hos-team-performance td:first-child strong {
+  color: #20212b;
+}
+
+.hos-revenue-card {
+  min-height: 190px;
+}
+
+.hos-revenue-card .revenue-target-value {
+  font-size: 24px;
+}
+
+.hos-approval-queue,
+.hr-pending-work,
+.md-approval-queue,
+.tech-support-tickets {
+  scroll-margin-top: 24px;
+}
+
+.stat-card-clickable {
+  position: relative;
+}
+
+.stat-card-clickable::after {
+  content: '›';
+  position: absolute;
+  right: 16px;
+  bottom: 14px;
+  font-size: 17px;
+  font-weight: 700;
+  opacity: .35;
+  transition: opacity .15s ease, transform .15s ease;
+}
+
+.stat-card-clickable:hover::after {
+  opacity: .8;
+  transform: translateX(2px);
+}
+
+/* Embedded Tickets inside Technical Support Panel */
+#tech-support-tickets > .panel-heading {
+  margin-bottom: 14px;
+}
+
+#tech-support-tickets > .panel-heading h3 {
+  margin-bottom: 4px;
+}
+
+#tech-support-tickets > .panel-heading p {
+  margin: 0;
+}
+
+#tech-support-tickets > .stat-card,
+#tech-support-tickets .stats-grid {
+  margin-top: 0;
+}
+
+@media (max-width: 900px) {
+  .hos-team-performance {
+    overflow-x: auto;
+  }
+}
