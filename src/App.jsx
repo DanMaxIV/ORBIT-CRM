@@ -1427,7 +1427,22 @@ function App() {
     }
     setDealProducts(data || []);
   }
-  async function fetchEmailLogs() { const { data, error } = await supabase.from('email_logs').select('*, customers(name,company)').order('sent_at', { ascending: false }); if (error) { console.error('Error fetching email logs:', error); return; } setEmailLogs(data || []); }
+  async function fetchEmailLogs() { 
+    if (!session?.user?.id) return;
+    
+    const { data, error } = await supabase
+      .from('email_logs')
+      .select('*, customers(name,company)')
+      .eq('created_by', session.user.id) // <--- Adds privacy filter
+      .order('sent_at', { ascending: false });
+      
+    if (error) { 
+      console.error('Error fetching email logs:', error); 
+      return; 
+    } 
+    
+    setEmailLogs(data || []); 
+  }
   async function createDueCalendarNotifications(calendarRows = []) {
     if (!session?.user?.id || !calendarRows.length) return;
 
