@@ -89,7 +89,7 @@ function AuthScreen({ onGoogleSignIn, onEmailSignIn, onEmailSignUp, onPortalSign
         <div className="auth-brand">
           <div className="brand-mark"><img src="/storhetLogo.png" alt="Storhet CRM" /></div>
           <span className="brand-name">
-           Storhet<span className="brand-accent">CRM</span>
+            Storhet<span className="brand-accent">CRM</span>
           </span>
         </div>
         <div className="auth-heading">
@@ -887,6 +887,7 @@ function App() {
   const [selectedInvoice, setSelectedInvoice] = useState(null);
   const [phase2Error, setPhase2Error] = useState('');
   const [emailIntegrations, setEmailIntegrations] = useState([]);
+  const [composeDraft, setComposeDraft] = useState(null);
   const [emailIntegrationLoading, setEmailIntegrationLoading] = useState(false);
   const [emailIntegrationError, setEmailIntegrationError] = useState('');
   const [showTicketForm, setShowTicketForm] = useState(false);
@@ -909,6 +910,7 @@ function App() {
   const searchInputRef = useRef(null);
   const lastRefreshRef = useRef(Date.now());
   const refreshingRef = useRef(false);
+  const loadedDataRef = useRef(new Set());
   const [refreshing, setRefreshing] = useState(false);
   const [toast, setToast] = useState('');
 
@@ -1046,106 +1048,106 @@ function App() {
     }
   }
   async function signInWithEmail(event) {
-  event.preventDefault();
-  justSignedUp.current = false;
-  setAuthError('');
-  setAuthNotice('');
+    event.preventDefault();
+    justSignedUp.current = false;
+    setAuthError('');
+    setAuthNotice('');
 
-  const trimmedEmail = email.trim();
-  if (!trimmedEmail || !password) {
-    setAuthError('Please enter both your email address and password.');
-    return;
-  }
-
-  setEmailLoading(true);
-
-  try {
-    const { data, error } = await supabase.auth.signInWithPassword({
-      email: trimmedEmail,
-      password
-    });
-
-    if (error) {
-      console.error('Email sign-in error:', error);
-      setAuthError(error.message);
-    } else if (data?.user) {
-      // Re-verify workspace authorization status
-      await checkAuthorization(data.session);
-    }
-  } catch (err) {
-    console.error('Unexpected sign-in error:', err);
-    setAuthError('An unexpected error occurred during sign in.');
-  } finally {
-    setEmailLoading(false);
-  }
-}
-
-async function signUpWithEmail(event) {
-  event.preventDefault();
-  setAuthError('');
-  setAuthNotice('');
-
-  const trimmedEmail = email.trim();
-  if (!trimmedEmail || !password) {
-    setAuthError('Please enter both an email address and a password.');
-    return;
-  }
-
-  if (password.length < 6) {
-    setAuthError('Password must be at least 6 characters long.');
-    return;
-  }
-
-  setEmailLoading(true);
-
-  try {
-    // 1. Create Supabase Auth user
-    const { data: authData, error: signUpError } = await supabase.auth.signUp({
-      email: trimmedEmail,
-      password
-    });
-
-    if (signUpError) {
-      console.error('Email signup error:', signUpError);
-      setAuthError(signUpError.message);
+    const trimmedEmail = email.trim();
+    if (!trimmedEmail || !password) {
+      setAuthError('Please enter both your email address and password.');
       return;
     }
 
-    const newUser = authData?.user;
+    setEmailLoading(true);
 
-    if (newUser) {
-      // 2. Insert user into authorized_users as 'pending' for admin approval
-      const { error: insertError } = await supabase
-        .from('authorized_users')
-        .insert([
-          {
-            user_id: newUser.id,
-            email: trimmedEmail,
-            role: DEFAULT_ROLE,
-            status: 'pending'
-          }
-        ]);
+    try {
+      const { data, error } = await supabase.auth.signInWithPassword({
+        email: trimmedEmail,
+        password
+      });
 
-      if (insertError) {
-        console.warn('Could not provision authorized_users entry:', insertError.message);
+      if (error) {
+        console.error('Email sign-in error:', error);
+        setAuthError(error.message);
+      } else if (data?.user) {
+        // Re-verify workspace authorization status
+        await checkAuthorization(data.session);
       }
+    } catch (err) {
+      console.error('Unexpected sign-in error:', err);
+      setAuthError('An unexpected error occurred during sign in.');
+    } finally {
+      setEmailLoading(false);
+    }
+  }
+
+  async function signUpWithEmail(event) {
+    event.preventDefault();
+    setAuthError('');
+    setAuthNotice('');
+
+    const trimmedEmail = email.trim();
+    if (!trimmedEmail || !password) {
+      setAuthError('Please enter both an email address and a password.');
+      return;
     }
 
-    justSignedUp.current = true;
-    setAuthNotice(
-      'Account created successfully! Check your inbox if email confirmation is required. An administrator must approve your account access before you can log in.'
-    );
+    if (password.length < 6) {
+      setAuthError('Password must be at least 6 characters long.');
+      return;
+    }
 
-    // Sign out until approval is granted
-    await supabase.auth.signOut();
-    setPassword('');
-  } catch (err) {
-    console.error('Unexpected signup error:', err);
-    setAuthError('An unexpected error occurred while creating your account.');
-  } finally {
-    setEmailLoading(false);
+    setEmailLoading(true);
+
+    try {
+      // 1. Create Supabase Auth user
+      const { data: authData, error: signUpError } = await supabase.auth.signUp({
+        email: trimmedEmail,
+        password
+      });
+
+      if (signUpError) {
+        console.error('Email signup error:', signUpError);
+        setAuthError(signUpError.message);
+        return;
+      }
+
+      const newUser = authData?.user;
+
+      if (newUser) {
+        // 2. Insert user into authorized_users as 'pending' for admin approval
+        const { error: insertError } = await supabase
+          .from('authorized_users')
+          .insert([
+            {
+              user_id: newUser.id,
+              email: trimmedEmail,
+              role: DEFAULT_ROLE,
+              status: 'pending'
+            }
+          ]);
+
+        if (insertError) {
+          console.warn('Could not provision authorized_users entry:', insertError.message);
+        }
+      }
+
+      justSignedUp.current = true;
+      setAuthNotice(
+        'Account created successfully! Check your inbox if email confirmation is required. An administrator must approve your account access before you can log in.'
+      );
+
+      // Sign out until approval is granted
+      await supabase.auth.signOut();
+      setPassword('');
+    } catch (err) {
+      console.error('Unexpected signup error:', err);
+      setAuthError('An unexpected error occurred while creating your account.');
+    } finally {
+      setEmailLoading(false);
+    }
   }
-}
   async function signUpCustomerPortal(event, fullName) {
     setAuthError('');
     setAuthNotice('');
@@ -1193,7 +1195,7 @@ async function signUpWithEmail(event) {
     setActivities([]);
     setTickets([]); setLeads([]); setLeadProducts([]); setEmailLogs([]); setCalendarEvents([]); setQuotes([]); setInvoices([]); setPayments([]); setDocuments([]); setWorkflows([]); setSegments([]);
     setNotifications([]);
-     setQuoteItems([]);
+    setQuoteItems([]);
     setUnreadNotificationCount(0);
     setAuthorizedUsers([]);
     setPortalAccount(null);
@@ -1701,6 +1703,41 @@ async function signUpWithEmail(event) {
     ]);
   }
   async function deleteLead(id) { if (!window.confirm('Delete this lead?')) return; const { error } = await supabase.from('leads').delete().eq('id', id); if (error) { alert(error.message); return; } setLeads(prev => prev.filter(x => x.id !== id)); }
+  
+  async function ensureData(datasets) {
+    const missing = datasets.filter(d => !loadedDataRef.current.has(d));
+    if (!missing.length) return;
+    missing.forEach(d => loadedDataRef.current.add(d));
+    const promises = [];
+    if (missing.includes('leads')) promises.push(fetchLeads(), fetchLeadProducts());
+    if (missing.includes('quotes')) promises.push(fetchQuotes(), fetchQuoteItems());
+    if (missing.includes('invoices')) promises.push(fetchInvoices(), fetchPayments());
+    if (missing.includes('documents')) promises.push(fetchDocuments());
+    if (missing.includes('emailLogs')) promises.push(fetchEmailLogs());
+    if (missing.includes('emailIntegrations')) promises.push(fetchEmailIntegrations());
+    if (missing.includes('calendarEvents')) promises.push(fetchCalendarEvents());
+    if (missing.includes('workflows')) promises.push(fetchWorkflows());
+    if (missing.includes('segments')) promises.push(fetchSegments());
+    if (promises.length) await Promise.all(promises);
+  }
+  function openCompose(defaults = {}) {
+    ensureData(['emailIntegrations']);
+    setComposeDraft(defaults);
+  }
+
+  // Sends through the send-email Edge Function, which also records the email in the log.
+  async function sendEmail(payload) {
+    const { data, error } = await supabase.functions.invoke('send-email', { body: payload });
+    if (error) {
+      let message = error.message;
+      try { const details = await error.context?.json(); if (details?.error) message = details.error; } catch { /* keep the default message */ }
+      fetchEmailLogs();
+      throw new Error(message);
+    }
+    if (data?.error) { fetchEmailLogs(); throw new Error(data.error); }
+    fetchEmailLogs();
+    showToast(data?.logged === false ? 'Email sent, but it could not be saved to the log.' : 'Email sent.');
+  }
   async function addEmailLog(payload) { const { data, error } = await supabase.from('email_logs').insert([{ ...payload, created_by: session.user.id }]).select('*, customers(name,company)').single(); if (error) throw error; setEmailLogs(prev => [data, ...prev]); return data; }
   async function addCalendarEvent(payload) { const { data, error } = await supabase.from('calendar_events').insert([{ ...payload, created_by: session.user.id }]).select('*, customers(name,company)').single(); if (error) throw error; setCalendarEvents(prev => [...prev, data].sort((a, b) => new Date(a.start_at) - new Date(b.start_at))); return data; }
   async function updateCalendarEvent(id, payload) { const { data, error } = await supabase.from('calendar_events').update(payload).eq('id', id).select('*, customers(name,company)').single(); if (error) throw error; setCalendarEvents(prev => prev.map(x => x.id === id ? data : x)); return data; }
@@ -2122,10 +2159,10 @@ async function signUpWithEmail(event) {
   };
   const canManageTicket = ticket => {
     if (authorizationProfile?.role === 'hr') return false;
-    return ['admin','manager','head_of_sales'].includes(authorizationProfile?.role) ||
-    ticket.created_by === session?.user?.id ||
-    ticket.assigned_to === session?.user?.id ||
-    (ticket.source === 'portal' && !ticket.assigned_to);
+    return ['admin', 'manager', 'head_of_sales'].includes(authorizationProfile?.role) ||
+      ticket.created_by === session?.user?.id ||
+      ticket.assigned_to === session?.user?.id ||
+      (ticket.source === 'portal' && !ticket.assigned_to);
   };
 
   async function fetchProfile() {
@@ -2466,7 +2503,7 @@ async function signUpWithEmail(event) {
 
   async function addCustomer(e) {
     e.preventDefault();
-    if (!['admin','manager','head_of_sales','sales'].includes(authorizationProfile?.role)) { setCustomerError('You do not have permission to create customers.'); return; }
+    if (!['admin', 'manager', 'head_of_sales', 'sales'].includes(authorizationProfile?.role)) { setCustomerError('You do not have permission to create customers.'); return; }
     setCustomerError('');
 
     if (!newCustomer.name.trim() || !newCustomer.email.trim()) {
@@ -3181,7 +3218,7 @@ async function signUpWithEmail(event) {
 
   async function assignTicket(id, userId) {
     if (!['admin', 'manager', 'head_of_sales'].includes(authorizationProfile?.role)) { showToast('Only MD, Admin or Head of Sales can assign support tickets.'); return; }
-    const { data, error} = await supabase.from('tickets')
+    const { data, error } = await supabase.from('tickets')
       .update({ assigned_to: userId || null, updated_at: new Date().toISOString() })
       .eq('id', id)
       .select(`*, customers (name, company)`)
@@ -3272,12 +3309,14 @@ async function signUpWithEmail(event) {
       </div>
       <div className="workspace-label">WORKSPACE</div>
       <nav className="nav-sections" style={{ overflowY: "auto", paddingBottom: 12 }}>
-        {rolePanelFor(authorizationProfile?.role) && (() => { const item = rolePanelNav.find(([label,,role]) => role === authorizationProfile?.role); if (!item) return null; const [label, Icon] = item; return (
-          <div className="nav-section role-panel-nav" style={{ marginBottom: 10 }}>
-            <div className="nav-section-title" style={{ fontSize: 11, fontWeight: 700, letterSpacing: '.08em', opacity: .55, padding: '10px 14px 6px', textTransform: 'uppercase' }}>ROLE PANEL</div>
-            <button key={label} className={`nav-item ${page === label ? 'active' : ''}`} onClick={() => { setPage(label); setSidebarOpen(false); }}><Icon size={18} /><span>{label}</span></button>
-          </div>
-        ); })()}
+        {rolePanelFor(authorizationProfile?.role) && (() => {
+          const item = rolePanelNav.find(([label, , role]) => role === authorizationProfile?.role); if (!item) return null; const [label, Icon] = item; return (
+            <div className="nav-section role-panel-nav" style={{ marginBottom: 10 }}>
+              <div className="nav-section-title" style={{ fontSize: 11, fontWeight: 700, letterSpacing: '.08em', opacity: .55, padding: '10px 14px 6px', textTransform: 'uppercase' }}>ROLE PANEL</div>
+              <button key={label} className={`nav-item ${page === label ? 'active' : ''}`} onClick={() => { setPage(label); setSidebarOpen(false); }}><Icon size={18} /><span>{label}</span></button>
+            </div>
+          );
+        })()}
         {navSections.map(section => (
           <div className="nav-section" key={section.title} style={{ marginBottom: 10 }}>
             <div className="nav-section-title" style={{ fontSize: 11, fontWeight: 700, letterSpacing: ".08em", opacity: .55, padding: "10px 14px 6px", textTransform: "uppercase" }}>{section.title}</div>
@@ -3403,104 +3442,104 @@ async function signUpWithEmail(event) {
         </div>
       </header>
       <RefreshContext.Provider value={{ refreshAll, refreshing }}>
-      <section className="page-content">
-        {page === 'Dashboard' && (
-          <Dashboard revenue={revenue} customers={customers} leads={leads} deals={deals} activities={activities} tickets={tickets} setPage={setPage} formatAmount={formatAmount} onSelectCustomer={setSelectedCustomer} onEditCustomer={setEditingCustomer} onDeleteCustomer={deleteCustomer} currentUserId={session.user.id} role={authorizationProfile?.role} />
-        )}
-        {page === 'MD Panel' && authorizationProfile?.role === 'manager' && <MDPanel deals={deals} quotes={quotes} invoices={invoices} customers={customers} formatAmount={formatAmount} onApprove={approveCommercialRecord} onReject={rejectCommercialRecord} />}
-        {page === 'HOS Panel' && authorizationProfile?.role === 'head_of_sales' && <HOSPanel deals={deals} quotes={quotes} invoices={invoices} tickets={tickets} formatAmount={formatAmount} currentUserId={session.user.id} role={authorizationProfile?.role} setPage={setPage} onApprove={approveCommercialRecord} onReject={rejectCommercialRecord} />}
-        {page === 'HR Panel' && authorizationProfile?.role === 'hr' && <HRPanel deals={deals} quotes={quotes} invoices={invoices} tickets={tickets} customers={customers} formatAmount={formatAmount} />}
-        {page === 'Technical Support Panel' && authorizationProfile?.role === 'technical_support' && <TechnicalSupportPanel tickets={tickets} customers={customers} formatAmount={formatAmount} currentUserId={session.user.id} ticketError={ticketError} onAddTicket={() => { setTicketError(''); setNewTicket(t => ({ ...t, customer_id: '' })); setShowTicketForm(true); }} onStatusChange={updateTicketStatus} onDeleteTicket={deleteTicket} onEditTicket={ticket => { setEditTicketError(''); setEditingTicket(ticket); }} onViewTicket={setSelectedTicket} isAdmin={isAdminRole(authorizationProfile?.role)} role={authorizationProfile?.role} canManage={canManageTicket} staffName={staffName} staffOptions={getStaffOptions()} onAssign={assignTicket} setPage={setPage} />}
-        {page === 'Customers' && (
-          <Customers customers={filteredCustomers}
-            allCustomers={customers}
-            search={search}
-            setSearch={setSearch}
-            statusFilter={statusFilter}
-            setStatusFilter={setStatusFilter}
-            deals={deals}
-            onImport={importCustomers}
-            onAdd={() => { setCustomerError(''); setShowCustomerForm(true); }}
-            formatAmount={formatAmount}
-            onSelectCustomer={setSelectedCustomer}
-            onDeleteCustomer={deleteCustomer}
-            onEditCustomer={setEditingCustomer}
-            currentUserId={session.user.id}
-            role={authorizationProfile?.role}
-          />
-        )}
-        {page === 'Products' && <Products products={products} supportEngineers={supportEngineers} solutionSupport={solutionSupport} onAdd={addProduct} onUpdate={updateProduct} onDelete={deleteProduct} onUpdateFamilySupport={syncSolutionSupport} currentUserId={session.user.id} isAdmin={isSystemAdminOrMD(authorizationProfile?.role)} />}
-        {page === 'Technical Support' && <SupportEngineers supportEngineers={supportEngineers} solutionSupport={solutionSupport} onAdd={addSupportEngineer} onUpdate={updateSupportEngineer} onDeactivate={deactivateSupportEngineer} isAdmin={isSystemAdminOrMD(authorizationProfile?.role)} />}
-        {page === 'Leads' && <Leads leads={leads} customers={customers} products={products} leadProducts={leadProducts} onAdd={addLead} onUpdate={updateLead} onSyncProducts={syncLeadProducts} onDelete={deleteLead} currentUserId={session.user.id} isAdmin={['admin','manager','head_of_sales'].includes(authorizationProfile?.role)} />}
-        {page === 'Email' && <EmailPage emailLogs={emailLogs} customers={customers} integrations={emailIntegrations} loading={emailIntegrationLoading} error={emailIntegrationError} onConnect={connectEmailProvider} onDisconnect={disconnectEmailProvider} onAdd={async payload => { try { await addEmailLog(payload); showToast('Email logged.'); } catch (e) { alert(e.message); } }} />}
-        {page === 'Calendar' && <CalendarPage events={calendarEvents} customers={customers} onAdd={addCalendarEvent} onUpdate={updateCalendarEvent} onDelete={deleteCalendarEvent} onRefresh={fetchCalendarEvents} />}
-        {page === 'Quotes' && <Quotes quotes={quotes} products={products} quoteItems={quoteItems} onLoadQuoteItems={loadQuoteItems} onAdd={addQuote} onUpdate={updateQuote} onDelete={deleteQuote} formatAmount={formatAmount} currentUserId={session.user.id} isAdmin={isAdminRole(authorizationProfile?.role)} role={authorizationProfile?.role} onApprove={approveCommercialRecord} onReject={rejectCommercialRecord} />}
-        {page === 'Invoices' && <Invoices invoices={invoices} payments={payments} customers={customers} products={products} onAdd={addInvoice} onUpdate={updateInvoice} onDelete={deleteInvoice} onAddPayment={addPayment} formatAmount={formatAmount} currentUserId={session.user.id} isAdmin={isAdminRole(authorizationProfile?.role)} role={authorizationProfile?.role} onApprove={approveCommercialRecord} onReject={rejectCommercialRecord} />}
-        {page === 'Documents' && <Documents documents={documents} customers={customers} onUpload={uploadDocument} onDownload={downloadDocument} onDelete={deleteDocument} />}
-        {page === 'Automation' && <Automation workflows={workflows} onAdd={addWorkflow} onUpdate={updateWorkflow} />}
-        {page === 'Segments' && <Segments segments={segments} customers={customers} onAdd={addSegment} onUpdate={updateSegment} />}
-        {page === 'Forecast' && <Forecast deals={deals} formatAmount={formatAmount} />}
-        {page === 'Pipeline' && (
-          <Pipeline
-            deals={deals}
-            customers={customers}
-            dealSupport={dealSupport}
-            supportEngineers={supportEngineers}
-            moveDeal={moveDeal}
-            deleteDeal={deleteDeal}
-            formatAmount={formatAmount}
-            currentUserId={session.user.id}
-            ownerProfiles={ownerProfiles}
-            isAdmin={isAdminRole(authorizationProfile?.role)}
-            role={authorizationProfile?.role}
-            onApprove={approveCommercialRecord}
-            onReject={rejectCommercialRecord}
-            onEdit={deal => {
-              setEditDealError('');
-              setEditingDeal({
-                ...deal,
-                amount: String(deal.amount ?? ''),
-                product_ids: dealProducts.filter(row => row.deal_id === deal.id).map(row => row.product_id),
-                support_engineer_ids: dealSupport.filter(row => row.deal_id === deal.id).map(row => row.support_engineer_id)
-              });
-            }}
-            onAdd={() => {
-              setDealError('');
-              setNewDeal({ title: '', company: '', amount: '', stage: 'New Lead', customer_id: '', contact_name: '', contact_email: '', contact_phone: '', new_customer_name: '', new_customer_email: '', new_customer_phone: '', new_customer_company: '', new_customer_job_title: '', new_customer_birthday: '', closure_start_at: '', closure_end_at: '', support_engineer_ids: [] });
-              setSelectedDealProductIds([]);
-              setExpandedDealVendor(null);
-              setShowDealForm(true);
-            }}
-          />
-        )}
-        {page === 'Activities' && (
-          <Activities activities={activities} customers={customers} ownerProfiles={ownerProfiles} currentUserEmail={session.user.email} onAdd={() => { setActivityError(''); setNewActivity(a => ({ ...a, customer_id: '' })); setShowActivityForm(true); }} onStatusChange={updateActivityStatus} onDelete={deleteActivity} onEdit={activity => { setEditActivityError(''); setEditingActivity({ ...activity, activity_date: formatDateTimeLocal(activity.activity_date) }); }} onView={setSelectedActivity} currentUserId={session.user.id} isAdmin={isSystemAdminOrMD(authorizationProfile?.role)} />
-        )}
-        {page === 'Tickets' && authorizationProfile?.role !== 'technical_support' && (
-          <Tickets
-            tickets={tickets}
-            error={ticketError}
-            onAdd={() => { setTicketError(''); setNewTicket(t => ({ ...t, customer_id: '' })); setShowTicketForm(true); }}
-            onStatusChange={updateTicketStatus}
-            onDelete={deleteTicket}
-            onEdit={ticket => { setEditTicketError(''); setEditingTicket(ticket); }}
-            onView={setSelectedTicket}
-            currentUserId={session.user.id}
-            isAdmin={isAdminRole(authorizationProfile?.role)}
-            role={authorizationProfile?.role}
-            canCreate={['admin','manager','head_of_sales'].includes(authorizationProfile?.role)}
-            canManage={canManageTicket}
-            staffName={staffName}
-            staffOptions={getStaffOptions()}
-            onAssign={assignTicket}
-          />
-        )}
-        {page === 'Chat' && <Chat />}
-        {page === 'Reports' && <AdvancedReports customers={customers} deals={deals} activities={activities} tickets={tickets} leads={leads} quotes={quotes} invoices={invoices} payments={payments} formatAmount={formatAmount} />}
-        {page === 'Email Logs' && <EmailLogs emailLogs={emailLogs} customers={customers} onAdd={addEmailLog} />}
-        {page === 'UserManagement' && <UserManagement users={authorizedUsers} loading={usersLoading} error={usersError} onRefresh={fetchAuthorizedUsers} onUpdateUser={updateAuthorizedUser} currentUserId={session?.user?.id} pendingPortalAccounts={pendingPortalAccounts} portalRequestsLoading={portalRequestsLoading} portalRequestsError={portalRequestsError} portalRequestsNotice={portalRequestsNotice} onRefreshPortalRequests={fetchPendingPortalAccounts} onReviewPortalRequest={reviewPortalRequest} portalRequestActionId={portalRequestActionId} />}
-        {page === 'Settings' && <SettingsPage currency={currency} setCurrency={setCurrency} theme={theme} setTheme={setTheme} />}
-      </section>
+        <section className="page-content">
+          {page === 'Dashboard' && (
+            <Dashboard revenue={revenue} customers={customers} leads={leads} deals={deals} activities={activities} tickets={tickets} setPage={setPage} formatAmount={formatAmount} onSelectCustomer={setSelectedCustomer} onEditCustomer={setEditingCustomer} onDeleteCustomer={deleteCustomer} currentUserId={session.user.id} role={authorizationProfile?.role} />
+          )}
+          {page === 'MD Panel' && authorizationProfile?.role === 'manager' && <MDPanel deals={deals} quotes={quotes} invoices={invoices} customers={customers} formatAmount={formatAmount} onApprove={approveCommercialRecord} onReject={rejectCommercialRecord} />}
+          {page === 'HOS Panel' && authorizationProfile?.role === 'head_of_sales' && <HOSPanel deals={deals} quotes={quotes} invoices={invoices} tickets={tickets} formatAmount={formatAmount} currentUserId={session.user.id} role={authorizationProfile?.role} setPage={setPage} onApprove={approveCommercialRecord} onReject={rejectCommercialRecord} />}
+          {page === 'HR Panel' && authorizationProfile?.role === 'hr' && <HRPanel deals={deals} quotes={quotes} invoices={invoices} tickets={tickets} customers={customers} formatAmount={formatAmount} />}
+          {page === 'Technical Support Panel' && authorizationProfile?.role === 'technical_support' && <TechnicalSupportPanel tickets={tickets} customers={customers} formatAmount={formatAmount} currentUserId={session.user.id} ticketError={ticketError} onAddTicket={() => { setTicketError(''); setNewTicket(t => ({ ...t, customer_id: '' })); setShowTicketForm(true); }} onStatusChange={updateTicketStatus} onDeleteTicket={deleteTicket} onEditTicket={ticket => { setEditTicketError(''); setEditingTicket(ticket); }} onViewTicket={setSelectedTicket} isAdmin={isAdminRole(authorizationProfile?.role)} role={authorizationProfile?.role} canManage={canManageTicket} staffName={staffName} staffOptions={getStaffOptions()} onAssign={assignTicket} setPage={setPage} />}
+          {page === 'Customers' && (
+            <Customers customers={filteredCustomers}
+              allCustomers={customers}
+              search={search}
+              setSearch={setSearch}
+              statusFilter={statusFilter}
+              setStatusFilter={setStatusFilter}
+              deals={deals}
+              onImport={importCustomers}
+              onAdd={() => { setCustomerError(''); setShowCustomerForm(true); }}
+              formatAmount={formatAmount}
+              onSelectCustomer={setSelectedCustomer}
+              onDeleteCustomer={deleteCustomer}
+              onEditCustomer={setEditingCustomer}
+              currentUserId={session.user.id}
+              role={authorizationProfile?.role}
+            />
+          )}
+          {page === 'Products' && <Products products={products} supportEngineers={supportEngineers} solutionSupport={solutionSupport} onAdd={addProduct} onUpdate={updateProduct} onDelete={deleteProduct} onUpdateFamilySupport={syncSolutionSupport} currentUserId={session.user.id} isAdmin={isSystemAdminOrMD(authorizationProfile?.role)} />}
+          {page === 'Technical Support' && <SupportEngineers supportEngineers={supportEngineers} solutionSupport={solutionSupport} onAdd={addSupportEngineer} onUpdate={updateSupportEngineer} onDeactivate={deactivateSupportEngineer} isAdmin={isSystemAdminOrMD(authorizationProfile?.role)} />}
+          {page === 'Leads' && <Leads leads={leads} customers={customers} products={products} leadProducts={leadProducts} onAdd={addLead} onUpdate={updateLead} onSyncProducts={syncLeadProducts} onDelete={deleteLead} currentUserId={session.user.id} isAdmin={['admin', 'manager', 'head_of_sales'].includes(authorizationProfile?.role)} />}
+          {page === 'Email' && <EmailPage emailLogs={emailLogs} customers={customers} integrations={emailIntegrations} loading={emailIntegrationLoading} error={emailIntegrationError} onConnect={connectEmailProvider} onDisconnect={disconnectEmailProvider} onCompose={() => openCompose()} onAdd={async payload => { try { await addEmailLog(payload); showToast('Email logged.'); } catch (e) { alert(e.message); } }} />}
+          {page === 'Calendar' && <CalendarPage events={calendarEvents} customers={customers} onAdd={addCalendarEvent} onUpdate={updateCalendarEvent} onDelete={deleteCalendarEvent} onRefresh={fetchCalendarEvents} />}
+          {page === 'Quotes' && <Quotes quotes={quotes} products={products} quoteItems={quoteItems} onLoadQuoteItems={loadQuoteItems} onAdd={addQuote} onUpdate={updateQuote} onDelete={deleteQuote} formatAmount={formatAmount} currentUserId={session.user.id} isAdmin={isAdminRole(authorizationProfile?.role)} role={authorizationProfile?.role} onApprove={approveCommercialRecord} onReject={rejectCommercialRecord} />}
+          {page === 'Invoices' && <Invoices invoices={invoices} payments={payments} customers={customers} products={products} onAdd={addInvoice} onUpdate={updateInvoice} onDelete={deleteInvoice} onAddPayment={addPayment} formatAmount={formatAmount} currentUserId={session.user.id} isAdmin={isAdminRole(authorizationProfile?.role)} role={authorizationProfile?.role} onApprove={approveCommercialRecord} onReject={rejectCommercialRecord} />}
+          {page === 'Documents' && <Documents documents={documents} customers={customers} onUpload={uploadDocument} onDownload={downloadDocument} onDelete={deleteDocument} />}
+          {page === 'Automation' && <Automation workflows={workflows} onAdd={addWorkflow} onUpdate={updateWorkflow} />}
+          {page === 'Segments' && <Segments segments={segments} customers={customers} onAdd={addSegment} onUpdate={updateSegment} />}
+          {page === 'Forecast' && <Forecast deals={deals} formatAmount={formatAmount} />}
+          {page === 'Pipeline' && (
+            <Pipeline
+              deals={deals}
+              customers={customers}
+              dealSupport={dealSupport}
+              supportEngineers={supportEngineers}
+              moveDeal={moveDeal}
+              deleteDeal={deleteDeal}
+              formatAmount={formatAmount}
+              currentUserId={session.user.id}
+              ownerProfiles={ownerProfiles}
+              isAdmin={isAdminRole(authorizationProfile?.role)}
+              role={authorizationProfile?.role}
+              onApprove={approveCommercialRecord}
+              onReject={rejectCommercialRecord}
+              onEdit={deal => {
+                setEditDealError('');
+                setEditingDeal({
+                  ...deal,
+                  amount: String(deal.amount ?? ''),
+                  product_ids: dealProducts.filter(row => row.deal_id === deal.id).map(row => row.product_id),
+                  support_engineer_ids: dealSupport.filter(row => row.deal_id === deal.id).map(row => row.support_engineer_id)
+                });
+              }}
+              onAdd={() => {
+                setDealError('');
+                setNewDeal({ title: '', company: '', amount: '', stage: 'New Lead', customer_id: '', contact_name: '', contact_email: '', contact_phone: '', new_customer_name: '', new_customer_email: '', new_customer_phone: '', new_customer_company: '', new_customer_job_title: '', new_customer_birthday: '', closure_start_at: '', closure_end_at: '', support_engineer_ids: [] });
+                setSelectedDealProductIds([]);
+                setExpandedDealVendor(null);
+                setShowDealForm(true);
+              }}
+            />
+          )}
+          {page === 'Activities' && (
+            <Activities activities={activities} customers={customers} ownerProfiles={ownerProfiles} currentUserEmail={session.user.email} onAdd={() => { setActivityError(''); setNewActivity(a => ({ ...a, customer_id: '' })); setShowActivityForm(true); }} onStatusChange={updateActivityStatus} onDelete={deleteActivity} onEdit={activity => { setEditActivityError(''); setEditingActivity({ ...activity, activity_date: formatDateTimeLocal(activity.activity_date) }); }} onView={setSelectedActivity} currentUserId={session.user.id} isAdmin={isSystemAdminOrMD(authorizationProfile?.role)} />
+          )}
+          {page === 'Tickets' && authorizationProfile?.role !== 'technical_support' && (
+            <Tickets
+              tickets={tickets}
+              error={ticketError}
+              onAdd={() => { setTicketError(''); setNewTicket(t => ({ ...t, customer_id: '' })); setShowTicketForm(true); }}
+              onStatusChange={updateTicketStatus}
+              onDelete={deleteTicket}
+              onEdit={ticket => { setEditTicketError(''); setEditingTicket(ticket); }}
+              onView={setSelectedTicket}
+              currentUserId={session.user.id}
+              isAdmin={isAdminRole(authorizationProfile?.role)}
+              role={authorizationProfile?.role}
+              canCreate={['admin', 'manager', 'head_of_sales'].includes(authorizationProfile?.role)}
+              canManage={canManageTicket}
+              staffName={staffName}
+              staffOptions={getStaffOptions()}
+              onAssign={assignTicket}
+            />
+          )}
+          {page === 'Chat' && <Chat />}
+          {page === 'Reports' && <AdvancedReports customers={customers} deals={deals} activities={activities} tickets={tickets} leads={leads} quotes={quotes} invoices={invoices} payments={payments} formatAmount={formatAmount} />}
+          {page === 'Email Logs' && <EmailLogs emailLogs={emailLogs} customers={customers} onAdd={addEmailLog} />}
+          {page === 'UserManagement' && <UserManagement users={authorizedUsers} loading={usersLoading} error={usersError} onRefresh={fetchAuthorizedUsers} onUpdateUser={updateAuthorizedUser} currentUserId={session?.user?.id} pendingPortalAccounts={pendingPortalAccounts} portalRequestsLoading={portalRequestsLoading} portalRequestsError={portalRequestsError} portalRequestsNotice={portalRequestsNotice} onRefreshPortalRequests={fetchPendingPortalAccounts} onReviewPortalRequest={reviewPortalRequest} portalRequestActionId={portalRequestActionId} />}
+          {page === 'Settings' && <SettingsPage currency={currency} setCurrency={setCurrency} theme={theme} setTheme={setTheme} />}
+        </section>
       </RefreshContext.Provider>
     </main>
     {showCustomerForm && (
@@ -4294,6 +4333,7 @@ async function signUpWithEmail(event) {
     )}
     {selectedActivity && <ActivityDetail activity={selectedActivity} customer={customers.find(c => c.id === selectedActivity.customer_id)} ownerProfiles={ownerProfiles} currentUserEmail={session?.user?.email} onClose={() => setSelectedActivity(null)} onEdit={activity => { setSelectedActivity(null); setEditActivityError(''); setEditingActivity({ ...activity, activity_date: formatDateTimeLocal(activity.activity_date) }); }} />}
     {editingActivity && <div className="modal-backdrop" onClick={() => setEditingActivity(null)}><form className="modal" onSubmit={updateActivity} onClick={e => e.stopPropagation()}><div className="modal-heading"><h2>Edit Activity</h2><button type="button" className="icon-btn" onClick={() => setEditingActivity(null)}><X size={18} /></button></div>{editActivityError && <p className="form-error">{editActivityError}</p>}<label>Activity title<input type="text" value={editingActivity.title || ''} onChange={e => setEditingActivity({ ...editingActivity, title: e.target.value })} required /></label><label>Activity type<select value={editingActivity.type || 'Task'} onChange={e => setEditingActivity({ ...editingActivity, type: e.target.value })}><option value="Task">Task</option><option value="Call">Call</option><option value="Meeting">Meeting</option><option value="Email">Email</option><option value="Follow-up">Follow-up</option></select></label><label>Due date and time<input type="datetime-local" value={editingActivity.activity_date || ''} onChange={e => setEditingActivity({ ...editingActivity, activity_date: e.target.value })} /></label><div className="activity-form-grid"><label>Priority<select value={editingActivity.priority || 'Medium'} onChange={e => setEditingActivity({ ...editingActivity, priority: e.target.value })}><option value="Low">Low</option><option value="Medium">Medium</option><option value="High">High</option><option value="Urgent">Urgent</option></select></label><label>Assign to<select value={editingActivity.assigned_to || session.user.id} onChange={e => setEditingActivity({ ...editingActivity, assigned_to: e.target.value })}><option value={session.user.id}>{profileName.trim() || session.user.email || 'Me'} (me)</option>{Object.entries(ownerProfiles).filter(([id, name]) => id !== session.user.id).map(([id, name]) => <option key={id} value={id}>{name || 'Team member'}</option>)}</select></label></div><label>Customer<select value={editingActivity.customer_id || ''} onChange={e => setEditingActivity({ ...editingActivity, customer_id: e.target.value })}><option value="">No customer selected</option>{customers.map(customer => <option key={customer.id} value={customer.id}>{customer.name}{customer.company ? ` — ${customer.company}` : ''}</option>)}</select></label><label>Notes<textarea value={editingActivity.notes || ''} onChange={e => setEditingActivity({ ...editingActivity, notes: e.target.value })} rows="4" /></label><label>Status<select value={editingActivity.status || 'Scheduled'} onChange={e => setEditingActivity({ ...editingActivity, status: e.target.value })}><option value="Scheduled">Scheduled</option><option value="In Progress">In Progress</option><option value="Completed">Completed</option><option value="Cancelled">Cancelled</option></select></label><div className="modal-actions"><button type="button" className="secondary-btn" onClick={() => setEditingActivity(null)}>Cancel</button><button type="submit" className="primary-btn" disabled={editActivitySaving}>{editActivitySaving ? 'Saving...' : 'Save changes'}</button></div></form></div>}
+    {composeDraft && <ComposeEmailModal integrations={emailIntegrations} customers={customers} defaults={composeDraft} userId={session.user.id} onSend={sendEmail} onClose={() => setComposeDraft(null)} />}
     {selectedTicket && <TicketDetail ticket={tickets.find(t => t.id === selectedTicket.id) || selectedTicket} onRefresh={fetchTickets} staffName={staffName} staffOptions={getStaffOptions()} currentUserId={session.user.id} canManage={canManageTicket} onStatusChange={updateTicketStatus} onAssign={assignTicket} onClose={() => setSelectedTicket(null)} onEdit={ticket => { setSelectedTicket(null); setEditTicketError(''); setEditingTicket(ticket); }} />}
     {editingTicket && <div className="modal-backdrop" onClick={() => setEditingTicket(null)}><form className="modal" onSubmit={updateTicket} onClick={e => e.stopPropagation()}><div className="modal-heading"><h2>Edit Ticket</h2><button type="button" className="icon-btn" onClick={() => setEditingTicket(null)}><X size={18} /></button></div>{editTicketError && <p className="form-error">{editTicketError}</p>}<label>Ticket title<input type="text" value={editingTicket.title || ''} onChange={e => setEditingTicket({ ...editingTicket, title: e.target.value })} required /></label><label>Description<textarea value={editingTicket.description || ''} onChange={e => setEditingTicket({ ...editingTicket, description: e.target.value })} rows="4" /></label><label>Customer<select value={editingTicket.customer_id || ''} onChange={e => setEditingTicket({ ...editingTicket, customer_id: e.target.value })}><option value="">No customer selected</option>{customers.map(customer => <option key={customer.id} value={customer.id}>{customer.name}{customer.company ? ` — ${customer.company}` : ''}</option>)}</select></label><label>Assign to<select value={editingTicket.assigned_to || ''} onChange={e => setEditingTicket({ ...editingTicket, assigned_to: e.target.value })}><option value="">Unassigned</option>{getStaffOptions().map(u => <option key={u.user_id} value={u.user_id}>{staffName(u.user_id)}</option>)}</select></label>{editingTicket.source !== 'portal' && <label className="portal-check-row"><input type="checkbox" checked={!!editingTicket.portal_visible} onChange={e => setEditingTicket({ ...editingTicket, portal_visible: e.target.checked })} />Show this ticket in the customer's portal (needs a linked customer)</label>}<label>Category<select value={editingTicket.category || 'General'} onChange={e => setEditingTicket({ ...editingTicket, category: e.target.value })}><option value="General">General</option><option value="Technical">Technical</option><option value="Billing">Billing</option><option value="Account">Account</option><option value="Feature Request">Feature Request</option></select></label><label>Priority<select value={editingTicket.priority || 'Medium'} onChange={e => setEditingTicket({ ...editingTicket, priority: e.target.value })}><option value="Low">Low</option><option value="Medium">Medium</option><option value="High">High</option><option value="Urgent">Urgent</option></select></label><label>Status<select value={editingTicket.status || 'Open'} onChange={e => setEditingTicket({ ...editingTicket, status: e.target.value })}><option value="Open">Open</option><option value="In Progress">In Progress</option><option value="Resolved">Resolved</option><option value="Closed">Closed</option></select></label><div className="modal-actions"><button type="button" className="secondary-btn" onClick={() => setEditingTicket(null)}>Cancel</button><button type="submit" className="primary-btn" disabled={editTicketSaving}>{editTicketSaving ? 'Saving...' : 'Save changes'}</button></div></form></div>}
     {showTicketForm && (
@@ -4687,14 +4727,14 @@ const closureTimerText = endAt => {
 
 const ownerColor = userId => {
   if (!userId) return '#98a2b3';
-  
+
   let hash = 0;
   for (let i = 0; i < userId.length; i++) {
     hash = ((hash << 5) - hash) + userId.charCodeAt(i);
   }
-  
+
   const hue = Math.abs(hash) % 360;
-  
+
   return `hsl(${hue}, 65%, 50%)`;
 };
 
@@ -4740,7 +4780,7 @@ function downloadCSV(filename, header, rows) {
 function StatCard({ label, value, change, hint, icon, tone, onClick }) {
   const clickable = typeof onClick === 'function';
   return (
-    <div className={`stat-card${clickable ? ' stat-card-clickable' : ''}`} onClick={onClick} role={clickable ? 'button' : undefined} tabIndex={clickable ? 0 : undefined} onKeyDown={event => { if (clickable && (event.key === 'Enter' || event.key === ' ')) onClick(event); }}> 
+    <div className={`stat-card${clickable ? ' stat-card-clickable' : ''}`} onClick={onClick} role={clickable ? 'button' : undefined} tabIndex={clickable ? 0 : undefined} onKeyDown={event => { if (clickable && (event.key === 'Enter' || event.key === ' ')) onClick(event); }}>
       <div className={`stat-icon ${tone}`}>{icon}</div>
       <div className="stat-label">{label}</div>
       <div className="stat-value">{value}</div>
@@ -5074,7 +5114,7 @@ function Customers({ customers, allCustomers, deals, search, setSearch, statusFi
 
   return (
     <>
-      <PageHeading eyebrow="RELATIONSHIPS" title="Customers" description="Manage customer contacts, job titles, birthdays and relationships." action={['admin','manager','head_of_sales','sales'].includes(role) ? 'New customer' : undefined} onAction={['admin','manager','head_of_sales','sales'].includes(role) ? onAdd : undefined} />
+      <PageHeading eyebrow="RELATIONSHIPS" title="Customers" description="Manage customer contacts, job titles, birthdays and relationships." action={['admin', 'manager', 'head_of_sales', 'sales'].includes(role) ? 'New customer' : undefined} onAction={['admin', 'manager', 'head_of_sales', 'sales'].includes(role) ? onAdd : undefined} />
       <div className="panel">
         <div className="panel-heading">
           <div>
@@ -5975,12 +6015,136 @@ function Leads({ leads, customers, products, leadProducts, onAdd, onUpdate, onSy
     </div>}
   </>;
 }
+function ComposeEmailModal({ integrations, customers, defaults = {}, userId, onSend, onClose }) {
+  const accounts = integrations.filter(x => x.status === 'connected');
+  const [provider, setProvider] = useState(accounts[0]?.provider || '');
+  const [customerId, setCustomerId] = useState(defaults.customer_id || '');
+  const [to, setTo] = useState(defaults.to || '');
+  const [cc, setCc] = useState('');
+  const [bcc, setBcc] = useState('');
+  const [showCc, setShowCc] = useState(false);
+  const [subject, setSubject] = useState(defaults.subject || '');
+  const [body, setBody] = useState(defaults.body || '');
+  const [signature, setSignature] = useState('');
+  const [useSignature, setUseSignature] = useState(true);
+  const [showSignature, setShowSignature] = useState(false);
+  const [signatureSaving, setSignatureSaving] = useState(false);
+  const [sending, setSending] = useState(false);
+  const [error, setError] = useState('');
 
-function EmailPage({ emailLogs, customers, integrations, loading, error, onConnect, onDisconnect, onAdd }) {
+  // The connected accounts may finish loading after the window opens.
+  useEffect(() => {
+    if (!provider && accounts[0]) setProvider(accounts[0].provider);
+  }, [integrations]);
+
+  useEffect(() => {
+    let cancelled = false;
+    supabase.from('user_profiles').select('email_signature').eq('user_id', userId).maybeSingle()
+      .then(({ data }) => { if (!cancelled && data?.email_signature) setSignature(data.email_signature); });
+    return () => { cancelled = true; };
+  }, [userId]);
+
+  const pickCustomer = id => {
+    setCustomerId(id);
+    const customer = customers.find(c => c.id === id);
+    if (customer?.email) setTo(customer.email);
+  };
+
+  async function saveSignature() {
+    setSignatureSaving(true);
+    const { error: saveError } = await supabase.from('user_profiles').upsert({ user_id: userId, email_signature: signature.trim() || null, updated_at: new Date().toISOString() });
+    setSignatureSaving(false);
+    if (saveError) setError(`Could not save your signature: ${saveError.message}`);
+    else { setError(''); setShowSignature(false); }
+  }
+
+  const submit = async event => {
+    event.preventDefault();
+    setError('');
+    if (!provider) { setError('Connect a Gmail or Outlook account first.'); return; }
+    if (!to.trim()) { setError('Enter at least one recipient.'); return; }
+    setSending(true);
+    try {
+      const finalBody = useSignature && signature.trim() ? `${body.trimEnd()}\n\n-- \n${signature.trim()}` : body;
+      await onSend({ provider, to: to.trim(), cc: cc.trim(), bcc: bcc.trim(), subject: subject.trim(), body: finalBody, customer_id: customerId || null });
+      onClose();
+    } catch (err) {
+      setError(err.message || 'The email could not be sent.');
+    } finally {
+      setSending(false);
+    }
+  };
+
+  return (
+    <div className="modal-backdrop">
+      <form className="modal modal-wide compose-modal" onSubmit={submit}>
+        <div className="modal-heading">
+          <div><h2>New email</h2><p>Sent from your connected account and saved to the customer's history.</p></div>
+          <button type="button" className="icon-btn" onClick={onClose} disabled={sending} aria-label="Close compose email"><X size={18} /></button>
+        </div>
+        {accounts.length === 0 ? (
+          <>
+            <p className="detail-empty">Connect Gmail or Outlook on the Email page before sending email from here.</p>
+            <div className="modal-actions"><button type="button" className="primary-btn" onClick={onClose}>Close</button></div>
+          </>
+        ) : (
+          <>
+            {error && <div className="form-error" role="alert">{error}</div>}
+            <div className="compose-row">
+              <label>From
+                <select value={provider} onChange={e => setProvider(e.target.value)}>
+                  {accounts.map(a => <option key={a.id} value={a.provider}>{a.email_address || a.provider} ({a.provider === 'gmail' ? 'Gmail' : 'Outlook'})</option>)}
+                </select>
+              </label>
+              <label>Customer (optional)
+                <select value={customerId} onChange={e => pickCustomer(e.target.value)}>
+                  <option value="">Not linked to a customer</option>
+                  {customers.map(c => <option key={c.id} value={c.id}>{c.name}{c.company ? ` — ${c.company}` : ''}</option>)}
+                </select>
+              </label>
+            </div>
+            <label>To
+              <input type="text" value={to} onChange={e => setTo(e.target.value)} placeholder="name@company.com (separate several with commas)" required />
+            </label>
+            {showCc ? (
+              <div className="compose-row">
+                <label>Cc<input type="text" value={cc} onChange={e => setCc(e.target.value)} placeholder="Optional" /></label>
+                <label>Bcc<input type="text" value={bcc} onChange={e => setBcc(e.target.value)} placeholder="Optional" /></label>
+              </div>
+            ) : (
+              <button type="button" className="text-btn compose-link" onClick={() => setShowCc(true)}>+ Add Cc / Bcc</button>
+            )}
+            <label>Subject
+              <input value={subject} onChange={e => setSubject(e.target.value)} maxLength={300} required />
+            </label>
+            <label>Message
+              <textarea rows="9" value={body} onChange={e => setBody(e.target.value)} required />
+            </label>
+            <div className="compose-signature">
+              <label className="compose-check"><input type="checkbox" checked={useSignature} onChange={e => setUseSignature(e.target.checked)} />Add my signature</label>
+              <button type="button" className="text-btn" onClick={() => setShowSignature(v => !v)}>{showSignature ? 'Hide signature' : signature ? 'Edit signature' : 'Create signature'}</button>
+            </div>
+            {showSignature && (
+              <div className="compose-signature-editor">
+                <textarea rows="4" value={signature} onChange={e => setSignature(e.target.value)} placeholder={'Your name\nYour title · Company\nPhone'} maxLength={1000} />
+                <button type="button" className="secondary-btn" onClick={saveSignature} disabled={signatureSaving}>{signatureSaving ? 'Saving…' : 'Save signature'}</button>
+              </div>
+            )}
+            <div className="modal-actions">
+              <button type="button" className="secondary-btn" onClick={onClose} disabled={sending}>Cancel</button>
+              <button type="submit" className="primary-btn" disabled={sending}>{sending ? 'Sending…' : 'Send email'}</button>
+            </div>
+          </>
+        )}
+      </form>
+    </div>
+  );
+}
+function EmailPage({ emailLogs, customers, integrations, loading, error, onConnect, onDisconnect, onAdd, onCompose }) {
   const [showLog, setShowLog] = useState(false);
   useEffect(() => { const handler = () => setShowLog(true); window.addEventListener('orbit-open-email-log', handler); return () => window.removeEventListener('orbit-open-email-log', handler); }, []);
   return <>
-    <PageHeading eyebrow="COMMUNICATIONS" title="Email" description="Connect Gmail or Outlook and keep customer communication in your CRM." />
+    <PageHeading eyebrow="COMMUNICATIONS" title="Email" description="Connect Gmail or Outlook, send email from inside the CRM, and keep customer communication in one place." action="Compose email" onAction={onCompose} />
     <div className="stats-grid">
       <StatCard label="Connected accounts" value={integrations.filter(x => x.status === 'connected').length} hint="Gmail and Outlook" tone="blue" icon="@" />
       <StatCard label="Email logs" value={emailLogs.length} hint="CRM communication history" tone="green" icon="✉" />
@@ -6360,15 +6524,15 @@ function CalendarPage({ events = [], customers = [], onAdd, onUpdate, onDelete, 
           eventClick={info => openEdit(info.event)}
           eventDrop={updateCalendarPosition}
           eventResize={updateCalendarPosition}
-          eventTimeFormat={{ hour:'numeric', minute:'2-digit', meridiem:'short' }}
+          eventTimeFormat={{ hour: 'numeric', minute: '2-digit', meridiem: 'short' }}
           eventDisplay="block"
         />
         <div className="orbit-calendar-legend">
-          <span className="orbit-calendar-legend-item"><span className="orbit-calendar-legend-dot" style={{ background:'#10b981' }} />Meeting / Demo</span>
-          <span className="orbit-calendar-legend-item"><span className="orbit-calendar-legend-dot" style={{ background:'#6366f1' }} />Follow-up</span>
-          <span className="orbit-calendar-legend-item"><span className="orbit-calendar-legend-dot" style={{ background:'#0ea5e9' }} />Call</span>
-          <span className="orbit-calendar-legend-item"><span className="orbit-calendar-legend-dot" style={{ background:'#f59e0b' }} />Reminder</span>
-          <span className="orbit-calendar-legend-item"><span className="orbit-calendar-legend-dot" style={{ background:'#8b5cf6' }} />Task</span>
+          <span className="orbit-calendar-legend-item"><span className="orbit-calendar-legend-dot" style={{ background: '#10b981' }} />Meeting / Demo</span>
+          <span className="orbit-calendar-legend-item"><span className="orbit-calendar-legend-dot" style={{ background: '#6366f1' }} />Follow-up</span>
+          <span className="orbit-calendar-legend-item"><span className="orbit-calendar-legend-dot" style={{ background: '#0ea5e9' }} />Call</span>
+          <span className="orbit-calendar-legend-item"><span className="orbit-calendar-legend-dot" style={{ background: '#f59e0b' }} />Reminder</span>
+          <span className="orbit-calendar-legend-item"><span className="orbit-calendar-legend-dot" style={{ background: '#8b5cf6' }} />Task</span>
         </div>
       </div>
     </div>
@@ -6384,11 +6548,11 @@ function CalendarPage({ events = [], customers = [], onAdd, onUpdate, onDelete, 
         </div>
 
         <label>Title
-          <input required value={form.title} onChange={e => setForm({ ...form, title:e.target.value })} placeholder="e.g. Follow up with Kenya" />
+          <input required value={form.title} onChange={e => setForm({ ...form, title: e.target.value })} placeholder="e.g. Follow up with Kenya" />
         </label>
 
         <label>Customer
-          <select value={form.customer_id} onChange={e => setForm({ ...form, customer_id:e.target.value })}>
+          <select value={form.customer_id} onChange={e => setForm({ ...form, customer_id: e.target.value })}>
             <option value="">No customer / general event</option>
             {customers.map(customer => <option key={customer.id} value={customer.id}>{customer.name}{customer.company ? ` — ${customer.company}` : ''}</option>)}
           </select>
@@ -6396,39 +6560,39 @@ function CalendarPage({ events = [], customers = [], onAdd, onUpdate, onDelete, 
 
         <div className="calendar-form-grid">
           <label>Start
-            <input type="datetime-local" required value={form.start_at || ''} onChange={e => setForm({ ...form, start_at:e.target.value })} />
+            <input type="datetime-local" required value={form.start_at || ''} onChange={e => setForm({ ...form, start_at: e.target.value })} />
           </label>
           <label>End
-            <input type="datetime-local" value={form.end_at || ''} onChange={e => setForm({ ...form, end_at:e.target.value })} />
+            <input type="datetime-local" value={form.end_at || ''} onChange={e => setForm({ ...form, end_at: e.target.value })} />
           </label>
         </div>
 
         <div className="calendar-form-grid">
           <label>Type
-            <select value={form.event_type} onChange={e => setForm({ ...form, event_type:e.target.value })}>
-              {['Meeting','Follow-up','Call','Reminder','Task','Demo','Other'].map(type => <option key={type}>{type}</option>)}
+            <select value={form.event_type} onChange={e => setForm({ ...form, event_type: e.target.value })}>
+              {['Meeting', 'Follow-up', 'Call', 'Reminder', 'Task', 'Demo', 'Other'].map(type => <option key={type}>{type}</option>)}
             </select>
           </label>
           <label>Status
-            <select value={form.status} onChange={e => setForm({ ...form, status:e.target.value })}>
-              {['Scheduled','Completed','Cancelled'].map(status => <option key={status}>{status}</option>)}
+            <select value={form.status} onChange={e => setForm({ ...form, status: e.target.value })}>
+              {['Scheduled', 'Completed', 'Cancelled'].map(status => <option key={status}>{status}</option>)}
             </select>
           </label>
         </div>
 
         <label>Reminder
-          <select value={form.reminder_minutes == null ? '' : String(form.reminder_minutes)} onChange={e => setForm({ ...form, reminder_minutes:e.target.value })}>
+          <select value={form.reminder_minutes == null ? '' : String(form.reminder_minutes)} onChange={e => setForm({ ...form, reminder_minutes: e.target.value })}>
             {reminderOptions.map(option => <option key={option.value} value={option.value}>{option.label}</option>)}
           </select>
           <span className="calendar-form-help">The reminder will appear in your Storhet notification bell.</span>
         </label>
 
         <label>Location
-          <input value={form.location || ''} onChange={e => setForm({ ...form, location:e.target.value })} placeholder="Office, Zoom, customer site, etc." />
+          <input value={form.location || ''} onChange={e => setForm({ ...form, location: e.target.value })} placeholder="Office, Zoom, customer site, etc." />
         </label>
 
         <label>Description
-          <textarea rows="5" value={form.description || ''} onChange={e => setForm({ ...form, description:e.target.value })} placeholder="Add notes, follow-up details or instructions..." />
+          <textarea rows="5" value={form.description || ''} onChange={e => setForm({ ...form, description: e.target.value })} placeholder="Add notes, follow-up details or instructions..." />
         </label>
 
         <div className="modal-actions">
@@ -6867,7 +7031,7 @@ function Invoices({ invoices, payments, customers, products, onAdd, onUpdate, on
   const save = async e => {
     e.preventDefault();
     try {
-      if (['Paid','Partially Paid'].includes(form.status) && form.approval_status !== 'APPROVED' && !form.id) { throw new Error('An invoice must be approved before payment can be recorded.'); }
+      if (['Paid', 'Partially Paid'].includes(form.status) && form.approval_status !== 'APPROVED' && !form.id) { throw new Error('An invoice must be approved before payment can be recorded.'); }
       const payload = {
         invoice_number: form.invoice_number,
         title: form.title,
@@ -6936,14 +7100,14 @@ function Invoices({ invoices, payments, customers, products, onAdd, onUpdate, on
                 <td>{i.status}</td>
                 <td>{i.due_date ? formatDate(i.due_date) : '—'}</td>
                 <td><div className="toolbar-actions">
-                    <button type="button" className="secondary-btn" onClick={() => setPreview(i)}><FileText size={15} /> View</button>
-                    {(isCommercialEditor(role) || i.created_by === currentUserId) && <button className="secondary-btn" onClick={() => { setForm({ ...blank, ...i, resubmission_note: '' }); setShow(true); }}>Edit</button>}
-                    {i.status === 'Draft' && <button type="button" className="secondary-btn" onClick={async () => { try { await onUpdate(i.id, { status: 'Sent' }); } catch (err) { alert(err.message); } }}>Send</button>}
-                    {canApproveForRole(role, i.amount, i.approval_status || (approvalRequirement(i.amount).band === 'SALES' ? 'SALES_PENDING' : 'HOS_PENDING')) && <><button type="button" className="primary-btn approval-btn" onClick={async () => { try { await onApprove('invoice', i.id); } catch (err) { alert(err.message); } }}>Approve</button><button type="button" className="secondary-btn approval-btn" onClick={async () => { const note = window.prompt('Rejection reason / note:'); if (note) try { await onReject('invoice', i.id, note); } catch (err) { alert(err.message); } }}>Reject</button></>}
-                    {isCommercialDeleter(role) && <button type="button" className="icon-btn" title="Delete invoice" onClick={async () => { if (!window.confirm('Delete this invoice?')) return; try { await onDelete(i.id); } catch (err) { alert(err.message); } }}><X size={16} /></button>}
-                    {i.status !== 'Paid' && i.approval_status === 'APPROVED' && <button className="secondary-btn" onClick={() => setPay({ invoice_id: i.id, amount: i.amount, paid_at: new Date().toISOString().slice(0, 16), payment_method: 'Bank transfer' })}>Record payment</button>}
-                    {(isCommercialEditor(role) || i.created_by === currentUserId) && i.status !== 'Paid' && i.approval_status === 'APPROVED' && <button className="secondary-btn" onClick={() => onUpdate(i.id, { status: i.status === 'Paid' ? 'Sent' : 'Paid' })}>Mark paid</button>}
-                  </div></td>
+                  <button type="button" className="secondary-btn" onClick={() => setPreview(i)}><FileText size={15} /> View</button>
+                  {(isCommercialEditor(role) || i.created_by === currentUserId) && <button className="secondary-btn" onClick={() => { setForm({ ...blank, ...i, resubmission_note: '' }); setShow(true); }}>Edit</button>}
+                  {i.status === 'Draft' && <button type="button" className="secondary-btn" onClick={async () => { try { await onUpdate(i.id, { status: 'Sent' }); } catch (err) { alert(err.message); } }}>Send</button>}
+                  {canApproveForRole(role, i.amount, i.approval_status || (approvalRequirement(i.amount).band === 'SALES' ? 'SALES_PENDING' : 'HOS_PENDING')) && <><button type="button" className="primary-btn approval-btn" onClick={async () => { try { await onApprove('invoice', i.id); } catch (err) { alert(err.message); } }}>Approve</button><button type="button" className="secondary-btn approval-btn" onClick={async () => { const note = window.prompt('Rejection reason / note:'); if (note) try { await onReject('invoice', i.id, note); } catch (err) { alert(err.message); } }}>Reject</button></>}
+                  {isCommercialDeleter(role) && <button type="button" className="icon-btn" title="Delete invoice" onClick={async () => { if (!window.confirm('Delete this invoice?')) return; try { await onDelete(i.id); } catch (err) { alert(err.message); } }}><X size={16} /></button>}
+                  {i.status !== 'Paid' && i.approval_status === 'APPROVED' && <button className="secondary-btn" onClick={() => setPay({ invoice_id: i.id, amount: i.amount, paid_at: new Date().toISOString().slice(0, 16), payment_method: 'Bank transfer' })}>Record payment</button>}
+                  {(isCommercialEditor(role) || i.created_by === currentUserId) && i.status !== 'Paid' && i.approval_status === 'APPROVED' && <button className="secondary-btn" onClick={() => onUpdate(i.id, { status: i.status === 'Paid' ? 'Sent' : 'Paid' })}>Mark paid</button>}
+                </div></td>
               </tr>
             ))}
           </tbody>
@@ -8117,24 +8281,24 @@ function Chat() {
   );
 }
 function MDPanel({ deals = [], quotes = [], invoices = [], customers = [], formatAmount, onApprove, onReject }) {
-  const approvals = [...deals.map(x=>({...x,_type:'deal'})), ...quotes.map(x=>({...x,_type:'quote'})), ...invoices.map(x=>({...x,_type:'invoice'}))].filter(item => item.approval_status === 'MD_PENDING');
-  const pending = [...deals, ...quotes, ...invoices].filter(item => ['SALES_PENDING','HOS_PENDING','MD_PENDING'].includes(item.approval_status)).length;
-  return <><PageHeading eyebrow="EXECUTIVE" title="MD Panel" description="Executive overview and final approval queue." /><div className="stats-grid"><StatCard label="Customers" value={customers.length} hint="Active customer records" tone="blue" icon="C" onClick={() => document.getElementById('md-customers')?.scrollIntoView({ behavior: 'smooth' })} /><StatCard label="Won revenue" value={formatAmount(deals.filter(d => d.stage === 'Won').reduce((s,d)=>s+Number(d.amount||0),0))} hint="Pipeline revenue" tone="green" icon="$" onClick={() => document.getElementById('md-revenue')?.scrollIntoView({ behavior: 'smooth' })} /><StatCard label="Pending approvals" value={pending} hint="Commercial approval queue" tone="orange" icon="!" onClick={() => document.getElementById('md-approval-queue')?.scrollIntoView({ behavior: 'smooth' })} /><StatCard label="Open invoices" value={invoices.filter(i => !['Paid','Cancelled'].includes(i.status)).length} hint="Outstanding billing" tone="purple" icon="I" onClick={() => setPage?.('Invoices')} /></div><div className="panel" id="md-revenue"><div className="panel-heading"><div><h3>MD executive revenue</h3><p>Company-wide revenue visibility.</p></div></div><div className="panel-subsection" id="md-customers"><p>Customers: <strong>{customers.length}</strong> · Won revenue: <strong>{formatAmount(deals.filter(d => d.stage === 'Won').reduce((s,d)=>s+Number(d.amount||0),0))}</strong> · Open invoices: <strong>{invoices.filter(i => !['Paid','Cancelled'].includes(i.status)).length}</strong></p></div></div><div className="panel" id="md-approval-queue"><div className="panel-heading"><div><h3>MD final approval queue</h3><p>Only $50,000+ records reach this queue after HOS approval.</p></div></div><div className="table-wrap"><table><thead><tr><th>Type</th><th>Record</th><th>Amount</th><th>Action</th></tr></thead><tbody>{approvals.length===0?<tr><td colSpan="4">No MD approvals pending.</td></tr>:approvals.map(item=><tr key={`${item._type}-${item.id}`}><td>{item._type}</td><td>{item.title||item.quote_number||item.invoice_number||'Record'}</td><td>{formatAmount(item.total??item.amount)}</td><td><div className="toolbar-actions"><button className="primary-btn" onClick={async()=>{try{await onApprove(item._type,item.id)}catch(e){alert(e.message)}}}>Approve</button><button className="secondary-btn" onClick={async()=>{const note=window.prompt('Rejection reason / note:');if(note)try{await onReject(item._type,item.id,note)}catch(e){alert(e.message)}}}>Reject</button></div></td></tr>)}</tbody></table></div></div></>;
+  const approvals = [...deals.map(x => ({ ...x, _type: 'deal' })), ...quotes.map(x => ({ ...x, _type: 'quote' })), ...invoices.map(x => ({ ...x, _type: 'invoice' }))].filter(item => item.approval_status === 'MD_PENDING');
+  const pending = [...deals, ...quotes, ...invoices].filter(item => ['SALES_PENDING', 'HOS_PENDING', 'MD_PENDING'].includes(item.approval_status)).length;
+  return <><PageHeading eyebrow="EXECUTIVE" title="MD Panel" description="Executive overview and final approval queue." /><div className="stats-grid"><StatCard label="Customers" value={customers.length} hint="Active customer records" tone="blue" icon="C" onClick={() => document.getElementById('md-customers')?.scrollIntoView({ behavior: 'smooth' })} /><StatCard label="Won revenue" value={formatAmount(deals.filter(d => d.stage === 'Won').reduce((s, d) => s + Number(d.amount || 0), 0))} hint="Pipeline revenue" tone="green" icon="$" onClick={() => document.getElementById('md-revenue')?.scrollIntoView({ behavior: 'smooth' })} /><StatCard label="Pending approvals" value={pending} hint="Commercial approval queue" tone="orange" icon="!" onClick={() => document.getElementById('md-approval-queue')?.scrollIntoView({ behavior: 'smooth' })} /><StatCard label="Open invoices" value={invoices.filter(i => !['Paid', 'Cancelled'].includes(i.status)).length} hint="Outstanding billing" tone="purple" icon="I" onClick={() => setPage?.('Invoices')} /></div><div className="panel" id="md-revenue"><div className="panel-heading"><div><h3>MD executive revenue</h3><p>Company-wide revenue visibility.</p></div></div><div className="panel-subsection" id="md-customers"><p>Customers: <strong>{customers.length}</strong> · Won revenue: <strong>{formatAmount(deals.filter(d => d.stage === 'Won').reduce((s, d) => s + Number(d.amount || 0), 0))}</strong> · Open invoices: <strong>{invoices.filter(i => !['Paid', 'Cancelled'].includes(i.status)).length}</strong></p></div></div><div className="panel" id="md-approval-queue"><div className="panel-heading"><div><h3>MD final approval queue</h3><p>Only $50,000+ records reach this queue after HOS approval.</p></div></div><div className="table-wrap"><table><thead><tr><th>Type</th><th>Record</th><th>Amount</th><th>Action</th></tr></thead><tbody>{approvals.length === 0 ? <tr><td colSpan="4">No MD approvals pending.</td></tr> : approvals.map(item => <tr key={`${item._type}-${item.id}`}><td>{item._type}</td><td>{item.title || item.quote_number || item.invoice_number || 'Record'}</td><td>{formatAmount(item.total ?? item.amount)}</td><td><div className="toolbar-actions"><button className="primary-btn" onClick={async () => { try { await onApprove(item._type, item.id) } catch (e) { alert(e.message) } }}>Approve</button><button className="secondary-btn" onClick={async () => { const note = window.prompt('Rejection reason / note:'); if (note) try { await onReject(item._type, item.id, note) } catch (e) { alert(e.message) } }}>Reject</button></div></td></tr>)}</tbody></table></div></div></>;
 }
 
 function HOSPanel({ deals = [], quotes = [], invoices = [], tickets = [], formatAmount, onApprove, onReject, role, setPage }) {
   const [revenueTarget, setRevenueTarget] = useState(() => {
     try { return Number(localStorage.getItem('storhet_revenue_target') || 0); } catch { return 0; }
   });
-  const approvals = [...deals.map(x=>({...x,_type:'deal'})), ...quotes.map(x=>({...x,_type:'quote'})), ...invoices.map(x=>({...x,_type:'invoice'}))].filter(item => ['HOS_PENDING'].includes(item.approval_status) || (!item.approval_status && Number(item.total ?? item.amount ?? 0) >= 20000));
-  const openDeals = deals.filter(d => !['Won','Lost'].includes(d.stage));
+  const approvals = [...deals.map(x => ({ ...x, _type: 'deal' })), ...quotes.map(x => ({ ...x, _type: 'quote' })), ...invoices.map(x => ({ ...x, _type: 'invoice' }))].filter(item => ['HOS_PENDING'].includes(item.approval_status) || (!item.approval_status && Number(item.total ?? item.amount ?? 0) >= 20000));
+  const openDeals = deals.filter(d => !['Won', 'Lost'].includes(d.stage));
   const achievedRevenue = deals.filter(d => d.stage === 'Won').reduce((sum, d) => sum + Number(d.amount || 0), 0);
   const remainingRevenue = Math.max(Number(revenueTarget || 0) - achievedRevenue, 0);
-  const openTicketCount = tickets.filter(t=>!['Resolved','Closed'].includes(t.status)).length;
+  const openTicketCount = tickets.filter(t => !['Resolved', 'Closed'].includes(t.status)).length;
   const saveRevenueTarget = value => {
     const numeric = Math.max(0, Number(value) || 0);
     setRevenueTarget(numeric);
-    try { localStorage.setItem('storhet_revenue_target', String(numeric)); } catch {}
+    try { localStorage.setItem('storhet_revenue_target', String(numeric)); } catch { }
   };
   return <>
     <PageHeading eyebrow="SALES LEADERSHIP" title="HOS Panel" description="Manage the sales team, revenue performance and commercial approvals." />
@@ -8163,25 +8327,25 @@ function HOSPanel({ deals = [], quotes = [], invoices = [], tickets = [], format
           {(() => {
             const ownerIds = [...new Set(deals.map(d => d.owner_id || d.assigned_to).filter(Boolean))];
             if (!ownerIds.length) return <tr><td colSpan="4">No assigned Sales Rep performance data yet.</td></tr>;
-            return ownerIds.map(id => { const repDeals = deals.filter(d => (d.owner_id || d.assigned_to) === id); const won = repDeals.filter(d => d.stage === 'Won'); return <tr key={id} className="table-row-clickable" onClick={() => setPage?.('Pipeline')}><td>{id}</td><td>{formatAmount(won.reduce((sum,d)=>sum+Number(d.amount||0),0))}</td><td>{repDeals.filter(d=>!['Won','Lost'].includes(d.stage)).length}</td><td>{won.length}</td></tr>; });
+            return ownerIds.map(id => { const repDeals = deals.filter(d => (d.owner_id || d.assigned_to) === id); const won = repDeals.filter(d => d.stage === 'Won'); return <tr key={id} className="table-row-clickable" onClick={() => setPage?.('Pipeline')}><td>{id}</td><td>{formatAmount(won.reduce((sum, d) => sum + Number(d.amount || 0), 0))}</td><td>{repDeals.filter(d => !['Won', 'Lost'].includes(d.stage)).length}</td><td>{won.length}</td></tr>; });
           })()}
         </tbody></table></div>
       </div>
     </div>
-    <div className="panel" id="hos-approval-queue"><div className="panel-heading"><div><h3>Approval queue</h3><p>HOS can approve or reject; ownership stays with the Sales Rep.</p></div></div><div className="table-wrap"><table><thead><tr><th>Type</th><th>Record</th><th>Amount</th><th>Status</th><th>Action</th></tr></thead><tbody>{approvals.length===0?<tr><td colSpan="5">No HOS approvals pending.</td></tr>:approvals.map(item=><tr key={`${item._type}-${item.id}`}><td>{item._type}</td><td>{item.title||item.quote_number||item.invoice_number||'Record'}</td><td>{formatAmount(item.total??item.amount)}</td><td>{item.approval_status||'Pending'}</td><td><div className="toolbar-actions"><button className="primary-btn" onClick={async()=>{try{await onApprove(item._type,item.id)}catch(e){alert(e.message)}}}>Approve</button><button className="secondary-btn" onClick={async()=>{const note=window.prompt('Rejection reason / note:');if(note)try{await onReject(item._type,item.id,note)}catch(e){alert(e.message)}}}>Reject</button></div></td></tr>)}</tbody></table></div></div>
+    <div className="panel" id="hos-approval-queue"><div className="panel-heading"><div><h3>Approval queue</h3><p>HOS can approve or reject; ownership stays with the Sales Rep.</p></div></div><div className="table-wrap"><table><thead><tr><th>Type</th><th>Record</th><th>Amount</th><th>Status</th><th>Action</th></tr></thead><tbody>{approvals.length === 0 ? <tr><td colSpan="5">No HOS approvals pending.</td></tr> : approvals.map(item => <tr key={`${item._type}-${item.id}`}><td>{item._type}</td><td>{item.title || item.quote_number || item.invoice_number || 'Record'}</td><td>{formatAmount(item.total ?? item.amount)}</td><td>{item.approval_status || 'Pending'}</td><td><div className="toolbar-actions"><button className="primary-btn" onClick={async () => { try { await onApprove(item._type, item.id) } catch (e) { alert(e.message) } }}>Approve</button><button className="secondary-btn" onClick={async () => { const note = window.prompt('Rejection reason / note:'); if (note) try { await onReject(item._type, item.id, note) } catch (e) { alert(e.message) } }}>Reject</button></div></td></tr>)}</tbody></table></div></div>
   </>;
 }
 
 function HRPanel({ deals = [], quotes = [], invoices = [], tickets = [], customers = [], formatAmount }) {
-  const pending = [...deals,...quotes,...invoices].filter(x=>['SALES_PENDING','HOS_PENDING','MD_PENDING'].includes(x.approval_status)).length;
-  const openTickets = tickets.filter(t=>!['Resolved','Closed'].includes(t.status)).length;
-  return <><PageHeading eyebrow="PEOPLE & SUPERVISION" title="HR Panel" description="Supervise pending work across all departments." /><div className="stats-grid"><StatCard label="Pending work" value={pending} hint="Commercial approvals" tone="orange" icon="!" onClick={() => document.getElementById('hr-supervision')?.scrollIntoView({ behavior: 'smooth' })} /><StatCard label="Open support" value={openTickets} hint="Support tickets" tone="blue" icon="T" onClick={() => document.getElementById('hr-supervision')?.scrollIntoView({ behavior: 'smooth' })} /><StatCard label="Customers" value={customers.length} hint="CRM relationships" tone="green" icon="C" /><StatCard label="Invoice value" value={formatAmount(invoices.reduce((s,i)=>s+Number(i.amount||0),0))} hint="Supervision view" tone="purple" icon="$" /></div><div className="panel role-panel-summary" id="hr-supervision"><h3>Supervision only</h3><p>HR can monitor pending work across departments but does not edit, delete or approve commercial records.</p></div></>;
+  const pending = [...deals, ...quotes, ...invoices].filter(x => ['SALES_PENDING', 'HOS_PENDING', 'MD_PENDING'].includes(x.approval_status)).length;
+  const openTickets = tickets.filter(t => !['Resolved', 'Closed'].includes(t.status)).length;
+  return <><PageHeading eyebrow="PEOPLE & SUPERVISION" title="HR Panel" description="Supervise pending work across all departments." /><div className="stats-grid"><StatCard label="Pending work" value={pending} hint="Commercial approvals" tone="orange" icon="!" onClick={() => document.getElementById('hr-supervision')?.scrollIntoView({ behavior: 'smooth' })} /><StatCard label="Open support" value={openTickets} hint="Support tickets" tone="blue" icon="T" onClick={() => document.getElementById('hr-supervision')?.scrollIntoView({ behavior: 'smooth' })} /><StatCard label="Customers" value={customers.length} hint="CRM relationships" tone="green" icon="C" /><StatCard label="Invoice value" value={formatAmount(invoices.reduce((s, i) => s + Number(i.amount || 0), 0))} hint="Supervision view" tone="purple" icon="$" /></div><div className="panel role-panel-summary" id="hr-supervision"><h3>Supervision only</h3><p>HR can monitor pending work across departments but does not edit, delete or approve commercial records.</p></div></>;
 }
 
 function TechnicalSupportPanel({ tickets = [], customers = [], formatAmount, currentUserId, ticketError, onAddTicket, onStatusChange, onDeleteTicket, onEditTicket, onViewTicket, isAdmin, role, canManage, staffName, staffOptions, onAssign, setPage }) {
-  const open = tickets.filter(t=>!['Resolved','Closed'].includes(t.status));
-  const assigned = tickets.filter(t=>t.assigned_to === currentUserId && !['Resolved','Closed'].includes(t.status));
-  const solved = tickets.filter(t=>['Resolved','Closed'].includes(t.status));
+  const open = tickets.filter(t => !['Resolved', 'Closed'].includes(t.status));
+  const assigned = tickets.filter(t => t.assigned_to === currentUserId && !['Resolved', 'Closed'].includes(t.status));
+  const solved = tickets.filter(t => ['Resolved', 'Closed'].includes(t.status));
   return <>
     <PageHeading eyebrow="TECHNICAL SUPPORT" title="Technical Support Panel" description="Support workload, assigned tickets and customer commercial context." />
     <div className="stats-grid">
