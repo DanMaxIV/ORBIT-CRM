@@ -836,6 +836,8 @@ function App() {
   const [notifications, setNotifications] = useState([]);
   const [unreadNotificationCount, setUnreadNotificationCount] = useState(0);
   const [showNotifications, setShowNotifications] = useState(false);
+  const notificationAudioContextRef = useRef(null);
+  const notificationAudioUnlockedRef = useRef(false);
   const [profileName, setProfileName] = useState('');
   const [profileModalOpen, setProfileModalOpen] = useState(false);
   const [profileDraft, setProfileDraft] = useState('');
@@ -1743,9 +1745,12 @@ function App() {
   async function updateCalendarEvent(id, payload) { const { data, error } = await supabase.from('calendar_events').update(payload).eq('id', id).select('*, customers(name,company)').single(); if (error) throw error; setCalendarEvents(prev => prev.map(x => x.id === id ? data : x)); return data; }
   async function deleteCalendarEvent(id) { const { error } = await supabase.from('calendar_events').delete().eq('id', id); if (error) throw error; setCalendarEvents(prev => prev.filter(x => x.id !== id)); }
   async function addQuote(payload, items = []) {
+    if (!payload?.deal_id) throw new Error('A quote must be linked to a Won Deal.');
+    const linkedDeal = deals.find(deal => deal.id === payload.deal_id);
+    if (!linkedDeal || linkedDeal.stage !== 'Won') throw new Error('A quote can only be linked to a Won Deal.');
+    payload = { ...payload, customer_id: payload.customer_id || linkedDeal.customer_id || null, sales_rep_id: payload.sales_rep_id || linkedDeal.created_by || session.user.id };
     const quoteAmount = Number(payload?.total) || 0;
-    const initialApproval = approvalRequirement(quoteAmount).band === 'SALES' ? 'SALES_PENDING' : 'HOS_PENDING';
-    payload = { ...payload, approval_status: initialApproval, approval_stage: approvalRequirement(quoteAmount).band === 'HOS_MD' ? 'HOS' : approvalRequirement(quoteAmount).band };
+    payload = { ...payload, approval_status: null, approval_stage: null };
     // Generate the UUID on the client so the quote and its line items can be
     // saved with the same real UUID without relying on an INSERT ... RETURNING
     // SELECT permission. The human-facing quote number is separate and stays
@@ -1818,7 +1823,7 @@ function App() {
     const role = authorizationProfile?.role;
     if (!isCommercialEditor(role) && persistedQuote.created_by !== session.user.id) throw new Error('You can only edit your own quote.');
     if (persistedQuote.approval_status === 'REJECTED') {
-      payload = { ...payload, approval_status: 'HOS_PENDING', approval_stage: approvalRequirement(Number(payload.total ?? persistedQuote.total)).band === 'SALES' ? 'SALES' : 'HOS', resubmission_note: payload.resubmission_note || null };
+      payload = { ...payload, approval_status: null, approval_stage: null, resubmission_note: payload.resubmission_note || null };
     }
 
     // Quote number is immutable after creation.
@@ -1913,6 +1918,7 @@ function App() {
   }
 
   async function approveCommercialRecord(type, id) {
+    if (!['quote', 'invoice'].includes(type)) throw new Error('Deals do not use commercial approval.');
     const collection = type === 'deal' ? deals : type === 'quote' ? quotes : invoices;
     const before = collection.find(item => item.id === id);
     const { data, error } = await supabase.rpc('approve_commercial_record', { p_record_type: type, p_record_id: id });
@@ -1921,10 +1927,34 @@ function App() {
     if (type === 'quote') await fetchQuotes();
     if (type === 'invoice') await fetchInvoices();
     const link = type === 'deal' ? 'Pipeline' : type === 'quote' ? 'Quotes' : 'Invoices';
+    const recordLabel = type === 'quote' ? 'Quote' : 'Invoice';
+    const recordNumber = before?.title || before?.quote_number || before?.invoice_number || '';
+
     if (data?.approval_status === 'MD_PENDING') {
-      await notifyRoles(['manager'], 'MD approval required', `${type} requires final MD approval.`, link);
+      await notifyRoles(
+        ['manager'],
+        'MD approval required',
+        `${recordLabel} ${recordNumber} is waiting for final MD approval.`,
+        link
+      );
+
+      if (before?.created_by && before.created_by !== session.user.id) {
+        await notifyRolesByUser(
+          [before.created_by],
+          `${recordLabel} approved by HOS`,
+          `${recordLabel} ${recordNumber} was approved by HOS and has been forwarded to the MD for final approval.`,
+          link
+        );
+      }
     } else if (before?.created_by && before.created_by !== session.user.id) {
-      await notifyRolesByUser([before.created_by], `${type} approved`, `${type} ${before.title || before.quote_number || before.invoice_number || ''} has been approved.`, link);
+      const approverRole = authorizationProfile?.role === 'manager' ? 'MD' : 'HOS';
+
+      await notifyRolesByUser(
+        [before.created_by],
+        `${recordLabel} approved by ${approverRole}`,
+        `${recordLabel} ${recordNumber} has been approved by ${approverRole}. You can continue from your ${recordLabel === 'Quote' ? 'Quotes' : 'Invoices'} page.`,
+        link
+      );
     }
     showToast(`${type[0].toUpperCase() + type.slice(1)} approved.`);
     return data;
@@ -1934,7 +1964,14 @@ function App() {
     const rows = [...new Set(userIds || [])].filter(Boolean).map(user_id => ({ user_id, type: 'approval', title, message, link, read: false }));
     if (!rows.length) return;
     const { error } = await supabase.from('notifications').insert(rows);
-    if (error) console.error('Could not create user notification:', error);
+    if (error) {
+      console.error('Could not create user notification:', error);
+      return;
+    }
+
+    if (session?.user?.id && rows.some(row => row.user_id === session.user.id)) {
+      await playNotificationSound();
+    }
   }
 
   async function notifyRoles(roles, title, message, link) {
@@ -1944,6 +1981,7 @@ function App() {
   }
 
   async function rejectCommercialRecord(type, id, note) {
+    if (!['quote', 'invoice'].includes(type)) throw new Error('Deals do not use commercial approval.');
     const { data, error } = await supabase.rpc('reject_commercial_record', { p_record_type: type, p_record_id: id, p_note: note });
     if (error) throw error;
     if (type === 'deal') await fetchDeals();
@@ -1953,19 +1991,63 @@ function App() {
     const table = type === 'deal' ? deals : type === 'quote' ? quotes : invoices;
     const record = table.find(item => item.id === id);
     if (record?.created_by && record.created_by !== session.user.id) {
-      await notifyRolesByUser([record.created_by], `${type} rejected`, `${type} ${record.title || record.quote_number || record.invoice_number || ''} was rejected. Note: ${note}`, type === 'deal' ? 'Pipeline' : type === 'quote' ? 'Quotes' : 'Invoices');
+      const recordLabel = type === 'quote' ? 'Quote' : type === 'invoice' ? 'Invoice' : 'Record';
+      const approverRole = authorizationProfile?.role === 'manager' ? 'MD' : 'HOS';
+
+      await notifyRolesByUser(
+        [record.created_by],
+        `${recordLabel} rejected by ${approverRole}`,
+        `${recordLabel} ${record.title || record.quote_number || record.invoice_number || ''} was rejected by ${approverRole}. Reason: ${note}`,
+        type === 'deal' ? 'Pipeline' : type === 'quote' ? 'Quotes' : 'Invoices'
+      );
     }
     showToast(`${type[0].toUpperCase() + type.slice(1)} rejected. The owner has been notified.`);
     return data;
   }
 
-  async function addInvoice(payload) { const amount = Number(payload?.amount) || 0; payload = { ...payload, approval_status: approvalRequirement(amount).band === 'SALES' ? 'SALES_PENDING' : 'HOS_PENDING', approval_stage: approvalRequirement(amount).band === 'HOS_MD' ? 'HOS' : approvalRequirement(amount).band }; const { data, error } = await supabase.from('invoices').insert([{ ...payload, created_by: session.user.id }]).select('*, customers(name,company)').single(); if (error) throw error; setInvoices(prev => [data, ...prev]); if (amount >= 20000) await notifyRoles(['head_of_sales'], 'Invoice approval required', `Invoice ${data.invoice_number} is waiting for HOS approval.`, 'Invoices'); return data; }
+  async function addInvoice(payload) { const amount = Number(payload?.amount) || 0; if (!payload?.deal_id) throw new Error('An invoice must be linked to a Won Deal.'); const linkedDeal = deals.find(deal => deal.id === payload.deal_id); if (!linkedDeal || linkedDeal.stage !== 'Won') throw new Error('An invoice can only be linked to a Won Deal.'); payload = { ...payload, customer_id: payload.customer_id || linkedDeal.customer_id || null, sales_rep_id: payload.sales_rep_id || linkedDeal.created_by || session.user.id, approval_status: null, approval_stage: null }; const { data, error } = await supabase.from('invoices').insert([{ ...payload, created_by: session.user.id }]).select('*, customers(name,company)').single(); if (error) throw error; setInvoices(prev => [data, ...prev]); if (amount >= 20000) await notifyRoles(['head_of_sales'], 'Invoice approval required', `Invoice ${data.invoice_number} is waiting for HOS approval.`, 'Invoices'); return data; }
   async function updateInvoice(id, payload) {
     const current = invoices.find(item => item.id === id);
     const role = authorizationProfile?.role;
     if (!isCommercialEditor(role) && current?.created_by !== session.user.id) throw new Error('You can only edit your own invoice.');
     const { data, error } = await supabase.from('invoices').update(payload).eq('id', id).select('*, customers(name,company)').single(); if (error) throw error; setInvoices(prev => prev.map(x => x.id === id ? data : x)); return data;
   }
+  async function sendQuoteToHOS(id) {
+    const quote = quotes.find(item => item.id === id);
+    if (!quote || quote.created_by !== session.user.id) throw new Error('You can only send your own quote for approval.');
+    const amount = Number(quote.total || 0);
+    if (!quote.deal_id) throw new Error('This quote must be linked to a Won Deal before it can be sent for approval.');
+    const linkedDeal = deals.find(deal => deal.id === quote.deal_id);
+    if (!linkedDeal || linkedDeal.stage !== 'Won') throw new Error('This quote must be linked to a Won Deal before it can be sent for approval.');
+    const { error } = await supabase.from('quotes').update({
+      approval_status: 'HOS_PENDING',
+      approval_stage: 'HOS',
+      status: quote.status === 'Draft' ? 'Sent' : quote.status
+    }).eq('id', id);
+    if (error) throw error;
+    setQuotes(prev => prev.map(item => item.id === id ? { ...item, approval_status: 'HOS_PENDING', approval_stage: 'HOS', status: item.status === 'Draft' ? 'Sent' : item.status } : item));
+    await notifyRoles(['head_of_sales'], 'Quote approval required', `Quote ${quote.quote_number || ''} from ${ownerProfiles[quote.created_by] || 'a Sales Rep'} is waiting for your approval.`, 'Quotes');
+    showToast(`Quote ${quote.quote_number || ''} sent to HOS for approval.`);
+  }
+
+  async function sendInvoiceToHOS(id) {
+    const invoice = invoices.find(item => item.id === id);
+    if (!invoice || invoice.created_by !== session.user.id) throw new Error('You can only send your own invoice for approval.');
+    if (!invoice.deal_id) throw new Error('This invoice must be linked to a Won Deal before it can be sent for approval.');
+    const linkedDeal = deals.find(deal => deal.id === invoice.deal_id);
+    if (!linkedDeal || linkedDeal.stage !== 'Won') throw new Error('This invoice must be linked to a Won Deal before it can be sent for approval.');
+    const { error } = await supabase.from('invoices').update({
+      approval_status: 'HOS_PENDING',
+      approval_stage: 'HOS',
+      status: invoice.status === 'Draft' ? 'Sent' : invoice.status
+    }).eq('id', id);
+    if (error) throw error;
+    setInvoices(prev => prev.map(item => item.id === id ? { ...item, approval_status: 'HOS_PENDING', approval_stage: 'HOS', status: item.status === 'Draft' ? 'Sent' : item.status } : item));
+    await notifyRoles(['head_of_sales'], 'Invoice approval required', `Invoice ${invoice.invoice_number || ''} from ${ownerProfiles[invoice.created_by] || 'a Sales Rep'} is waiting for your approval.`, 'Invoices');
+    showToast(`Invoice ${invoice.invoice_number || ''} sent to HOS for approval.`);
+  }
+
+
   async function deleteInvoice(id) {
     if (!isCommercialDeleter(authorizationProfile?.role)) throw new Error('You do not have permission to delete invoices.');
     const { error } = await supabase.from('invoices').delete().eq('id', id);
@@ -2230,6 +2312,75 @@ function App() {
     }
   }
 
+  async function unlockNotificationAudio() {
+    if (typeof window === 'undefined') return false;
+    const AudioContextClass = window.AudioContext || window.webkitAudioContext;
+    if (!AudioContextClass) return false;
+
+    try {
+      if (!notificationAudioContextRef.current) {
+        notificationAudioContextRef.current = new AudioContextClass();
+      }
+      const context = notificationAudioContextRef.current;
+      if (context.state === 'suspended') await context.resume();
+      notificationAudioUnlockedRef.current = context.state === 'running';
+      return notificationAudioUnlockedRef.current;
+    } catch (error) {
+      console.warn('Notification sound could not be unlocked:', error);
+      return false;
+    }
+  }
+
+  async function playNotificationSound() {
+    const unlocked = await unlockNotificationAudio();
+    if (!unlocked) return;
+
+    try {
+      const context = notificationAudioContextRef.current;
+      const now = context.currentTime + 0.02;
+      const tones = [
+        { frequency: 880, start: 0, duration: 0.18 },
+        { frequency: 1174.66, start: 0.20, duration: 0.18 },
+        { frequency: 880, start: 0.40, duration: 0.28 }
+      ];
+
+      tones.forEach(({ frequency, start, duration }) => {
+        const oscillator = context.createOscillator();
+        const gain = context.createGain();
+        oscillator.type = 'sine';
+        oscillator.frequency.setValueAtTime(frequency, now + start);
+        gain.gain.setValueAtTime(0.0001, now + start);
+        gain.gain.exponentialRampToValueAtTime(0.16, now + start + 0.015);
+        gain.gain.exponentialRampToValueAtTime(0.0001, now + start + duration);
+        oscillator.connect(gain);
+        gain.connect(context.destination);
+        oscillator.start(now + start);
+        oscillator.stop(now + start + duration + 0.02);
+      });
+    } catch (error) {
+      console.warn('Notification sound failed:', error);
+    }
+  }
+
+  // Unlock the alert sound after the user's first interaction. This keeps
+  // later real-time approval/rejection alerts audible without violating
+  // browser autoplay rules.
+  useEffect(() => {
+    if (typeof window === 'undefined') return undefined;
+
+    const unlock = () => {
+      if (!notificationAudioUnlockedRef.current) unlockNotificationAudio();
+    };
+
+    window.addEventListener('pointerdown', unlock, { once: true });
+    window.addEventListener('keydown', unlock, { once: true });
+
+    return () => {
+      window.removeEventListener('pointerdown', unlock);
+      window.removeEventListener('keydown', unlock);
+    };
+  }, []);
+
   async function clearNotification(id) {
     const { error } = await supabase.from('notifications').delete().eq('id', id).eq('user_id', session.user.id);
     if (error) { showToast(`Could not clear notification: ${error.message}`); return; }
@@ -2278,6 +2429,10 @@ function App() {
         },
         payload => {
           const newNotification = payload.new;
+
+          // Every real-time notification is an active alert: play a sound and
+          // show the title instead of silently updating the bell count.
+          playNotificationSound();
           if (newNotification.title) showToast(newNotification.title);
 
           setNotifications(prev => {
@@ -2683,8 +2838,6 @@ function App() {
             contact_phone: newDeal.contact_phone.trim() || (newDeal.customer_id === '__new__' ? newDeal.new_customer_phone.trim() : null) || null,
             amount: Number(newDeal.amount),
             stage: newDeal.stage === 'Won' ? 'New Lead' : newDeal.stage,
-            approval_status: approvalRequirement(Number(newDeal.amount)).band === 'SALES' ? 'SALES_PENDING' : 'HOS_PENDING',
-            approval_stage: approvalRequirement(Number(newDeal.amount)).band === 'HOS_MD' ? 'HOS' : approvalRequirement(Number(newDeal.amount)).band,
             customer_id: customerId,
             closure_start_at: newDeal.closure_start_at ? new Date(newDeal.closure_start_at).toISOString() : null,
             closure_end_at: newDeal.closure_end_at ? new Date(newDeal.closure_end_at).toISOString() : null,
@@ -2702,8 +2855,6 @@ function App() {
       }
 
       setDeals(prev => [data, ...prev]);
-      if (Number(data.amount) >= 20000) await notifyRoles(['head_of_sales'], 'Approval required', `Deal ${data.title} is waiting for HOS approval.`, 'Pipeline');
-
       const uniqueProductIds = [...new Set(selectedDealProductIds || [])];
       if (uniqueProductIds.length > 0) {
         const rows = uniqueProductIds.map(productId => ({
@@ -2769,13 +2920,8 @@ function App() {
     const previousStage = previousDeal?.stage;
     if (!previousDeal || previousStage === stage) return;
 
-    // A deal entering Won must be approved first.
-    if (stage === 'Won' && previousStage !== 'Won') {
-      if (previousDeal.approval_status !== 'APPROVED') {
-        showToast('This deal must complete its approval workflow before it can be marked Won.');
-        return;
-      }
-    }
+    // Deals have no commercial approval restriction.
+    // Quotes and invoices are the only records governed by the approval workflow.
 
     // A deal entering Won must be converted/linked to a Customer.
     // Lead-created deals have the information needed to create the customer.
@@ -3011,7 +3157,6 @@ function App() {
           contact_phone: editingDeal.contact_phone?.trim() || null,
           amount: Number(editingDeal.amount),
           stage: editingDeal.stage,
-          ...(editingDeal.approval_status === 'REJECTED' ? { approval_status: approvalRequirement(Number(editingDeal.amount)).band === 'SALES' ? 'SALES_PENDING' : 'HOS_PENDING', approval_stage: approvalRequirement(Number(editingDeal.amount)).band === 'HOS_MD' ? 'HOS' : approvalRequirement(Number(editingDeal.amount)).band, resubmission_note: editingDeal.resubmission_note?.trim() || null } : {}),
           customer_id: editingDeal.customer_id || null,
           closure_start_at: editingDeal.closure_start_at ? new Date(editingDeal.closure_start_at).toISOString() : null,
           closure_end_at: editingDeal.closure_end_at ? new Date(editingDeal.closure_end_at).toISOString() : null
@@ -3447,7 +3592,7 @@ function App() {
             <Dashboard revenue={revenue} customers={customers} leads={leads} deals={deals} activities={activities} tickets={tickets} setPage={setPage} formatAmount={formatAmount} onSelectCustomer={setSelectedCustomer} onEditCustomer={setEditingCustomer} onDeleteCustomer={deleteCustomer} currentUserId={session.user.id} role={authorizationProfile?.role} />
           )}
           {page === 'MD Panel' && authorizationProfile?.role === 'manager' && <MDPanel deals={deals} quotes={quotes} invoices={invoices} customers={customers} formatAmount={formatAmount} onApprove={approveCommercialRecord} onReject={rejectCommercialRecord} />}
-          {page === 'HOS Panel' && authorizationProfile?.role === 'head_of_sales' && <HOSPanel deals={deals} quotes={quotes} invoices={invoices} tickets={tickets} formatAmount={formatAmount} currentUserId={session.user.id} role={authorizationProfile?.role} setPage={setPage} onApprove={approveCommercialRecord} onReject={rejectCommercialRecord} />}
+          {page === 'HOS Panel' && authorizationProfile?.role === 'head_of_sales' && <HOSPanel deals={deals} quotes={quotes} invoices={invoices} quoteItems={quoteItems} tickets={tickets} ownerProfiles={ownerProfiles} formatAmount={formatAmount} currentUserId={session.user.id} role={authorizationProfile?.role} setPage={setPage} onApprove={approveCommercialRecord} onReject={rejectCommercialRecord} />}
           {page === 'HR Panel' && authorizationProfile?.role === 'hr' && <HRPanel deals={deals} quotes={quotes} invoices={invoices} tickets={tickets} customers={customers} formatAmount={formatAmount} />}
           {page === 'Technical Support Panel' && authorizationProfile?.role === 'technical_support' && <TechnicalSupportPanel tickets={tickets} customers={customers} formatAmount={formatAmount} currentUserId={session.user.id} ticketError={ticketError} onAddTicket={() => { setTicketError(''); setNewTicket(t => ({ ...t, customer_id: '' })); setShowTicketForm(true); }} onStatusChange={updateTicketStatus} onDeleteTicket={deleteTicket} onEditTicket={ticket => { setEditTicketError(''); setEditingTicket(ticket); }} onViewTicket={setSelectedTicket} isAdmin={isAdminRole(authorizationProfile?.role)} role={authorizationProfile?.role} canManage={canManageTicket} staffName={staffName} staffOptions={getStaffOptions()} onAssign={assignTicket} setPage={setPage} />}
           {page === 'Customers' && (
@@ -3473,8 +3618,8 @@ function App() {
           {page === 'Leads' && <Leads leads={leads} customers={customers} products={products} leadProducts={leadProducts} onAdd={addLead} onUpdate={updateLead} onSyncProducts={syncLeadProducts} onDelete={deleteLead} currentUserId={session.user.id} isAdmin={['admin', 'manager', 'head_of_sales'].includes(authorizationProfile?.role)} />}
           {page === 'Email' && <EmailPage emailLogs={emailLogs} customers={customers} integrations={emailIntegrations} loading={emailIntegrationLoading} error={emailIntegrationError} onConnect={connectEmailProvider} onDisconnect={disconnectEmailProvider} onCompose={() => openCompose()} onAdd={async payload => { try { await addEmailLog(payload); showToast('Email logged.'); } catch (e) { alert(e.message); } }} />}
           {page === 'Calendar' && <CalendarPage events={calendarEvents} customers={customers} onAdd={addCalendarEvent} onUpdate={updateCalendarEvent} onDelete={deleteCalendarEvent} onRefresh={fetchCalendarEvents} />}
-          {page === 'Quotes' && <Quotes quotes={quotes} products={products} quoteItems={quoteItems} onLoadQuoteItems={loadQuoteItems} onAdd={addQuote} onUpdate={updateQuote} onDelete={deleteQuote} formatAmount={formatAmount} currentUserId={session.user.id} isAdmin={isAdminRole(authorizationProfile?.role)} role={authorizationProfile?.role} onApprove={approveCommercialRecord} onReject={rejectCommercialRecord} />}
-          {page === 'Invoices' && <Invoices invoices={invoices} payments={payments} customers={customers} products={products} onAdd={addInvoice} onUpdate={updateInvoice} onDelete={deleteInvoice} onAddPayment={addPayment} formatAmount={formatAmount} currentUserId={session.user.id} isAdmin={isAdminRole(authorizationProfile?.role)} role={authorizationProfile?.role} onApprove={approveCommercialRecord} onReject={rejectCommercialRecord} />}
+          {page === 'Quotes' && <Quotes quotes={quotes} products={products} deals={deals} dealProducts={dealProducts} customers={customers} quoteItems={quoteItems} onLoadQuoteItems={loadQuoteItems} onAdd={addQuote} onUpdate={updateQuote} onDelete={deleteQuote} formatAmount={formatAmount} currentUserId={session.user.id} isAdmin={isAdminRole(authorizationProfile?.role)} role={authorizationProfile?.role} onSendToHOS={sendQuoteToHOS} />}
+          {page === 'Invoices' && <Invoices invoices={invoices} payments={payments} customers={customers} products={products} deals={deals} quotes={quotes} onAdd={addInvoice} onUpdate={updateInvoice} onDelete={deleteInvoice} onAddPayment={addPayment} formatAmount={formatAmount} currentUserId={session.user.id} isAdmin={isAdminRole(authorizationProfile?.role)} role={authorizationProfile?.role} onSendToHOS={sendInvoiceToHOS} />}
           {page === 'Documents' && <Documents documents={documents} customers={customers} onUpload={uploadDocument} onDownload={downloadDocument} onDelete={deleteDocument} />}
           {page === 'Automation' && <Automation workflows={workflows} onAdd={addWorkflow} onUpdate={updateWorkflow} />}
           {page === 'Segments' && <Segments segments={segments} customers={customers} onAdd={addSegment} onUpdate={updateSegment} />}
@@ -3492,8 +3637,6 @@ function App() {
               ownerProfiles={ownerProfiles}
               isAdmin={isAdminRole(authorizationProfile?.role)}
               role={authorizationProfile?.role}
-              onApprove={approveCommercialRecord}
-              onReject={rejectCommercialRecord}
               onEdit={deal => {
                 setEditDealError('');
                 setEditingDeal({
@@ -4551,32 +4694,36 @@ function App() {
                 <div
                   key={notification.id}
                   onClick={async () => {
-                    if (notification.read) return;
+                    if (!notification.read) {
+                      const { error } = await supabase
+                        .from('notifications')
+                        .update({ read: true })
+                        .eq('id', notification.id)
+                        .eq('user_id', session.user.id);
 
-                    const { error } = await supabase
-                      .from('notifications')
-                      .update({ read: true })
-                      .eq('id', notification.id)
-                      .eq('user_id', session.user.id);
+                      if (error) {
+                        console.error('Failed to mark notification as read:', error);
+                        return;
+                      }
 
-                    if (error) {
-                      console.error('Failed to mark notification as read:', error);
-                      return;
+                      setNotifications(prev =>
+                        prev.map(item =>
+                          item.id === notification.id
+                            ? { ...item, read: true }
+                            : item
+                        )
+                      );
+
+                      setUnreadNotificationCount(prev => Math.max(0, prev - 1));
                     }
 
-                    setNotifications(prev =>
-                      prev.map(item =>
-                        item.id === notification.id
-                          ? { ...item, read: true }
-                          : item
-                      )
-                    );
-
-                    setUnreadNotificationCount(prev => Math.max(0, prev - 1));
-                    if (notification.type === 'new_chat') {
+                    const allowedPages = ['Dashboard', 'Customers', 'Leads', 'Pipeline', 'Products', 'Activities', 'Tickets', 'Quotes', 'Invoices', 'Chat', 'Email', 'Documents', 'Calendar'];
+                    if (notification.link && allowedPages.includes(notification.link)) {
+                      setPage(notification.link);
+                    } else if (notification.type === 'new_chat') {
                       setPage('Chat');
-                      setShowNotifications(false);
                     }
+                    setShowNotifications(false);
                   }}
                   style={{
                     cursor: notification.read ? 'default' : 'pointer',
@@ -5331,7 +5478,7 @@ function CustomerDetail({ currentUserId, customer, deals, activities, tickets, q
     </div>
   );
 }
-function Pipeline({ deals, customers, dealSupport = [], supportEngineers = [], moveDeal, deleteDeal, onEdit, onAdd, formatAmount, currentUserId, ownerProfiles = {}, isAdmin, role, onApprove, onReject }) {
+function Pipeline({ deals, customers, dealSupport = [], supportEngineers = [], moveDeal, deleteDeal, onEdit, onAdd, formatAmount, currentUserId, ownerProfiles = {}, isAdmin, role }) {
   const [query, setQuery] = useState('');
   const [mineOnly, setMineOnly] = useState(false);
   const [dragOver, setDragOver] = useState(null);
@@ -5425,8 +5572,6 @@ function Pipeline({ deals, customers, dealSupport = [], supportEngineers = [], m
                       </small>
                     )}
                     <strong>{formatAmount(deal.amount)}</strong>
-                    {canApproveForRole(role, deal.amount, deal.approval_status || (approvalRequirement(deal.amount).band === 'SALES' ? 'SALES_PENDING' : 'HOS_PENDING')) && <div className="approval-inline-actions"><button type="button" className="primary-btn" onClick={() => onApprove('deal', deal.id)}>Approve</button><button type="button" className="secondary-btn" onClick={() => { const note = window.prompt('Rejection reason / note:'); if (note) onReject('deal', deal.id, note); }}>Reject</button></div>}
-                    {deal.approval_status === 'REJECTED' && (canEdit || isCommercialEditor(role)) && <div className="approval-rejection-note"><strong>Rejected:</strong> {deal.rejection_note || 'No note provided.'}</div>}
                     {dealSupport.filter(row => row.deal_id === deal.id && row.support_engineers?.status === 'Active').length > 0 && (
                       <div className="deal-customer" style={{ marginTop: 8 }}>
                         <strong style={{ display: 'block', marginBottom: 4 }}>Technical Support</strong>
@@ -6611,7 +6756,7 @@ function CalendarPage({ events = [], customers = [], onAdd, onUpdate, onDelete, 
   </>;
 }
 
-function Quotes({ quotes = [], products = [], quoteItems = [], onLoadQuoteItems, onAdd, onUpdate, onDelete, formatAmount, currentUserId, isAdmin, role, onApprove, onReject }) {
+function Quotes({ quotes = [], products = [], quoteItems = [], deals = [], dealProducts = [], customers = [], onLoadQuoteItems, onAdd, onUpdate, onDelete, formatAmount, currentUserId, isAdmin, role, onSendToHOS }) {
   const [show, setShow] = useState(false);
   const [editing, setEditing] = useState(null);
   const [saving, setSaving] = useState(false);
@@ -6635,7 +6780,10 @@ function Quotes({ quotes = [], products = [], quoteItems = [], onLoadQuoteItems,
     delivery_terms: '',
     notes: '',
     terms: '',
-    resubmission_note: ''
+    resubmission_note: '',
+    deal_id: '',
+    customer_id: '',
+    sales_rep_id: ''
   };
 
   const emptyItem = () => ({
@@ -6650,6 +6798,9 @@ function Quotes({ quotes = [], products = [], quoteItems = [], onLoadQuoteItems,
 
   const [form, setForm] = useState(blank);
   const [items, setItems] = useState([emptyItem()]);
+  const visibleQuotes = role === 'sales'
+    ? quotes.filter(q => q.created_by === currentUserId)
+    : quotes;
 
   const moneyNumber = value => Number(value) || 0;
   const lineSubtotal = item => moneyNumber(item.quantity) * moneyNumber(item.unit_price);
@@ -6663,6 +6814,37 @@ function Quotes({ quotes = [], products = [], quoteItems = [], onLoadQuoteItems,
     groups[vendor] = products.filter(product => (product.vendor || '').trim().toLowerCase() === vendor.toLowerCase());
     return groups;
   }, {});
+
+  const selectableWonDeals = deals.filter(deal => deal.stage === 'Won' && (role !== 'sales' || deal.created_by === currentUserId));
+  const selectedDeal = deals.find(deal => deal.id === form.deal_id) || null;
+  const selectDeal = dealId => {
+    const deal = deals.find(item => item.id === dealId);
+    const customer = deal?.customer_id ? customers.find(item => item.id === deal.customer_id) : null;
+    const inheritedProductIds = deal ? dealProducts.filter(row => row.deal_id === deal.id).map(row => row.product_id) : [];
+    const inheritedProducts = inheritedProductIds.map(id => products.find(product => product.id === id)).filter(Boolean);
+    setForm(prev => ({
+      ...prev,
+      deal_id: deal?.id || '',
+      customer_id: customer?.id || deal?.customer_id || '',
+      sales_rep_id: deal?.created_by || currentUserId,
+      customer_name: customer?.name || prev.customer_name || '',
+      company: customer?.company || deal?.company || prev.company || '',
+      email: customer?.email || deal?.contact_email || prev.email || '',
+      phone: customer?.phone || deal?.contact_phone || prev.phone || '',
+      title: prev.title || `${deal?.title || 'Won deal'} Quote`
+    }));
+    if (inheritedProducts.length) {
+      setItems(inheritedProducts.map(product => ({
+        product_id: product.id,
+        product_name: product.name,
+        description: product.description || '',
+        quantity: 1,
+        unit_price: Number(product.unit_price) || 0,
+        discount: 0,
+        tax: 0
+      })));
+    }
+  };
 
   const openNew = () => {
     setEditing(null);
@@ -6734,6 +6916,8 @@ function Quotes({ quotes = [], products = [], quoteItems = [], onLoadQuoteItems,
     if (!form.quote_number.trim()) return setError('Quote number is required.');
     if (!form.title.trim()) return setError('Quote title is required.');
     if (!form.quote_date) return setError('Quote date is required.');
+    if (!form.deal_id) return setError('Select the Won Deal this quote belongs to.');
+    if (!selectedDeal || selectedDeal.stage !== 'Won') return setError('A quote can only be created from a Won Deal.');
     if (!form.customer_name.trim() && !form.company.trim()) return setError('Enter a customer name or company.');
     if (form.email.trim() && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(form.email.trim())) return setError('Enter a valid customer email address.');
     if (!validItems.length) return setError('Add at least one product or solution to the quote.');
@@ -6760,6 +6944,9 @@ function Quotes({ quotes = [], products = [], quoteItems = [], onLoadQuoteItems,
       notes: form.notes.trim() || null,
       terms: form.terms.trim() || null,
       resubmission_note: form.resubmission_note?.trim() || null,
+      deal_id: form.deal_id || null,
+      customer_id: form.customer_id || selectedDeal?.customer_id || null,
+      sales_rep_id: form.sales_rep_id || selectedDeal?.created_by || currentUserId,
       ...(editing && editing.approval_status === 'REJECTED' ? { approval_status: approvalRequirement(total).band === 'SALES' ? 'SALES_PENDING' : 'HOS_PENDING', approval_stage: approvalRequirement(total).band === 'HOS_MD' ? 'HOS' : approvalRequirement(total).band } : {})
     };
 
@@ -6811,18 +6998,19 @@ function Quotes({ quotes = [], products = [], quoteItems = [], onLoadQuoteItems,
             </tr>
           </thead>
           <tbody>
-            {quotes.length === 0 ? <tr><td colSpan="7">No quotes yet.</td></tr> : quotes.map(q => (
+            {visibleQuotes.length === 0 ? <tr><td colSpan="8">No quotes yet.</td></tr> : visibleQuotes.map(q => (
               <tr key={q.id}>
                 <td><strong>{q.quote_number}</strong><div className="deal-customer">{q.title}</div></td>
                 <td>{q.customer_name || q.company || '—'}{q.company && q.customer_name ? <div className="deal-customer">{q.company}</div> : null}</td>
+                <td>{deals.find(d => d.id === q.deal_id)?.title || '—'}</td>
                 <td>{formatAmount(q.total)}</td>
-                <td>{q.status}</td>
+                <td><div>{q.status}</div><small className="approval-range-hint">{approvalRequirement(q.total).label} approval</small></td>
                 <td>{q.valid_until ? formatDate(q.valid_until) : '—'}</td>
                 <td>{q.created_at ? formatDate(q.created_at) : '—'}</td>
                 <td><div className="toolbar-actions">
                   {(isCommercialEditor(role) || q.created_by === currentUserId) && <button className="secondary-btn" onClick={() => openEdit(q)}>Edit</button>}
                   {isCommercialDeleter(role) && <button type="button" className="icon-btn" title="Delete quote" onClick={async () => { if (!window.confirm('Delete this quote?')) return; try { await onDelete(q.id); } catch (err) { alert(err.message || 'Unable to delete quote.'); } }}><X size={16} /></button>}
-                  {canApproveForRole(role, q.total, q.approval_status || (approvalRequirement(q.total).band === 'SALES' ? 'SALES_PENDING' : 'HOS_PENDING')) && <><button type="button" className="primary-btn approval-btn" onClick={async () => { try { await onApprove('quote', q.id); } catch (err) { alert(err.message); } }}>Approve</button><button type="button" className="secondary-btn approval-btn" onClick={async () => { const note = window.prompt('Rejection reason / note:'); if (note) try { await onReject('quote', q.id, note); } catch (err) { alert(err.message); } }}>Reject</button></>}
+                  {q.created_by === currentUserId && ['HOS_PENDING', 'APPROVED', 'MD_PENDING'].indexOf(q.approval_status) === -1 && <button type="button" className="primary-btn approval-btn" onClick={async () => { try { await onSendToHOS(q.id); } catch (err) { alert(err.message); } }}>{q.approval_status === 'REJECTED' ? 'Resubmit to HOS' : 'Send to HOS'}</button>}
                 </div></td>
               </tr>
             ))}
@@ -6946,7 +7134,7 @@ function Quotes({ quotes = [], products = [], quoteItems = [], onLoadQuoteItems,
     </div>}
   </>;
 }
-function Invoices({ invoices, payments, customers, products, onAdd, onUpdate, onDelete, onAddPayment, formatAmount, currentUserId, isAdmin, role, onApprove, onReject }) {
+function Invoices({ invoices, payments, customers, products, deals = [], quotes = [], onAdd, onUpdate, onDelete, onAddPayment, formatAmount, currentUserId, isAdmin, role, onSendToHOS }) {
   const [show, setShow] = useState(false);
   const [pay, setPay] = useState(null);
   const [preview, setPreview] = useState(null);
@@ -6959,22 +7147,59 @@ function Invoices({ invoices, payments, customers, products, onAdd, onUpdate, on
     quantity: 1,
     unit_price: 0,
     amount: 0,
+    discount: 0,
+    tax: 0,
     due_date: '',
     payment_terms: 'Due on receipt',
     status: 'Draft',
     notes: '',
-    resubmission_note: ''
+    resubmission_note: '',
+    deal_id: '',
+    quote_id: '',
+    sales_rep_id: ''
   };
   const [form, setForm] = useState(blank);
+  const visibleInvoices = role === 'sales'
+    ? invoices.filter(i => i.created_by === currentUserId)
+    : invoices;
+
+  const selectableWonDeals = deals.filter(deal => deal.stage === 'Won' && (role !== 'sales' || deal.created_by === currentUserId));
+  const selectableQuotes = quotes.filter(quote => quote.deal_id && (!form.deal_id || quote.deal_id === form.deal_id) && (role !== 'sales' || quote.created_by === currentUserId));
+  const selectInvoiceDeal = dealId => {
+    const deal = deals.find(item => item.id === dealId);
+    const customer = deal?.customer_id ? customers.find(item => item.id === deal.customer_id) : null;
+    setForm(prev => ({ ...prev, deal_id: deal?.id || '', quote_id: '', customer_id: customer?.id || deal?.customer_id || '', sales_rep_id: deal?.created_by || currentUserId }));
+  };
+  const selectInvoiceQuote = quoteId => {
+    const quote = quotes.find(item => item.id === quoteId);
+    if (!quote) return;
+    const deal = deals.find(item => item.id === quote.deal_id);
+    setForm(prev => ({
+      ...prev,
+      quote_id: quote.id,
+      deal_id: quote.deal_id || prev.deal_id,
+      customer_id: quote.customer_id || deal?.customer_id || prev.customer_id,
+      sales_rep_id: quote.sales_rep_id || quote.created_by || deal?.created_by || currentUserId,
+      title: quote.title || prev.title || '',
+      amount: Number(quote.total) || prev.amount,
+      notes: quote.notes || prev.notes || ''
+    }));
+  };
+
+  const recalculateInvoice = values => {
+    const quantity = Math.max(0, Number(values.quantity) || 0);
+    const unitPrice = Math.max(0, Number(values.unit_price) || 0);
+    const subtotal = quantity * unitPrice;
+    const discount = Math.max(0, Number(values.discount) || 0);
+    const tax = Math.max(0, Number(values.tax) || 0);
+    return {
+      ...values,
+      amount: Math.max(0, subtotal - discount + tax)
+    };
+  };
 
   const setInvoiceField = (field, value) => {
-    setForm(prev => {
-      const next = { ...prev, [field]: value };
-      if (field === 'quantity' || field === 'unit_price') {
-        next.amount = Math.max(0, Number(next.quantity) || 0) * Math.max(0, Number(next.unit_price) || 0);
-      }
-      return next;
-    });
+    setForm(prev => recalculateInvoice({ ...prev, [field]: value }));
   };
 
   const availableInvoiceProducts = products.filter(product => (product.status || 'Active') === 'Active' && (product.type || 'Product') === form.item_type);
@@ -6988,13 +7213,13 @@ function Invoices({ invoices, payments, customers, products, onAdd, onUpdate, on
 
     const unitPrice = Math.max(0, Number(product.unit_price) || 0);
     const quantity = Math.max(1, Number(form.quantity) || 1);
-    setForm(prev => ({
+    setForm(prev => recalculateInvoice({
       ...prev,
       product_id: product.id,
       title: product.name,
       item_type: product.type || 'Product',
       unit_price: unitPrice,
-      amount: quantity * unitPrice
+      quantity
     }));
   };
 
@@ -7005,7 +7230,9 @@ function Invoices({ invoices, payments, customers, products, onAdd, onUpdate, on
       product_id: '',
       title: '',
       unit_price: 0,
-      amount: 0
+      amount: 0,
+      discount: 0,
+      tax: 0
     }));
   };
 
@@ -7031,26 +7258,69 @@ function Invoices({ invoices, payments, customers, products, onAdd, onUpdate, on
   const save = async e => {
     e.preventDefault();
     try {
+      if (!form.deal_id) throw new Error('Select the Won Deal this invoice belongs to.');
+      const selectedDeal = deals.find(deal => deal.id === form.deal_id);
+      if (!selectedDeal || selectedDeal.stage !== 'Won') throw new Error('An invoice can only be created from a Won Deal.');
+      if (form.quote_id) {
+        const selectedQuote = quotes.find(quote => quote.id === form.quote_id);
+        if (!selectedQuote) throw new Error('The selected source quote could not be found.');
+        if (selectedQuote.deal_id !== form.deal_id) throw new Error('The source quote must belong to the selected Won Deal.');
+      }
       if (['Paid', 'Partially Paid'].includes(form.status) && form.approval_status !== 'APPROVED' && !form.id) { throw new Error('An invoice must be approved before payment can be recorded.'); }
+      const calculatedForm = recalculateInvoice(form);
       const payload = {
-        invoice_number: form.invoice_number,
-        title: form.title,
-        customer_id: form.customer_id || null,
-        product_id: form.product_id || null,
-        item_type: form.item_type || 'Product',
-        quantity: Number(form.quantity) || 1,
-        unit_price: Number(form.unit_price) || 0,
-        amount: Number(form.amount) || 0,
-        due_date: form.due_date || null,
-        status: form.status,
-        notes: form.notes || ''
+        invoice_number: calculatedForm.invoice_number,
+        title: calculatedForm.title,
+        customer_id: calculatedForm.customer_id || null,
+        deal_id: calculatedForm.deal_id || null,
+        quote_id: calculatedForm.quote_id || null,
+        sales_rep_id: calculatedForm.sales_rep_id || selectedDeal.created_by || currentUserId,
+        product_id: calculatedForm.product_id || null,
+        item_type: calculatedForm.item_type || 'Product',
+        quantity: Number(calculatedForm.quantity) || 1,
+        unit_price: Number(calculatedForm.unit_price) || 0,
+        amount: Number(calculatedForm.amount) || 0,
+        due_date: calculatedForm.due_date || null,
+        status: calculatedForm.status,
+        notes: calculatedForm.notes || ''
       };
-      if (form.id) await onUpdate(form.id, { ...payload, approval_status: form.approval_status === 'REJECTED' ? (approvalRequirement(payload.amount).band === 'SALES' ? 'SALES_PENDING' : 'HOS_PENDING') : form.approval_status, approval_stage: form.approval_status === 'REJECTED' ? (approvalRequirement(payload.amount).band === 'HOS_MD' ? 'HOS' : approvalRequirement(payload.amount).band) : form.approval_stage, resubmission_note: form.resubmission_note?.trim() || null });
+      if (form.id) await onUpdate(form.id, { ...payload, approval_status: form.approval_status === 'REJECTED' ? null : form.approval_status, approval_stage: form.approval_status === 'REJECTED' ? null : form.approval_stage, resubmission_note: form.resubmission_note?.trim() || null });
       else await onAdd(payload);
       setShow(false);
     } catch (err) {
       alert(err.message);
     }
+  };
+
+  const openEditInvoice = invoice => {
+    if (!invoice) return;
+    const normalized = {
+      ...blank,
+      id: invoice.id,
+      invoice_number: invoice.invoice_number || blank.invoice_number,
+      title: invoice.title || '',
+      customer_id: invoice.customer_id || '',
+      product_id: invoice.product_id || '',
+      item_type: invoice.item_type || 'Product',
+      quantity: Number(invoice.quantity) || 1,
+      unit_price: Number(invoice.unit_price) || 0,
+      amount: Number(invoice.amount) || 0,
+      discount: Number(invoice.discount) || 0,
+      tax: Number(invoice.tax) || 0,
+      due_date: invoice.due_date || '',
+      payment_terms: invoice.payment_terms || 'Due on receipt',
+      status: invoice.status || 'Draft',
+      notes: invoice.notes || '',
+      resubmission_note: '',
+      deal_id: invoice.deal_id || '',
+      quote_id: invoice.quote_id || '',
+      sales_rep_id: invoice.sales_rep_id || invoice.created_by || currentUserId,
+      approval_status: invoice.approval_status || null,
+      approval_stage: invoice.approval_stage || null,
+      created_by: invoice.created_by || null
+    };
+    setForm(recalculateInvoice(normalized));
+    setShow(true);
   };
 
   const paymentSave = async e => {
@@ -7089,21 +7359,22 @@ function Invoices({ invoices, payments, customers, products, onAdd, onUpdate, on
       <div className="table-wrap">
         <table>
           <thead>
-            <tr><th>Invoice</th><th>Customer</th><th>Amount</th><th>Status</th><th>Due</th><th>Actions</th></tr>
+            <tr><th>Invoice</th><th>Customer</th><th>Deal</th><th>Source Quote</th><th>Amount</th><th>Status</th><th>Due</th><th>Actions</th></tr>
           </thead>
           <tbody>
-            {invoices.length === 0 ? <tr><td colSpan="6">No invoices yet.</td></tr> : invoices.map(i => (
+            {invoices.length === 0 ? <tr><td colSpan="8">No invoices yet.</td></tr> : invoices.map(i => (
               <tr key={i.id}>
                 <td><strong>{i.invoice_number}</strong><div className="deal-customer">{i.title}</div></td>
                 <td>{i.customers?.name || '—'}</td>
+                <td>{deals.find(d => d.id === i.deal_id)?.title || '—'}</td>
+                <td>{quotes.find(q => q.id === i.quote_id)?.quote_number || '—'}</td>
                 <td>{formatAmount(i.amount)}</td>
-                <td>{i.status}</td>
+                <td><div>{i.status}</div><small className="approval-range-hint">{approvalRequirement(i.amount).label} approval</small></td>
                 <td>{i.due_date ? formatDate(i.due_date) : '—'}</td>
                 <td><div className="toolbar-actions">
                   <button type="button" className="secondary-btn" onClick={() => setPreview(i)}><FileText size={15} /> View</button>
-                  {(isCommercialEditor(role) || i.created_by === currentUserId) && <button className="secondary-btn" onClick={() => { setForm({ ...blank, ...i, resubmission_note: '' }); setShow(true); }}>Edit</button>}
-                  {i.status === 'Draft' && <button type="button" className="secondary-btn" onClick={async () => { try { await onUpdate(i.id, { status: 'Sent' }); } catch (err) { alert(err.message); } }}>Send</button>}
-                  {canApproveForRole(role, i.amount, i.approval_status || (approvalRequirement(i.amount).band === 'SALES' ? 'SALES_PENDING' : 'HOS_PENDING')) && <><button type="button" className="primary-btn approval-btn" onClick={async () => { try { await onApprove('invoice', i.id); } catch (err) { alert(err.message); } }}>Approve</button><button type="button" className="secondary-btn approval-btn" onClick={async () => { const note = window.prompt('Rejection reason / note:'); if (note) try { await onReject('invoice', i.id, note); } catch (err) { alert(err.message); } }}>Reject</button></>}
+                  {(isCommercialEditor(role) || i.created_by === currentUserId) && <button type="button" className="secondary-btn" onClick={() => openEditInvoice(i)}>Edit</button>}
+                  {i.created_by === currentUserId && ['HOS_PENDING', 'APPROVED', 'MD_PENDING'].indexOf(i.approval_status) === -1 && <button type="button" className="primary-btn approval-btn" onClick={async () => { try { await onSendToHOS(i.id); } catch (err) { alert(err.message); } }}>{i.approval_status === 'REJECTED' ? 'Resubmit to HOS' : 'Send to HOS'}</button>}
                   {isCommercialDeleter(role) && <button type="button" className="icon-btn" title="Delete invoice" onClick={async () => { if (!window.confirm('Delete this invoice?')) return; try { await onDelete(i.id); } catch (err) { alert(err.message); } }}><X size={16} /></button>}
                   {i.status !== 'Paid' && i.approval_status === 'APPROVED' && <button className="secondary-btn" onClick={() => setPay({ invoice_id: i.id, amount: i.amount, paid_at: new Date().toISOString().slice(0, 16), payment_method: 'Bank transfer' })}>Record payment</button>}
                   {(isCommercialEditor(role) || i.created_by === currentUserId) && i.status !== 'Paid' && i.approval_status === 'APPROVED' && <button className="secondary-btn" onClick={() => onUpdate(i.id, { status: i.status === 'Paid' ? 'Sent' : 'Paid' })}>Mark paid</button>}
@@ -7133,6 +7404,21 @@ function Invoices({ invoices, payments, customers, products, onAdd, onUpdate, on
               <input required value={form.invoice_number} onChange={e => setForm({ ...form, invoice_number: e.target.value })} />
             </label>
 
+            <label className="full-width-form-field">
+              Won Deal *
+              <select required value={form.deal_id || ''} onChange={e => selectInvoiceDeal(e.target.value)} disabled={!!form.id}>
+                <option value="">Select Won Deal</option>
+                {selectableWonDeals.map(deal => <option key={deal.id} value={deal.id}>{deal.title} · {deal.company || 'No company'} · {formatAmount(deal.amount)}</option>)}
+              </select>
+              <small className="invoice-payment-term-help">Required for commercial traceability.</small>
+            </label>
+            <label>
+              Source quote (optional)
+              <select value={form.quote_id || ''} onChange={e => selectInvoiceQuote(e.target.value)} disabled={!!form.id}>
+                <option value="">No source quote</option>
+                {selectableQuotes.map(quote => <option key={quote.id} value={quote.id}>{quote.quote_number || quote.id} · {quote.title || 'Quote'}</option>)}
+              </select>
+            </label>
             <label>
               Customer
               <select required value={form.customer_id} onChange={e => setForm({ ...form, customer_id: e.target.value })}>
@@ -7209,8 +7495,18 @@ function Invoices({ invoices, payments, customers, products, onAdd, onUpdate, on
 
             <label>
               Unit price
-              <input type="number" min="0" step="0.01" value={form.unit_price} readOnly />
-              <span className="invoice-payment-term-help">Pulled from the selected solution.</span>
+              <input type="number" min="0" step="0.01" value={form.unit_price} onChange={e => setInvoiceField('unit_price', e.target.value)} />
+              <span className="invoice-payment-term-help">Pulled from the selected solution. You can adjust the invoice price.</span>
+            </label>
+
+            <label>
+              Discount
+              <input type="number" min="0" step="0.01" value={form.discount || 0} onChange={e => setInvoiceField('discount', e.target.value)} />
+            </label>
+
+            <label>
+              Tax / VAT
+              <input type="number" min="0" step="0.01" value={form.tax || 0} onChange={e => setInvoiceField('tax', e.target.value)} />
             </label>
 
             <div className="invoice-item-total">
@@ -7223,8 +7519,10 @@ function Invoices({ invoices, payments, customers, products, onAdd, onUpdate, on
           )}
 
           <div className="invoice-form-total">
-            <span>Total</span>
-            <strong>{formatAmount(form.amount)}</strong>
+            <div><span>Subtotal</span><strong>{formatAmount((Math.max(0, Number(form.quantity) || 0) * Math.max(0, Number(form.unit_price) || 0)))}</strong></div>
+            <div><span>Discount</span><strong>- {formatAmount(Math.max(0, Number(form.discount) || 0))}</strong></div>
+            <div><span>Tax / VAT</span><strong>{formatAmount(Math.max(0, Number(form.tax) || 0))}</strong></div>
+            <div className="grand-total"><span>Total</span><strong>{formatAmount(form.amount)}</strong></div>
           </div>
         </div>
 
@@ -7238,7 +7536,7 @@ function Invoices({ invoices, payments, customers, products, onAdd, onUpdate, on
 
         <div className="modal-actions">
           <button type="button" className="secondary-btn" onClick={() => setShow(false)}>Cancel</button>
-          <button className="primary-btn">Create invoice</button>
+          <button className="primary-btn">{form.id ? 'Save changes' : 'Create invoice'}</button>
         </div>
       </form>
     </div>}
@@ -8281,61 +8579,239 @@ function Chat() {
   );
 }
 function MDPanel({ deals = [], quotes = [], invoices = [], customers = [], formatAmount, onApprove, onReject }) {
-  const approvals = [...deals.map(x => ({ ...x, _type: 'deal' })), ...quotes.map(x => ({ ...x, _type: 'quote' })), ...invoices.map(x => ({ ...x, _type: 'invoice' }))].filter(item => item.approval_status === 'MD_PENDING');
-  const pending = [...deals, ...quotes, ...invoices].filter(item => ['SALES_PENDING', 'HOS_PENDING', 'MD_PENDING'].includes(item.approval_status)).length;
+  // Deals are not commercial approval records; only quotes and invoices can reach MD.
+  const approvals = [...quotes.map(x => ({ ...x, _type: 'quote' })), ...invoices.map(x => ({ ...x, _type: 'invoice' }))].filter(item => item.approval_status === 'MD_PENDING');
+  const pending = [...quotes, ...invoices].filter(item => ['SALES_PENDING', 'HOS_PENDING', 'MD_PENDING'].includes(item.approval_status)).length;
   return <><PageHeading eyebrow="EXECUTIVE" title="MD Panel" description="Executive overview and final approval queue." /><div className="stats-grid"><StatCard label="Customers" value={customers.length} hint="Active customer records" tone="blue" icon="C" onClick={() => document.getElementById('md-customers')?.scrollIntoView({ behavior: 'smooth' })} /><StatCard label="Won revenue" value={formatAmount(deals.filter(d => d.stage === 'Won').reduce((s, d) => s + Number(d.amount || 0), 0))} hint="Pipeline revenue" tone="green" icon="$" onClick={() => document.getElementById('md-revenue')?.scrollIntoView({ behavior: 'smooth' })} /><StatCard label="Pending approvals" value={pending} hint="Commercial approval queue" tone="orange" icon="!" onClick={() => document.getElementById('md-approval-queue')?.scrollIntoView({ behavior: 'smooth' })} /><StatCard label="Open invoices" value={invoices.filter(i => !['Paid', 'Cancelled'].includes(i.status)).length} hint="Outstanding billing" tone="purple" icon="I" onClick={() => setPage?.('Invoices')} /></div><div className="panel" id="md-revenue"><div className="panel-heading"><div><h3>MD executive revenue</h3><p>Company-wide revenue visibility.</p></div></div><div className="panel-subsection" id="md-customers"><p>Customers: <strong>{customers.length}</strong> · Won revenue: <strong>{formatAmount(deals.filter(d => d.stage === 'Won').reduce((s, d) => s + Number(d.amount || 0), 0))}</strong> · Open invoices: <strong>{invoices.filter(i => !['Paid', 'Cancelled'].includes(i.status)).length}</strong></p></div></div><div className="panel" id="md-approval-queue"><div className="panel-heading"><div><h3>MD final approval queue</h3><p>Only $50,000+ records reach this queue after HOS approval.</p></div></div><div className="table-wrap"><table><thead><tr><th>Type</th><th>Record</th><th>Amount</th><th>Action</th></tr></thead><tbody>{approvals.length === 0 ? <tr><td colSpan="4">No MD approvals pending.</td></tr> : approvals.map(item => <tr key={`${item._type}-${item.id}`}><td>{item._type}</td><td>{item.title || item.quote_number || item.invoice_number || 'Record'}</td><td>{formatAmount(item.total ?? item.amount)}</td><td><div className="toolbar-actions"><button className="primary-btn" onClick={async () => { try { await onApprove(item._type, item.id) } catch (e) { alert(e.message) } }}>Approve</button><button className="secondary-btn" onClick={async () => { const note = window.prompt('Rejection reason / note:'); if (note) try { await onReject(item._type, item.id, note) } catch (e) { alert(e.message) } }}>Reject</button></div></td></tr>)}</tbody></table></div></div></>;
 }
 
-function HOSPanel({ deals = [], quotes = [], invoices = [], tickets = [], formatAmount, onApprove, onReject, role, setPage }) {
-  const [revenueTarget, setRevenueTarget] = useState(() => {
-    try { return Number(localStorage.getItem('storhet_revenue_target') || 0); } catch { return 0; }
+function HOSPanel({
+  deals = [],
+  quotes = [],
+  invoices = [],
+  quoteItems = [],
+  tickets = [],
+  ownerProfiles = {},
+  formatAmount,
+  onApprove,
+  onReject,
+  setPage
+}) {
+  // HOS revenue targets are entered and stored directly in NGN.
+  // Deal amounts are stored in the app's base currency, so convert the
+  // achieved figure to NGN before comparing it with the NGN target.
+  const [revenueTargetNgn, setRevenueTargetNgn] = useState(() => {
+    try { return Number(localStorage.getItem('storhet_hos_revenue_target_ngn') || 0); } catch { return 0; }
   });
-  const approvals = [...deals.map(x => ({ ...x, _type: 'deal' })), ...quotes.map(x => ({ ...x, _type: 'quote' })), ...invoices.map(x => ({ ...x, _type: 'invoice' }))].filter(item => ['HOS_PENDING'].includes(item.approval_status) || (!item.approval_status && Number(item.total ?? item.amount ?? 0) >= 20000));
-  const openDeals = deals.filter(d => !['Won', 'Lost'].includes(d.stage));
-  const achievedRevenue = deals.filter(d => d.stage === 'Won').reduce((sum, d) => sum + Number(d.amount || 0), 0);
-  const remainingRevenue = Math.max(Number(revenueTarget || 0) - achievedRevenue, 0);
-  const openTicketCount = tickets.filter(t => !['Resolved', 'Closed'].includes(t.status)).length;
+  const [approvalFilter, setApprovalFilter] = useState('All');
+  const [viewRecord, setViewRecord] = useState(null);
+
+  const achievedRevenueBase = deals
+    .filter(deal => deal.stage === 'Won')
+    .reduce((sum, deal) => sum + Number(deal.amount || 0), 0);
+  const achievedRevenueNgn = achievedRevenueBase * EXCHANGE_RATES.NGN.rate;
+  const remainingRevenueNgn = Math.max(Number(revenueTargetNgn || 0) - achievedRevenueNgn, 0);
+
+  const formatNaira = value => `₦${Number(value || 0).toLocaleString(undefined, {
+    minimumFractionDigits: 0,
+    maximumFractionDigits: 2
+  })}`;
+
+  // HOS only receives commercial records explicitly sent to HOS.
+  // Deals never appear in this queue.
+  const hosRecords = [
+    ...quotes
+      .filter(q => ['HOS_PENDING', 'APPROVED', 'REJECTED', 'MD_PENDING'].includes(q.approval_status))
+      .map(q => ({ ...q, _type: 'Quote', _amount: Number(q.total || 0), _idLabel: q.quote_number || q.id })),
+    ...invoices
+      .filter(i => ['HOS_PENDING', 'APPROVED', 'REJECTED', 'MD_PENDING'].includes(i.approval_status))
+      .map(i => ({ ...i, _type: 'Invoice', _amount: Number(i.amount || 0), _idLabel: i.invoice_number || i.id }))
+  ].sort((a, b) => new Date(b.created_at || 0) - new Date(a.created_at || 0));
+
+  const filteredRecords = approvalFilter === 'All'
+    ? hosRecords
+    : hosRecords.filter(record => {
+        if (approvalFilter === 'Pending') return record.approval_status === 'HOS_PENDING';
+        if (approvalFilter === 'Approved') return ['APPROVED', 'MD_PENDING'].includes(record.approval_status);
+        if (approvalFilter === 'Rejected') return record.approval_status === 'REJECTED';
+        return true;
+      });
+
+  const pendingCount = hosRecords.filter(r => r.approval_status === 'HOS_PENDING').length;
+
   const saveRevenueTarget = value => {
     const numeric = Math.max(0, Number(value) || 0);
-    setRevenueTarget(numeric);
-    try { localStorage.setItem('storhet_revenue_target', String(numeric)); } catch { }
+    setRevenueTargetNgn(numeric);
+    try { localStorage.setItem('storhet_hos_revenue_target_ngn', String(numeric)); } catch {}
   };
+
+  const recordSolution = record => {
+    if (record._type === 'Quote') {
+      const names = quoteItems
+        .filter(item => item.quote_id === record.id)
+        .map(item => item.product_name)
+        .filter(Boolean);
+      return [...new Set(names)].join(', ') || record.title || 'Quoted solution';
+    }
+    return record.title || record.item_type || 'Invoice item';
+  };
+
+  const repName = record => {
+    const id = record.created_by || record.owner_id || record.assigned_to;
+    return ownerProfiles[id] || 'Sales Rep';
+  };
+
+  const companyName = record => {
+    if (record._type === 'Quote') return record.company || record.customer_name || '—';
+    return record.customers?.company || record.customers?.name || record.company || record.customer_name || '—';
+  };
+
+  const statusLabel = record => {
+    if (record.approval_status === 'HOS_PENDING') return 'Pending';
+    if (record.approval_status === 'MD_PENDING') return 'Approved · MD pending';
+    if (record.approval_status === 'APPROVED') return 'Approved';
+    if (record.approval_status === 'REJECTED') return 'Rejected';
+    return 'Pending';
+  };
+
+  const isPending = record => record.approval_status === 'HOS_PENDING';
+
   return <>
-    <PageHeading eyebrow="SALES LEADERSHIP" title="HOS Panel" description="Manage the sales team, revenue performance and commercial approvals." />
+    <PageHeading
+      eyebrow="SALES LEADERSHIP"
+      title="HOS Panel"
+      description="Review Sales Rep quotes and invoices, track team revenue, and make HOS commercial decisions."
+    />
+
     <div className="stats-grid">
-      <StatCard label="Revenue to be achieved" value={formatAmount(revenueTarget)} hint="Team revenue target" tone="purple" icon="◎" onClick={() => document.getElementById('hos-revenue-analysis')?.scrollIntoView({ behavior: 'smooth', block: 'start' })} />
-      <StatCard label="Revenue actually achieved" value={formatAmount(achievedRevenue)} hint="Won deals" tone="green" icon="✓" onClick={() => setPage?.('Pipeline')} />
-      <StatCard label="Revenue remaining" value={formatAmount(remainingRevenue)} hint="Target less achieved" tone="orange" icon="↗" onClick={() => setPage?.('Pipeline')} />
-      <StatCard label="Pending approvals" value={approvals.length} hint="HOS approval queue" tone="orange" icon="!" onClick={() => document.getElementById('hos-approval-queue')?.scrollIntoView({ behavior: 'smooth', block: 'start' })} />
-      <StatCard label="Open deals" value={openDeals.length} hint="Across Sales Reps" tone="blue" icon="D" onClick={() => setPage?.('Pipeline')} />
-      <StatCard label="Open tickets" value={openTicketCount} hint="Support work" tone="green" icon="T" onClick={() => setPage?.('Tickets')} />
+      <StatCard label="Revenue to be achieved" value={formatNaira(revenueTargetNgn)} hint="Team target for this tracking period" tone="purple" icon="◎" onClick={() => document.getElementById('hos-revenue-analysis')?.scrollIntoView({ behavior: 'smooth', block: 'start' })} />
+      <StatCard label="Revenue actually achieved" value={formatNaira(achievedRevenueNgn)} hint="Won deals from Sales Reps" tone="green" icon="✓" onClick={() => document.getElementById('hos-revenue-analysis')?.scrollIntoView({ behavior: 'smooth', block: 'start' })} />
+      <StatCard label="Revenue remaining" value={formatNaira(remainingRevenueNgn)} hint="Target less achieved" tone="orange" icon="↗" onClick={() => document.getElementById('hos-revenue-analysis')?.scrollIntoView({ behavior: 'smooth', block: 'start' })} />
+      <StatCard label="Pending approvals" value={pendingCount} hint="Quotes & invoices waiting for HOS" tone="orange" icon="!" onClick={() => document.getElementById('hos-approval-queue')?.scrollIntoView({ behavior: 'smooth', block: 'start' })} />
     </div>
+
     <div className="panel revenue-analysis-panel" id="hos-revenue-analysis">
-      <div className="panel-heading"><div><h3>Revenue &amp; Performance</h3><p>HOS owns Sales Rep revenue performance and target tracking.</p></div></div>
+      <div className="panel-heading">
+        <div>
+          <h3>Revenue &amp; Performance</h3>
+          <p>Revenue is calculated from Sales Reps' won deals. HOS monitors the result.</p>
+        </div>
+      </div>
       <div className="revenue-target-row">
-        <div><label htmlFor="hos-revenue-target">Revenue target</label><small>Set the team's target for the current tracking period.</small></div>
-        <div className="revenue-target-input"><span>$</span><input id="hos-revenue-target" type="number" min="0" step="1000" value={revenueTarget || ''} placeholder="0" onChange={e => saveRevenueTarget(e.target.value)} /></div>
+        <div>
+          <label htmlFor="hos-revenue-target">Revenue target</label>
+          <small>Set the team's target for the current tracking period.</small>
+        </div>
+        <div className="revenue-target-input">
+          <span>₦</span>
+          <input id="hos-revenue-target" type="number" min="0" step="100000" value={revenueTargetNgn || ''} placeholder="0" onChange={e => saveRevenueTarget(e.target.value)} />
+        </div>
       </div>
       <div className="revenue-performance-grid">
-        <div className="revenue-performance-card"><span>To be achieved</span><strong>{formatAmount(revenueTarget)}</strong></div>
-        <div className="revenue-performance-card"><span>Actually achieved</span><strong>{formatAmount(achievedRevenue)}</strong></div>
-        <div className="revenue-performance-card"><span>Remaining</span><strong>{formatAmount(remainingRevenue)}</strong></div>
-      </div>
-      <div className="panel-subsection">
-        <div className="panel-heading"><div><h3>Sales team performance</h3><p>Click a rep's row to inspect their deals.</p></div><button className="text-btn" onClick={() => setPage?.('Pipeline')}>View Sales Performance</button></div>
-        <div className="table-wrap"><table><thead><tr><th>Sales Rep</th><th>Won Revenue</th><th>Open Deals</th><th>Won Deals</th></tr></thead><tbody>
-          {(() => {
-            const ownerIds = [...new Set(deals.map(d => d.owner_id || d.assigned_to).filter(Boolean))];
-            if (!ownerIds.length) return <tr><td colSpan="4">No assigned Sales Rep performance data yet.</td></tr>;
-            return ownerIds.map(id => { const repDeals = deals.filter(d => (d.owner_id || d.assigned_to) === id); const won = repDeals.filter(d => d.stage === 'Won'); return <tr key={id} className="table-row-clickable" onClick={() => setPage?.('Pipeline')}><td>{id}</td><td>{formatAmount(won.reduce((sum, d) => sum + Number(d.amount || 0), 0))}</td><td>{repDeals.filter(d => !['Won', 'Lost'].includes(d.stage)).length}</td><td>{won.length}</td></tr>; });
-          })()}
-        </tbody></table></div>
+        <div className="revenue-performance-card"><span>Revenue target</span><strong>{formatNaira(revenueTargetNgn)}</strong></div>
+        <div className="revenue-performance-card"><span>Actually achieved</span><strong>{formatNaira(achievedRevenueNgn)}</strong></div>
+        <div className="revenue-performance-card"><span>Remaining</span><strong>{formatNaira(remainingRevenueNgn)}</strong></div>
       </div>
     </div>
-    <div className="panel" id="hos-approval-queue"><div className="panel-heading"><div><h3>Approval queue</h3><p>HOS can approve or reject; ownership stays with the Sales Rep.</p></div></div><div className="table-wrap"><table><thead><tr><th>Type</th><th>Record</th><th>Amount</th><th>Status</th><th>Action</th></tr></thead><tbody>{approvals.length === 0 ? <tr><td colSpan="5">No HOS approvals pending.</td></tr> : approvals.map(item => <tr key={`${item._type}-${item.id}`}><td>{item._type}</td><td>{item.title || item.quote_number || item.invoice_number || 'Record'}</td><td>{formatAmount(item.total ?? item.amount)}</td><td>{item.approval_status || 'Pending'}</td><td><div className="toolbar-actions"><button className="primary-btn" onClick={async () => { try { await onApprove(item._type, item.id) } catch (e) { alert(e.message) } }}>Approve</button><button className="secondary-btn" onClick={async () => { const note = window.prompt('Rejection reason / note:'); if (note) try { await onReject(item._type, item.id, note) } catch (e) { alert(e.message) } }}>Reject</button></div></td></tr>)}</tbody></table></div></div>
+
+    <div className="panel hos-approval-panel" id="hos-approval-queue">
+      <div className="panel-heading hos-approval-heading">
+        <div>
+          <h3>Quotes &amp; Invoices</h3>
+          <p>Every row comes from a Sales Rep. HOS does not create or edit the commercial record here.</p>
+        </div>
+        <div className="hos-filter-tabs">
+          {['All', 'Pending', 'Approved', 'Rejected'].map(filter => (
+            <button key={filter} type="button" className={approvalFilter === filter ? 'active' : ''} onClick={() => setApprovalFilter(filter)}>
+              {filter}
+            </button>
+          ))}
+        </div>
+      </div>
+
+      <div className="table-wrap hos-approval-table-wrap">
+        <table className="hos-approval-table">
+          <thead>
+            <tr>
+              <th>Type</th>
+              <th>Quote / Invoice ID</th>
+              <th>Solution</th>
+              <th>Amount</th>
+              <th>Status</th>
+              <th>Sales Rep</th>
+              <th>Company / Customer</th>
+              <th>Action</th>
+            </tr>
+          </thead>
+          <tbody>
+            {filteredRecords.length === 0 ? (
+              <tr><td colSpan="8" className="hos-empty-state">No quotes or invoices in this view.</td></tr>
+            ) : filteredRecords.map(record => (
+              <tr key={`${record._type}-${record.id}`}>
+                <td><span className="hos-type-badge">{record._type}</span></td>
+                <td><strong>{record._idLabel}</strong></td>
+                <td>
+                  <div className="hos-solution-cell">
+                    <strong>{recordSolution(record)}</strong>
+                    {record._type === 'Quote' && record.title && record.title !== recordSolution(record) ? <small>{record.title}</small> : null}
+                  </div>
+                </td>
+                <td><strong>{formatAmount(record._amount)}</strong></td>
+                <td><span className={`hos-status-badge ${record.approval_status === 'REJECTED' ? 'is-rejected' : record.approval_status === 'HOS_PENDING' ? 'is-pending' : 'is-approved'}`}>{statusLabel(record)}</span></td>
+                <td>{repName(record)}</td>
+                <td>
+                  <div className="hos-company-cell">
+                    <strong>{companyName(record)}</strong>
+                    {record._type === 'Quote' && record.customer_name && record.company ? <small>{record.customer_name}</small> : null}
+                    {record._type === 'Invoice' && record.customers?.name && record.customers?.company ? <small>{record.customers.name}</small> : null}
+                  </div>
+                </td>
+                <td className="hos-action-cell">
+                  <div className="hos-action-buttons">
+                    <button type="button" className="secondary-btn" onClick={() => setViewRecord(record)}>View</button>
+                    {isPending(record) && <>
+                      <button type="button" className="primary-btn" onClick={async () => { try { await onApprove(record._type.toLowerCase(), record.id); } catch (e) { alert(e.message); } }}>Approve</button>
+                      <button type="button" className="secondary-btn" onClick={async () => { const note = window.prompt('Why is this quote/invoice being rejected?'); if (!note?.trim()) return; try { await onReject(record._type.toLowerCase(), record.id, note.trim()); } catch (e) { alert(e.message); } }}>Reject</button>
+                    </>}
+                  </div>
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+    </div>
+
+    {viewRecord && (
+      <div className="modal-backdrop" onClick={() => setViewRecord(null)}>
+        <div className="modal hos-record-view-modal" onClick={e => e.stopPropagation()}>
+          <div className="modal-heading">
+            <div>
+              <span className="eyebrow">COMMERCIAL RECORD</span>
+              <h2>{viewRecord._type} · {viewRecord._idLabel}</h2>
+              <p>Read-only view from the Sales Rep's submitted record.</p>
+            </div>
+            <button type="button" className="icon-btn" onClick={() => setViewRecord(null)}>×</button>
+          </div>
+          <div className="hos-record-view-grid">
+            <div><span>Solution</span><strong>{recordSolution(viewRecord)}</strong></div>
+            <div><span>Amount</span><strong>{formatAmount(viewRecord._amount)}</strong></div>
+            <div><span>Sales Rep</span><strong>{repName(viewRecord)}</strong></div>
+            <div><span>Company / Customer</span><strong>{companyName(viewRecord)}</strong></div>
+            <div><span>Status</span><strong>{statusLabel(viewRecord)}</strong></div>
+            <div><span>Created</span><strong>{viewRecord.created_at ? formatDate(viewRecord.created_at) : '—'}</strong></div>
+          </div>
+          {viewRecord._type === 'Quote' && viewRecord.notes && <div className="hos-record-note"><span>Sales Rep notes</span><p>{viewRecord.notes}</p></div>}
+          {viewRecord._type === 'Invoice' && viewRecord.notes && <div className="hos-record-note"><span>Sales Rep notes</span><p>{viewRecord.notes}</p></div>}
+          <div className="modal-actions">
+            <button type="button" className="secondary-btn" onClick={() => setViewRecord(null)}>Close</button>
+            {isPending(viewRecord) && <button type="button" className="primary-btn" onClick={async () => { try { await onApprove(viewRecord._type.toLowerCase(), viewRecord.id); setViewRecord(null); } catch (e) { alert(e.message); } }}>Approve</button>}
+          </div>
+        </div>
+      </div>
+    )}
   </>;
 }
-
 function HRPanel({ deals = [], quotes = [], invoices = [], tickets = [], customers = [], formatAmount }) {
   const pending = [...deals, ...quotes, ...invoices].filter(x => ['SALES_PENDING', 'HOS_PENDING', 'MD_PENDING'].includes(x.approval_status)).length;
   const openTickets = tickets.filter(t => !['Resolved', 'Closed'].includes(t.status)).length;
