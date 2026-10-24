@@ -6183,7 +6183,6 @@ function EmailLogs({ emailLogs, customers, onAdd, openExternally = false, onClos
     catch (err) { alert(err.message) }
   };
   return <>
-    <PageHeading eyebrow="COMMUNICATIONS" title="Email" description="Log customer emails and keep communication history in one place." action="Log email" onAction={() => setShow(true)} />
     <div className="panel">
       <div className="table-wrap">
         <table>
