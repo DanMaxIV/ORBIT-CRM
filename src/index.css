@@ -11837,3 +11837,245 @@ select {
 .hr-birthday-row > strong {
   font-size: 13px;
 }
+
+/* Phase 1 — Field visit verification */
+.field-visit-start .panel-heading { margin-bottom: 18px; }
+.field-visit-form { display: grid; grid-template-columns: 1.4fr 1fr auto; gap: 14px; align-items: end; }
+.field-visit-form label { display: flex; flex-direction: column; gap: 7px; }
+.field-visit-form label > select,
+.field-visit-form label > input { width: 100%; }
+.field-visit-cards { display: grid; gap: 10px; }
+.field-visit-card { display: flex; justify-content: space-between; gap: 18px; align-items: center; padding: 16px; border: 1px solid var(--border, #e5e7eb); border-radius: 12px; }
+.field-visit-card > div:first-child { display: grid; gap: 4px; }
+.field-visit-card > div:first-child span,
+.field-visit-card > div:first-child small { color: var(--muted, #64748b); }
+.field-visit-card > div:last-child { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; justify-content: flex-end; }
+.field-visit-links { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 5px; }
+.field-visit-links-table { margin-top: 0; }
+.field-visit-map-link { color: var(--primary, #2563eb); font-size: 12px; font-weight: 700; text-decoration: none; }
+.field-visit-map-link:hover { text-decoration: underline; }
+.location-capture-fields { display: grid; gap: 8px; padding: 12px; border: 1px solid var(--border, #e5e7eb); border-radius: 10px; margin: 4px 0 12px; }
+.location-capture-heading { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+.location-capture-heading > div { display: grid; gap: 3px; }
+.location-capture-heading span { color: var(--muted, #64748b); font-size: 12px; }
+.location-coordinates { color: var(--muted, #64748b); font-variant-numeric: tabular-nums; }
+.location-capture-meta { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
+.field-visit-address { color: var(--muted, #64748b); font-size: 12px; }
+@media (max-width: 820px) {
+  .field-visit-form { grid-template-columns: 1fr; }
+  .field-visit-card { align-items: flex-start; flex-direction: column; }
+  .field-visit-card > div:last-child { justify-content: flex-start; }
+  .location-capture-heading { align-items: flex-start; flex-direction: column; }
+}
+
+/* Field visits live inside Activities > Work & Support */
+.activities-field-visits {
+  margin-top: 24px;
+}
+
+.field-visit-section-heading {
+  margin: 8px 0 14px;
+}
+
+.field-visit-section-heading h2 {
+  margin: 0 0 4px;
+}
+
+.field-visit-section-heading p {
+  margin: 0;
+  color: var(--muted, #64748b);
+}
+
+/* Field visit form — details first, GPS permission on submit */
+.field-visit-form-expanded {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  align-items: start;
+}
+
+.field-visit-form-expanded label {
+  min-width: 0;
+}
+
+.field-visit-form-expanded textarea {
+  width: 100%;
+  min-height: 88px;
+  resize: vertical;
+}
+
+.field-visit-full {
+  grid-column: 1 / -1;
+}
+
+.field-visit-location-notice {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  padding: 13px 14px;
+  border: 1px solid var(--border, #e5e7eb);
+  border-radius: 10px;
+  background: var(--surface-subtle, #f8fafc);
+}
+
+.field-visit-location-notice strong {
+  display: block;
+  margin-bottom: 3px;
+}
+
+.field-visit-location-notice p {
+  margin: 0;
+  color: var(--muted, #64748b);
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.field-visit-location-dot {
+  font-size: 11px;
+  line-height: 1.4;
+}
+
+.field-visit-form-actions {
+  display: flex;
+  justify-content: flex-end;
+  padding-top: 2px;
+}
+
+@media (max-width: 820px) {
+  .field-visit-form-expanded {
+    grid-template-columns: 1fr;
+  }
+
+  .field-visit-full {
+    grid-column: auto;
+  }
+
+  .field-visit-form-actions {
+    justify-content: flex-start;
+  }
+}
+
+/* Field Visits — standalone Work & Support module */
+.field-visit-location-preview {
+  display: grid;
+  gap: 5px;
+  padding: 13px 14px;
+  border: 1px solid var(--border, #e5e7eb);
+  border-radius: 10px;
+  background: var(--surface-subtle, #f8fafc);
+}
+
+.field-visit-location-preview strong {
+  font-size: 12px;
+}
+
+.field-visit-location-preview > span {
+  color: var(--muted, #64748b);
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.field-visit-location-preview .field-visit-map-link {
+  width: fit-content;
+}
+
+/* Field Visits — polished CRM form UI */
+.field-visit-form-expanded {
+  gap: 18px 14px;
+}
+
+.field-visit-form-expanded label {
+  color: var(--text, #20232d);
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.field-visit-form-expanded label > input,
+.field-visit-form-expanded label > select,
+.field-visit-form-expanded label > textarea {
+  box-sizing: border-box;
+  width: 100%;
+  margin-top: 2px;
+  border: 1px solid #dfe3eb;
+  border-radius: 8px;
+  background: #fff;
+  color: #20232d;
+  font: inherit;
+  font-size: 13px;
+  font-weight: 400;
+  outline: none;
+  transition: border-color .16s ease, box-shadow .16s ease, background .16s ease;
+}
+
+.field-visit-form-expanded label > input,
+.field-visit-form-expanded label > select {
+  min-height: 42px;
+  padding: 0 12px;
+}
+
+.field-visit-form-expanded label > textarea {
+  min-height: 96px;
+  padding: 11px 12px;
+  line-height: 1.5;
+}
+
+.field-visit-form-expanded label > input::placeholder,
+.field-visit-form-expanded label > textarea::placeholder {
+  color: #a1a7b4;
+}
+
+.field-visit-form-expanded label > input:hover,
+.field-visit-form-expanded label > select:hover,
+.field-visit-form-expanded label > textarea:hover {
+  border-color: #c9cfda;
+}
+
+.field-visit-form-expanded label > input:focus,
+.field-visit-form-expanded label > select:focus,
+.field-visit-form-expanded label > textarea:focus {
+  border-color: #1689e8;
+  box-shadow: 0 0 0 3px rgba(22, 137, 232, .10);
+}
+
+.field-visit-location-preview {
+  gap: 7px;
+  padding: 14px 16px;
+  border-color: #dfe5ee;
+  background: #f8fafc;
+}
+
+.field-visit-location-preview strong {
+  color: #252936;
+  font-size: 12px;
+}
+
+.field-visit-location-notice {
+  padding: 14px 16px;
+  border-color: #dfe5ee;
+  background: #f8fafc;
+}
+
+.field-visit-location-notice strong {
+  color: #252936;
+  font-size: 12px;
+}
+
+.field-visit-form-actions {
+  margin-top: 2px;
+  padding-top: 4px;
+}
+
+.field-visit-form-actions .primary-btn {
+  min-height: 42px;
+  padding: 0 18px;
+  border-radius: 8px;
+  font-weight: 700;
+}
+
+@media (max-width: 820px) {
+  .field-visit-form-expanded {
+    gap: 14px;
+  }
+
+  .field-visit-form-actions .primary-btn {
+    width: 100%;
+  }
+}

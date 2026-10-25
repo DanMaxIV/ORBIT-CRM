@@ -6,7 +6,7 @@ import timeGridPlugin from '@fullcalendar/react/timegrid';
 import listPlugin from '@fullcalendar/react/list';
 import interactionPlugin from '@fullcalendar/react/interaction';
 import '@fullcalendar/react/skeleton.css';
-import { LayoutDashboard, Users, Kanban, CalendarCheck, BarChart3, Settings, Bell, Search, Plus, ArrowUpRight, MoreHorizontal, Menu, X, UserRound, Pencil, Receipt, LogOut, UserCog, MessageCircle, UserPlus, Mail, CalendarDays, FileText, Workflow, TrendingUp, Tags, DollarSign, CreditCard, Upload, Download, Play, Target, CheckCircle2, ArrowLeft, ChevronRight, Building2, RefreshCw, GripVertical } from 'lucide-react';
+import { LayoutDashboard, Users, Kanban, CalendarCheck, BarChart3, Settings, Bell, Search, Plus, ArrowUpRight, MoreHorizontal, Menu, X, UserRound, Pencil, Receipt, LogOut, UserCog, MessageCircle, UserPlus, Mail, CalendarDays, FileText, Workflow, TrendingUp, Tags, DollarSign, CreditCard, Upload, Download, Play, Target, CheckCircle2, ArrowLeft, ChevronRight, Building2, RefreshCw, GripVertical, MapPin } from 'lucide-react';
 
 // Lets every page heading refresh the latest workspace data without prop-drilling.
 const RefreshContext = createContext(null);
@@ -47,6 +47,7 @@ const isCommercialDeleter = role => ['admin', 'manager', 'head_of_sales'].includ
 const isCommercialEditor = role => ['admin', 'manager'].includes(role);
 const ROLE_PANEL_PAGE = {
   manager: 'MD Panel',
+  admin: 'MD Panel',
   head_of_sales: 'HOS Panel',
   hr: 'HR Panel',
   technical_support: 'Technical Support Panel'
@@ -59,11 +60,11 @@ const approvalRequirement = amount => {
   return { band: 'SALES', label: 'Sales Rep' };
 };
 const canApproveForRole = (role, amount, approvalStatus = 'PENDING') => {
-  if (role === 'admin') return false;
+  const effectiveRole = role === 'admin' ? 'manager' : role;
   const requirement = approvalRequirement(amount).band;
-  if (approvalStatus === 'HOS_PENDING' && role === 'head_of_sales') return requirement === 'HOS' || requirement === 'HOS_MD';
-  if (approvalStatus === 'MD_PENDING' && role === 'manager') return requirement === 'HOS_MD';
-  if (approvalStatus === 'SALES_PENDING' && role === 'sales') return requirement === 'SALES';
+  if (approvalStatus === 'HOS_PENDING' && effectiveRole === 'head_of_sales') return requirement === 'HOS' || requirement === 'HOS_MD';
+  if (approvalStatus === 'MD_PENDING' && effectiveRole === 'manager') return requirement === 'HOS_MD';
+  if (approvalStatus === 'SALES_PENDING' && effectiveRole === 'sales') return requirement === 'SALES';
   return false;
 };
 const roleLabel = role => {
@@ -72,6 +73,15 @@ const roleLabel = role => {
   if (known) return known.label;
   return role.charAt(0).toUpperCase() + role.slice(1).replace(/_/g, ' '); // e.g. a legacy "member" row
 };
+
+function distanceInMeters(lat1, lon1, lat2, lon2) {
+  const R = 6371000;
+  const toRad = value => value * Math.PI / 180;
+  const dLat = toRad(lat2 - lat1);
+  const dLon = toRad(lon2 - lon1);
+  const a = Math.sin(dLat / 2) ** 2 + Math.cos(toRad(lat1)) * Math.cos(toRad(lat2)) * Math.sin(dLon / 2) ** 2;
+  return 2 * R * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+}
 
 function AuthScreen({ onGoogleSignIn, onEmailSignIn, onEmailSignUp, onPortalSignUp, authMode, setAuthMode, email, setEmail, password, setPassword,
   error,
@@ -775,7 +785,7 @@ function CustomerPortalHome({ user, account, onSignOut }) {
 const navSections = [
   { title: 'Overview', items: [['Dashboard', LayoutDashboard], ['Reports', BarChart3]] },
   { title: 'Customers & Sales', items: [['Customers', Users], ['Leads', UserPlus], ['Pipeline', Kanban], ['Products', FileText], ['Quotes', FileText], ['Invoices', CreditCard], ['Forecast', TrendingUp]] },
-  { title: 'Work & Support', items: [['Activities', CalendarCheck], ['Calendar', CalendarDays], ['Technical Support', UserCog], ['Tickets', Receipt], ['Documents', FileText]] },
+  { title: 'Work & Support', items: [['Activities', CalendarCheck], ['Field Visits', MapPin], ['Calendar', CalendarDays], ['Technical Support', UserCog], ['Tickets', Receipt], ['Documents', FileText]] },
   { title: 'Communication', items: [['Email', Mail], ['Chat', MessageCircle]] },
   { title: 'Automation & Insights', items: [['Automation', Workflow], ['Segments', Tags]] },
   { title: 'System', items: [['Settings', Settings]] }
@@ -783,6 +793,7 @@ const navSections = [
 
 const rolePanelNav = [
   ['MD Panel', BarChart3, 'manager'],
+  ['MD Panel', BarChart3, 'admin'],
   ['HOS Panel', CheckCircle2, 'head_of_sales'],
   ['HR Panel', Users, 'hr'],
   ['Technical Support Panel', UserCog, 'technical_support']
@@ -876,11 +887,13 @@ function App() {
   const [search, setSearch] = useState('');
   const [globalSearch, setGlobalSearch] = useState('');
   const [showCustomerForm, setShowCustomerForm] = useState(false);
-  const [newCustomer, setNewCustomer] = useState({ name: '', company: '', email: '', phone: '', job_title: '', birthday: '', status: 'Active' });
+  const [newCustomer, setNewCustomer] = useState({ name: '', company: '', email: '', phone: '', job_title: '', birthday: '', location_address: '', latitude: '', longitude: '', status: 'Active' });
   const [selectedCustomer, setSelectedCustomer] = useState(null);
   const [openCustomerMenu, setOpenCustomerMenu] = useState(null);
   const [editingCustomer, setEditingCustomer] = useState(null);
   const [activities, setActivities] = useState([]);
+  const [fieldVisits, setFieldVisits] = useState([]);
+  const [fieldVisitError, setFieldVisitError] = useState('');
   const [showActivityForm, setShowActivityForm] = useState(false);
   const [newActivity, setNewActivity] = useState({
     title: '', type: 'Task', activity_date: '', customer_id: '',
@@ -1373,6 +1386,20 @@ function App() {
       return;
     }
     setActivities(data || []);
+  }
+
+  async function fetchFieldVisits() {
+    const { data, error } = await supabase
+      .from('field_visits')
+      .select('*')
+      .order('check_in_at', { ascending: false });
+    if (error) {
+      if (!['42P01', 'PGRST205'].includes(error.code)) console.error('Error fetching field visits:', error);
+      setFieldVisitError(error.code === '42P01' || error.code === 'PGRST205' ? 'Field visits are not set up yet. Run the Phase 1 field-visit SQL migration.' : error.message);
+      return;
+    }
+    setFieldVisitError('');
+    setFieldVisits(data || []);
   }
   async function fetchTickets() {
     const { data, error } = await supabase
@@ -2399,7 +2426,7 @@ function App() {
 
     try {
       const jobs = [
-        fetchCustomers(), fetchDeals(), fetchActivities(), fetchTickets(), fetchStaffUsers(),
+        fetchCustomers(), fetchDeals(), fetchActivities(), fetchFieldVisits(), fetchTickets(), fetchStaffUsers(),
         fetchLeads(), fetchLeadProducts(), fetchDealProducts(), fetchEmailLogs(), fetchCalendarEvents(),
         fetchQuotes(), fetchQuoteItems(), fetchInvoices(), fetchPayments(), fetchDocuments(),
         fetchWorkflows(), fetchSegments(), fetchProducts(), fetchSupportEngineers(),
@@ -2788,6 +2815,9 @@ function App() {
             phone: newCustomer.phone.trim() || null,
             job_title: newCustomer.job_title.trim() || null,
             birthday: newCustomer.birthday || null,
+            location_address: newCustomer.location_address?.trim() || null,
+            latitude: newCustomer.latitude || null,
+            longitude: newCustomer.longitude || null,
             status: newCustomer.status || 'Active',
             created_by: session.user.id
           }
@@ -2810,6 +2840,9 @@ function App() {
         phone: '',
         job_title: '',
         birthday: '',
+        location_address: '',
+        latitude: '',
+        longitude: '',
         status: 'Active'
       });
 
@@ -2868,6 +2901,9 @@ function App() {
         phone: editingCustomer.phone?.trim() || null,
         job_title: editingCustomer.job_title?.trim() || null,
         birthday: editingCustomer.birthday || null,
+        location_address: editingCustomer.location_address?.trim() || null,
+        latitude: editingCustomer.latitude || null,
+        longitude: editingCustomer.longitude || null,
         status: editingCustomer.status || 'Active'
       })
       .eq('id', editingCustomer.id)
@@ -3330,6 +3366,162 @@ function App() {
       setEditDealSaving(false);
     }
   }
+  function captureCurrentLocation(onSuccess, onFailure) {
+    if (!navigator.geolocation) {
+      onFailure?.(new Error('Location is not supported by this browser.'));
+      return;
+    }
+    navigator.geolocation.getCurrentPosition(
+      position => onSuccess?.(position.coords),
+      error => onFailure?.(new Error(error.code === 1 ? 'Location permission was denied.' : 'Unable to get your current location.')),
+      { enableHighAccuracy: true, timeout: 15000, maximumAge: 0 }
+    );
+  }
+
+  async function startFieldVisit(visitForm = {}) {
+    setFieldVisitError('');
+    const {
+      targetType = 'customer',
+      customerId = '',
+      targetName = '',
+      targetOrganization = '',
+      targetAddress = '',
+      visitType = 'Customer visit',
+      contactPerson = '',
+      objective = '',
+      notes = ''
+    } = visitForm;
+
+    if (targetType === 'customer' && !customerId) throw new Error('Select a customer before starting a field visit.');
+    if (targetType === 'other' && !targetName.trim()) throw new Error('Enter the person or organization you are visiting.');
+    if (!objective.trim()) throw new Error('Enter the visit objective before starting.');
+
+    const customer = targetType === 'customer' ? customers.find(item => item.id === customerId) : null;
+    if (targetType === 'customer' && !customer) throw new Error('Customer could not be found.');
+
+    return new Promise((resolve, reject) => {
+      // The browser requests location permission only after the visit form is submitted.
+      captureCurrentLocation(async coords => {
+        try {
+          const activityId = crypto.randomUUID();
+          const now = new Date().toISOString();
+          const customerLat = customer ? Number(customer.latitude) : NaN;
+          const customerLng = customer ? Number(customer.longitude) : NaN;
+          const hasCustomerLocation = targetType === 'customer' && Number.isFinite(customerLat) && Number.isFinite(customerLng);
+          const distance = hasCustomerLocation ? distanceInMeters(coords.latitude, coords.longitude, customerLat, customerLng) : null;
+          const verification = targetType === 'other'
+            ? 'LOCATION_CAPTURED'
+            : !hasCustomerLocation
+              ? 'NOT_CONFIGURED'
+              : distance <= 300
+                ? 'VERIFIED'
+                : distance <= 1000
+                  ? 'NEARBY'
+                  : 'MISMATCH';
+
+          const resolvedName = targetType === 'customer' ? customer.name : targetName.trim();
+          const resolvedOrganization = targetType === 'customer' ? (customer.company || '') : targetOrganization.trim();
+          const resolvedAddress = targetType === 'customer' ? (customer.location_address?.trim() || '') : targetAddress.trim();
+          const visitNotes = [
+            contactPerson ? `Contact: ${contactPerson}` : '',
+            resolvedOrganization ? `Organization: ${resolvedOrganization}` : '',
+            objective ? `Objective: ${objective}` : '',
+            notes ? `Notes: ${notes}` : '',
+            resolvedAddress ? `Visit address: ${resolvedAddress}` : '',
+            `Field visit started. GPS accuracy: ${Math.round(coords.accuracy || 0)}m.`
+          ].filter(Boolean).join('\n');
+          const title = `${visitType} — ${resolvedName}`;
+
+          const { error: activityError } = await supabase.from('activities').insert({
+            id: activityId,
+            title,
+            type: 'Field Visit',
+            activity_date: now,
+            customer_id: customer?.id || null,
+            notes: visitNotes,
+            status: 'In Progress',
+            priority: 'Medium',
+            assigned_to: session.user.id,
+            created_by: session.user.id
+          });
+          if (activityError) throw activityError;
+
+          const { data, error } = await supabase.from('field_visits').insert({
+            activity_id: activityId,
+            sales_rep_id: session.user.id,
+            customer_id: customer?.id || null,
+            target_type: targetType,
+            target_name: resolvedName,
+            target_organization: resolvedOrganization || null,
+            target_address: resolvedAddress || null,
+            purpose: visitType,
+            contact_person: contactPerson.trim() || null,
+            objective: objective.trim(),
+            notes: notes.trim() || null,
+            check_in_at: now,
+            check_in_latitude: coords.latitude,
+            check_in_longitude: coords.longitude,
+            check_in_accuracy: coords.accuracy || null,
+            check_in_location_url: googleMapsLocationUrl(coords.latitude, coords.longitude),
+            customer_latitude: hasCustomerLocation ? customerLat : null,
+            customer_longitude: hasCustomerLocation ? customerLng : null,
+            customer_location_address: targetType === 'customer' ? (customer.location_address?.trim() || null) : null,
+            distance_from_customer: distance,
+            verification_status: verification
+          }).select().single();
+          if (error) {
+            await supabase.from('activities').delete().eq('id', activityId);
+            throw error;
+          }
+
+          setActivities(prev => [{
+            id: activityId,
+            title,
+            type: 'Field Visit',
+            activity_date: now,
+            customer_id: customer?.id || null,
+            notes: visitNotes,
+            status: 'In Progress',
+            priority: 'Medium',
+            assigned_to: session.user.id,
+            created_by: session.user.id
+          }, ...prev]);
+          setFieldVisits(prev => [data, ...prev]);
+          resolve(data);
+        } catch (error) { reject(error); }
+      }, reject);
+    });
+  }
+
+  async function endFieldVisit(visit) {
+    return new Promise((resolve, reject) => {
+      captureCurrentLocation(async coords => {
+        try {
+          const now = new Date().toISOString();
+          const customerLat = Number(visit.customer_latitude);
+          const customerLng = Number(visit.customer_longitude);
+          const hasCustomerLocation = Number.isFinite(customerLat) && Number.isFinite(customerLng);
+          const distance = hasCustomerLocation ? distanceInMeters(coords.latitude, coords.longitude, customerLat, customerLng) : null;
+          const verification = !hasCustomerLocation ? 'NOT_CONFIGURED' : distance <= 300 ? 'VERIFIED' : distance <= 1000 ? 'NEARBY' : 'MISMATCH';
+          const { data, error } = await supabase.from('field_visits').update({
+            check_out_at: now,
+            check_out_latitude: coords.latitude,
+            check_out_longitude: coords.longitude,
+            check_out_accuracy: coords.accuracy || null,
+            check_out_location_url: googleMapsLocationUrl(coords.latitude, coords.longitude),
+            distance_from_customer: distance ?? visit.distance_from_customer,
+            verification_status: verification
+          }).eq('id', visit.id).select().single();
+          if (error) throw error;
+          await supabase.from('activities').update({ status: 'Completed', notes: `Field visit completed. Check-out GPS accuracy: ${Math.round(coords.accuracy || 0)}m.` }).eq('id', visit.activity_id);
+          setFieldVisits(prev => prev.map(item => item.id === data.id ? data : item));
+          setActivities(prev => prev.map(item => item.id === visit.activity_id ? { ...item, status: 'Completed', notes: `Field visit completed. Check-out GPS accuracy: ${Math.round(coords.accuracy || 0)}m.` } : item));
+          resolve(data);
+        } catch (error) { reject(error); }
+      }, reject);
+    });
+  }
+
   async function addActivity() {
     setActivityError('');
 
@@ -3702,7 +3894,7 @@ function App() {
           {page === 'Dashboard' && (
             <Dashboard revenue={revenue} customers={customers} leads={leads} deals={deals} activities={activities} tickets={tickets} setPage={setPage} formatAmount={formatAmount} onSelectCustomer={setSelectedCustomer} onEditCustomer={setEditingCustomer} onDeleteCustomer={deleteCustomer} currentUserId={session.user.id} role={authorizationProfile?.role} />
           )}
-          {page === 'MD Panel' && authorizationProfile?.role === 'manager' && <MDPanel deals={deals} quotes={quotes} invoices={invoices} customers={customers} formatAmount={formatAmount} onApprove={approveCommercialRecord} onReject={rejectCommercialRecord} />}
+          {page === 'MD Panel' && ['manager', 'admin'].includes(authorizationProfile?.role) && <MDPanel deals={deals} quotes={quotes} invoices={invoices} customers={customers} formatAmount={formatAmount} onApprove={approveCommercialRecord} onReject={rejectCommercialRecord} />}
           {page === 'HOS Panel' && authorizationProfile?.role === 'head_of_sales' && <HOSPanel deals={deals} quotes={quotes} invoices={invoices} quoteItems={quoteItems} tickets={tickets} ownerProfiles={ownerProfiles} formatAmount={formatAmount} currentUserId={session.user.id} role={authorizationProfile?.role} setPage={setPage} onApprove={approveCommercialRecord} onReject={rejectCommercialRecord} />}
           {page === 'HR Panel' && authorizationProfile?.role === 'hr' && <HRPanel activities={activities} authorizedUsers={authorizedUsers} ownerProfiles={ownerProfiles} customers={customers} leads={leads} />}
           {page === 'Technical Support Panel' && authorizationProfile?.role === 'technical_support' && <TechnicalSupportPanel tickets={tickets} customers={customers} formatAmount={formatAmount} currentUserId={session.user.id} ticketError={ticketError} onAddTicket={() => { setTicketError(''); setNewTicket(t => ({ ...t, customer_id: '' })); setShowTicketForm(true); }} onStatusChange={updateTicketStatus} onDeleteTicket={deleteTicket} onEditTicket={ticket => { setEditTicketError(''); setEditingTicket(ticket); }} onViewTicket={setSelectedTicket} isAdmin={isAdminRole(authorizationProfile?.role)} role={authorizationProfile?.role} canManage={canManageTicket} staffName={staffName} staffOptions={getStaffOptions()} onAssign={assignTicket} setPage={setPage} />}
@@ -3771,6 +3963,9 @@ function App() {
           {page === 'Activities' && (
             <Activities activities={activities} customers={customers} ownerProfiles={ownerProfiles} currentUserEmail={session.user.email} onAdd={() => { setActivityError(''); setNewActivity(a => ({ ...a, customer_id: '' })); setShowActivityForm(true); }} onStatusChange={updateActivityStatus} onDelete={deleteActivity} onEdit={activity => { setEditActivityError(''); setEditingActivity({ ...activity, activity_date: formatDateTimeLocal(activity.activity_date) }); }} onView={setSelectedActivity} currentUserId={session.user.id} isAdmin={isSystemAdminOrMD(authorizationProfile?.role)} />
           )}
+          {page === 'Field Visits' && ['sales', 'head_of_sales', 'manager', 'admin'].includes(authorizationProfile?.role) && (
+            <FieldVisits customers={customers} fieldVisits={fieldVisits} currentUserId={session.user.id} role={authorizationProfile?.role} onStart={startFieldVisit} onEnd={endFieldVisit} error={fieldVisitError} />
+          )}
           {page === 'Tickets' && authorizationProfile?.role !== 'technical_support' && (
             <Tickets
               tickets={tickets}
@@ -3823,6 +4018,8 @@ function App() {
           <label>Phone<input value={newCustomer.phone} onChange={e => setNewCustomer({ ...newCustomer, phone: e.target.value })} placeholder="+234..." /></label>
           <JobTitleField value={newCustomer.job_title} onChange={value => setNewCustomer({ ...newCustomer, job_title: value })} />
           <BirthdayField value={newCustomer.birthday} onChange={value => setNewCustomer({ ...newCustomer, birthday: value })} />
+          <label>Branch / visit address<input value={newCustomer.location_address || ''} onChange={e => setNewCustomer({ ...newCustomer, location_address: e.target.value })} placeholder="e.g. UBA CMS, Marina, Lagos" /></label>
+          <LocationCaptureFields latitude={newCustomer.latitude} longitude={newCustomer.longitude} onCapture={coords => setNewCustomer(prev => ({ ...prev, latitude: String(coords.latitude), longitude: String(coords.longitude) }))} />
           <label>
             Status
             <select value={newCustomer.status} onChange={e => setNewCustomer({ ...newCustomer, status: e.target.value })}>
@@ -3931,6 +4128,8 @@ function App() {
           </label>
           <JobTitleField value={editingCustomer.job_title} onChange={value => setEditingCustomer({ ...editingCustomer, job_title: value })} />
           <BirthdayField value={editingCustomer.birthday} onChange={value => setEditingCustomer({ ...editingCustomer, birthday: value })} />
+          <label>Branch / visit address<input value={editingCustomer.location_address || ''} onChange={e => setEditingCustomer({ ...editingCustomer, location_address: e.target.value })} placeholder="e.g. UBA CMS, Marina, Lagos" /></label>
+          <LocationCaptureFields latitude={editingCustomer.latitude} longitude={editingCustomer.longitude} onCapture={coords => setEditingCustomer(prev => ({ ...prev, latitude: String(coords.latitude), longitude: String(coords.longitude) }))} />
           <label>
             Status
             <select
@@ -4930,6 +5129,27 @@ function normalizeBirthdayValue(value) {
   return `2000-${dayMonth[2]}-${dayMonth[1]}`;
 }
 
+function LocationCaptureFields({ latitude, longitude, onCapture }) {
+  const [capturing, setCapturing] = useState(false);
+  const [error, setError] = useState('');
+  const capture = () => {
+    setError('');
+    if (!navigator.geolocation) { setError('Location is not supported by this browser.'); return; }
+    setCapturing(true);
+    navigator.geolocation.getCurrentPosition(
+      position => { setCapturing(false); onCapture(position.coords); },
+      error => { setCapturing(false); setError(error.code === 1 ? 'Location permission was denied.' : 'Could not capture location.'); },
+      { enableHighAccuracy: true, timeout: 15000, maximumAge: 0 }
+    );
+  };
+  const mapUrl = googleMapsLocationUrl(latitude, longitude);
+  return <div className="location-capture-fields">
+    <div className="location-capture-heading"><div><strong>Customer branch location</strong><span>Used to verify field visits and retained for audit.</span></div><button type="button" className="secondary-btn" onClick={capture} disabled={capturing}>{capturing ? 'Capturing…' : 'Capture branch GPS'}</button></div>
+    {(latitude && longitude) && <div className="location-capture-meta"><small className="location-coordinates">{Number(latitude).toFixed(6)}, {Number(longitude).toFixed(6)}</small>{mapUrl && <a href={mapUrl} target="_blank" rel="noreferrer" className="field-visit-map-link">Open in Google Maps</a>}</div>}
+    {error && <small className="form-error">{error}</small>}
+  </div>;
+}
+
 function BirthdayField({ value, onChange, label = 'Birthday' }) {
   const [inputValue, setInputValue] = useState(() => birthdayDisplayValue(value));
 
@@ -5811,6 +6031,200 @@ function Pipeline({ deals, customers, dealSupport = [], supportEngineers = [], m
   );
 }
 
+
+function googleMapsLocationUrl(latitude, longitude, address = '') {
+  const cleanAddress = String(address || '').trim();
+  if (cleanAddress) return `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(cleanAddress)}`;
+  const lat = Number(latitude);
+  const lng = Number(longitude);
+  if (!Number.isFinite(lat) || !Number.isFinite(lng)) return '';
+  return `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(`${lat},${lng}`)}`;
+}
+
+function FieldVisits({ customers = [], fieldVisits = [], currentUserId, role, onStart, onEnd, error }) {
+  const [targetType, setTargetType] = useState('customer');
+  const [customerId, setCustomerId] = useState('');
+  const [targetName, setTargetName] = useState('');
+  const [targetOrganization, setTargetOrganization] = useState('');
+  const [targetAddress, setTargetAddress] = useState('');
+  const [visitType, setVisitType] = useState('Customer visit');
+  const [contactPerson, setContactPerson] = useState('');
+  const [objective, setObjective] = useState('');
+  const [notes, setNotes] = useState('');
+  const [busy, setBusy] = useState(false);
+
+  const visibleVisits = fieldVisits.filter(visit => role === 'manager' || role === 'admin' || visit.sales_rep_id === currentUserId);
+  const activeVisits = visibleVisits.filter(visit => !visit.check_out_at);
+  const selectedCustomer = customers.find(customer => customer.id === customerId);
+
+  const resetForm = () => {
+    setCustomerId('');
+    setTargetName('');
+    setTargetOrganization('');
+    setTargetAddress('');
+    setVisitType('Customer visit');
+    setContactPerson('');
+    setObjective('');
+    setNotes('');
+  };
+
+  const start = async () => {
+    if (targetType === 'customer' && !customerId) return;
+    if (targetType === 'other' && !targetName.trim()) return;
+    if (!objective.trim()) return;
+    setBusy(true);
+    try {
+      await onStart({ targetType, customerId, targetName, targetOrganization, targetAddress, visitType, contactPerson, objective, notes });
+      resetForm();
+    } catch (e) {
+      alert(e.message || 'Unable to start field visit.');
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const statusLabel = visit => ({
+    VERIFIED: 'Verified',
+    NEARBY: 'Nearby — review',
+    MISMATCH: 'Location mismatch',
+    LOW_ACCURACY: 'Low accuracy',
+    NOT_CONFIGURED: 'Customer location not configured',
+    LOCATION_CAPTURED: 'Location captured'
+  }[visit.verification_status] || visit.verification_status || 'Pending');
+
+  const targetLabel = visit => {
+    const customer = customers.find(c => c.id === visit.customer_id);
+    return visit.target_name || customer?.name || 'Visit target';
+  };
+
+  return <>
+    <PageHeading
+      eyebrow="WORK & SUPPORT"
+      title="Field Visits"
+      description="Record customer or external field visits with GPS check-in and check-out. Location is captured only when a visit is started or ended."
+    />
+
+    <div className="panel">
+      <div className="panel-heading">
+        <div>
+          <h3>Start a field visit</h3>
+          <p>Complete the visit details first. Your browser will request location permission only when you start the visit.</p>
+        </div>
+      </div>
+      {error && <div className="form-error">{error}</div>}
+
+      <div className="field-visit-form field-visit-form-expanded">
+        <label>Visit target
+          <select value={targetType} onChange={e => { setTargetType(e.target.value); setCustomerId(''); setTargetName(''); setTargetOrganization(''); setTargetAddress(''); }}>
+            <option value="customer">CRM Customer</option>
+            <option value="other">Other person / organization</option>
+          </select>
+        </label>
+
+        {targetType === 'customer' ? <label>Customer
+          <select value={customerId} onChange={e => setCustomerId(e.target.value)}>
+            <option value="">Select customer</option>
+            {customers.filter(c => c.status !== 'Inactive').map(c => <option key={c.id} value={c.id}>{c.name}{c.company ? ` — ${c.company}` : ''}</option>)}
+          </select>
+        </label> : <label>Person / organization name
+          <input value={targetName} onChange={e => setTargetName(e.target.value)} placeholder="e.g. Mr. Chinedu Okafor" />
+        </label>}
+
+        {targetType === 'other' && <label>Organization / company
+          <input value={targetOrganization} onChange={e => setTargetOrganization(e.target.value)} placeholder="Optional" />
+        </label>}
+
+        {targetType === 'other' && <label>Visit address
+          <input value={targetAddress} onChange={e => setTargetAddress(e.target.value)} placeholder="e.g. UBA CMS, Marina, Lagos" />
+        </label>}
+
+        <label>Visit type
+          <select value={visitType} onChange={e => setVisitType(e.target.value)}>
+            <option>Customer visit</option>
+            <option>Sales meeting</option>
+            <option>Product presentation</option>
+            <option>Follow-up</option>
+            <option>Technical / solution discussion</option>
+            <option>Relationship meeting</option>
+            <option>Other</option>
+          </select>
+        </label>
+
+        <label>Contact person
+          <input value={contactPerson} onChange={e => setContactPerson(e.target.value)} placeholder="Who are you meeting?" />
+        </label>
+
+        <label className="field-visit-full">Visit objective
+          <textarea value={objective} onChange={e => setObjective(e.target.value)} rows="3" placeholder="What is the purpose of this visit?" />
+        </label>
+
+        <label className="field-visit-full">Additional notes
+          <textarea value={notes} onChange={e => setNotes(e.target.value)} rows="3" placeholder="Anything else the team should know?" />
+        </label>
+
+        {targetType === 'customer' && selectedCustomer?.location_address && <div className="field-visit-location-preview field-visit-full">
+          <strong>Registered customer location</strong>
+          <span>{selectedCustomer.location_address}</span>
+          {googleMapsLocationUrl(selectedCustomer.latitude, selectedCustomer.longitude, selectedCustomer.location_address) && <a href={googleMapsLocationUrl(selectedCustomer.latitude, selectedCustomer.longitude, selectedCustomer.location_address)} target="_blank" rel="noreferrer" className="field-visit-map-link">Open customer location in Google Maps</a>}
+        </div>}
+
+        <div className="field-visit-location-notice field-visit-full">
+          <span className="field-visit-location-dot">●</span>
+          <div><strong>Location verification</strong><p>When you click Start Visit, the browser will ask for permission to use your current location. The CRM captures your live location once, saves a Google Maps link with the exact GPS point, and keeps the timestamp and accuracy for audit. No continuous location tracking is used.</p></div>
+        </div>
+
+        <div className="field-visit-form-actions field-visit-full">
+          <button type="button" className="primary-btn" onClick={start} disabled={(targetType === 'customer' ? !customerId : !targetName.trim()) || !objective.trim() || busy}>
+            {busy ? 'Requesting location…' : 'Start Visit & Capture Location'}
+          </button>
+        </div>
+      </div>
+    </div>
+
+    {activeVisits.length > 0 && <div className="panel">
+      <div className="panel-heading"><div><h3>Visits in progress</h3><p>End the visit when you leave the location.</p></div></div>
+      <div className="field-visit-cards">
+        {activeVisits.map(visit => {
+          const customer = customers.find(c => c.id === visit.customer_id);
+          const checkInMapUrl = visit.check_in_location_url || googleMapsLocationUrl(visit.check_in_latitude, visit.check_in_longitude);
+          const targetMapUrl = googleMapsLocationUrl(visit.customer_latitude, visit.customer_longitude, visit.customer_location_address || visit.target_address || customer?.location_address);
+          return <div className="field-visit-card" key={visit.id}>
+            <div>
+              <strong>{targetLabel(visit)}</strong>
+              <span>{visit.target_organization || customer?.company || visit.purpose || 'Field visit'}</span>
+              <small>{visit.contact_person ? `Contact: ${visit.contact_person}` : 'No contact person recorded'}</small>
+              <small>Started {formatDateTime(visit.check_in_at)}</small>
+              {visit.target_address && <small className="field-visit-address">{visit.target_address}</small>}
+              <div className="field-visit-links">
+                {checkInMapUrl && <a href={checkInMapUrl} target="_blank" rel="noreferrer" className="field-visit-map-link">Open live location</a>}
+                {targetMapUrl && <a href={targetMapUrl} target="_blank" rel="noreferrer" className="field-visit-map-link">Open target location</a>}
+              </div>
+            </div>
+            <div><span className={`status ${String(visit.verification_status || '').toLowerCase()}`}>{statusLabel(visit)}</span><button type="button" className="secondary-btn" onClick={async () => { try { await onEnd(visit); } catch (e) { alert(e.message || 'Unable to end visit.'); } }}>End Visit</button></div>
+          </div>;
+        })}
+      </div>
+    </div>}
+
+    <div className="panel">
+      <div className="panel-heading"><div><h3>Visit history</h3><p>{visibleVisits.length} visit{visibleVisits.length === 1 ? '' : 's'} recorded. Location links are retained for audit.</p></div></div>
+      {visibleVisits.length === 0 ? <div className="empty-state"><p>No field visits yet.</p></div> : <div className="table-wrap"><table><thead><tr><th>Visit target</th><th>Started</th><th>Ended</th><th>Distance</th><th>Verification</th><th>Location</th></tr></thead><tbody>{visibleVisits.map(visit => {
+        const customer = customers.find(c => c.id === visit.customer_id);
+        const checkInMapUrl = visit.check_in_location_url || googleMapsLocationUrl(visit.check_in_latitude, visit.check_in_longitude);
+        const checkOutMapUrl = visit.check_out_location_url || googleMapsLocationUrl(visit.check_out_latitude, visit.check_out_longitude);
+        const targetMapUrl = googleMapsLocationUrl(visit.customer_latitude, visit.customer_longitude, visit.customer_location_address || visit.target_address || customer?.location_address);
+        return <tr key={visit.id}>
+          <td><strong>{targetLabel(visit)}</strong><div className="deal-customer">{visit.target_organization || customer?.company || visit.purpose || 'Field visit'}</div>{visit.target_address && <div className="field-visit-address">{visit.target_address}</div>}</td>
+          <td>{formatDateTime(visit.check_in_at)}</td>
+          <td>{visit.check_out_at ? formatDateTime(visit.check_out_at) : 'In progress'}</td>
+          <td>{visit.distance_from_customer == null ? '—' : `${Math.round(Number(visit.distance_from_customer))}m`}</td>
+          <td><span className={`status ${String(visit.verification_status || '').toLowerCase()}`}>{statusLabel(visit)}</span></td>
+          <td><div className="field-visit-links field-visit-links-table">{checkInMapUrl && <a href={checkInMapUrl} target="_blank" rel="noreferrer" className="field-visit-map-link">Live location</a>}{checkOutMapUrl && <a href={checkOutMapUrl} target="_blank" rel="noreferrer" className="field-visit-map-link">Check-out location</a>}{targetMapUrl && <a href={targetMapUrl} target="_blank" rel="noreferrer" className="field-visit-map-link">Target location</a>}</div></td>
+        </tr>;
+      })}</tbody></table></div>}
+    </div>
+  </>;
+}
 
 function Activities({ activities, customers, ownerProfiles = {}, currentUserEmail, onAdd, onStatusChange, onDelete, onEdit, onView, currentUserId, isAdmin }) {
   const [tab, setTab] = useState('All');
