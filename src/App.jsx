@@ -3704,7 +3704,7 @@ function App() {
           )}
           {page === 'MD Panel' && authorizationProfile?.role === 'manager' && <MDPanel deals={deals} quotes={quotes} invoices={invoices} customers={customers} formatAmount={formatAmount} onApprove={approveCommercialRecord} onReject={rejectCommercialRecord} />}
           {page === 'HOS Panel' && authorizationProfile?.role === 'head_of_sales' && <HOSPanel deals={deals} quotes={quotes} invoices={invoices} quoteItems={quoteItems} tickets={tickets} ownerProfiles={ownerProfiles} formatAmount={formatAmount} currentUserId={session.user.id} role={authorizationProfile?.role} setPage={setPage} onApprove={approveCommercialRecord} onReject={rejectCommercialRecord} />}
-          {page === 'HR Panel' && authorizationProfile?.role === 'hr' && <HRPanel deals={deals} quotes={quotes} invoices={invoices} tickets={tickets} customers={customers} formatAmount={formatAmount} />}
+          {page === 'HR Panel' && authorizationProfile?.role === 'hr' && <HRPanel activities={activities} authorizedUsers={authorizedUsers} ownerProfiles={ownerProfiles} customers={customers} leads={leads} />}
           {page === 'Technical Support Panel' && authorizationProfile?.role === 'technical_support' && <TechnicalSupportPanel tickets={tickets} customers={customers} formatAmount={formatAmount} currentUserId={session.user.id} ticketError={ticketError} onAddTicket={() => { setTicketError(''); setNewTicket(t => ({ ...t, customer_id: '' })); setShowTicketForm(true); }} onStatusChange={updateTicketStatus} onDeleteTicket={deleteTicket} onEditTicket={ticket => { setEditTicketError(''); setEditingTicket(ticket); }} onViewTicket={setSelectedTicket} isAdmin={isAdminRole(authorizationProfile?.role)} role={authorizationProfile?.role} canManage={canManageTicket} staffName={staffName} staffOptions={getStaffOptions()} onAssign={assignTicket} setPage={setPage} />}
           {page === 'Customers' && (
             <Customers customers={filteredCustomers}
@@ -4907,15 +4907,74 @@ function JobTitleField({ value, onChange, label = 'Job title' }) {
   return <label>{label}<input list="orbit-job-title-options" value={value || ''} onChange={e => onChange(e.target.value)} placeholder="e.g. CTO" autoComplete="organization-title" /><datalist id="orbit-job-title-options">{JOB_TITLE_SUGGESTIONS.map(title => <option key={title} value={title} />)}</datalist></label>;
 }
 
+function birthdayDisplayValue(value) {
+  if (!value) return '';
+  const raw = String(value).trim();
+  const iso = raw.match(/^(\d{4})-(\d{2})-(\d{2})$/);
+  if (iso) return `${iso[3]}-${iso[2]}`;
+  const dayMonth = raw.match(/^(\d{1,2})-(\d{1,2})$/);
+  if (dayMonth) return `${dayMonth[1].padStart(2, '0')}-${dayMonth[2].padStart(2, '0')}`;
+  return raw;
+}
+
+function normalizeBirthdayValue(value) {
+  if (!value) return null;
+  const raw = String(value).trim();
+  const iso = raw.match(/^(\d{4})-(\d{2})-(\d{2})$/);
+  if (iso) return raw;
+  const dayMonth = raw.match(/^(\d{2})-(\d{2})$/);
+  if (!dayMonth) return null;
+  const day = Number(dayMonth[1]);
+  const month = Number(dayMonth[2]);
+  if (month < 1 || month > 12 || day < 1 || day > new Date(2000, month, 0).getDate()) return null;
+  return `2000-${dayMonth[2]}-${dayMonth[1]}`;
+}
+
 function BirthdayField({ value, onChange, label = 'Birthday' }) {
-  return <label>{label}<input type="date" value={value || ''} onChange={e => onChange(e.target.value)} /></label>;
+  const [inputValue, setInputValue] = useState(() => birthdayDisplayValue(value));
+
+  useEffect(() => {
+    setInputValue(birthdayDisplayValue(value));
+  }, [value]);
+
+  const handleChange = e => {
+    const next = e.target.value.replace(/[^0-9-]/g, '').slice(0, 5);
+    setInputValue(next);
+
+    if (!next) {
+      onChange('');
+      return;
+    }
+
+    if (/^\d{2}-\d{2}$/.test(next)) {
+      const normalized = normalizeBirthdayValue(next);
+      if (normalized) onChange(normalized);
+    }
+  };
+
+  return (
+    <label>{label}
+      <input
+        type="text"
+        inputMode="numeric"
+        value={inputValue}
+        onChange={handleChange}
+        placeholder="DD-MM"
+        maxLength={5}
+        autoComplete="bday"
+      />
+    </label>
+  );
 }
 
 function birthdayIsToday(value, now = new Date()) {
   if (!value) return false;
-  const parts = String(value).slice(0, 10).split('-');
-  if (parts.length !== 3) return false;
-  return Number(parts[1]) === now.getMonth() + 1 && Number(parts[2]) === now.getDate();
+  const raw = String(value).trim();
+  const iso = raw.match(/^\d{4}-(\d{2})-(\d{2})$/);
+  if (iso) return Number(iso[1]) === now.getMonth() + 1 && Number(iso[2]) === now.getDate();
+  const dayMonth = raw.match(/^(\d{2})-(\d{2})$/);
+  if (dayMonth) return Number(dayMonth[2]) === now.getMonth() + 1 && Number(dayMonth[1]) === now.getDate();
+  return false;
 }
 
 function formatBirthday(value) {
@@ -8601,10 +8660,89 @@ function HOSPanel({
     )}
   </>;
 }
-function HRPanel({ deals = [], quotes = [], invoices = [], tickets = [], customers = [], formatAmount }) {
-  const pending = [...deals, ...quotes, ...invoices].filter(x => ['SALES_PENDING', 'HOS_PENDING', 'MD_PENDING'].includes(x.approval_status)).length;
-  const openTickets = tickets.filter(t => !['Resolved', 'Closed'].includes(t.status)).length;
-  return <><PageHeading eyebrow="PEOPLE & SUPERVISION" title="HR Panel" description="Supervise pending work across all departments." /><div className="stats-grid"><StatCard label="Pending work" value={pending} hint="Commercial approvals" tone="orange" icon="!" onClick={() => document.getElementById('hr-supervision')?.scrollIntoView({ behavior: 'smooth' })} /><StatCard label="Open support" value={openTickets} hint="Support tickets" tone="blue" icon="T" onClick={() => document.getElementById('hr-supervision')?.scrollIntoView({ behavior: 'smooth' })} /><StatCard label="Customers" value={customers.length} hint="CRM relationships" tone="green" icon="C" /><StatCard label="Invoice value" value={formatAmount(invoices.reduce((s, i) => s + Number(i.amount || 0), 0))} hint="Supervision view" tone="purple" icon="$" /></div><div className="panel role-panel-summary" id="hr-supervision"><h3>Supervision only</h3><p>HR can monitor pending work across departments but does not edit, delete or approve commercial records.</p></div></>;
+function HRPanel({ activities = [], authorizedUsers = [], ownerProfiles = {}, customers = [], leads = [] }) {
+  const activeEmployees = authorizedUsers.filter(user => user.is_active !== false).length;
+  const openWork = activities.filter(activity => isOpenActivity(activity) && !isOverdue(activity));
+  const overdueWork = activities.filter(activity => isOverdue(activity));
+  const completedWork = activities.filter(activity => activity.status === 'Completed');
+  const birthdayContacts = [...customers, ...leads];
+  const birthdayContactsToday = birthdayContacts.filter(contact => birthdayIsToday(contact.birthday));
+  const getAssignee = activity => activity.assigned_to ? (ownerProfiles[activity.assigned_to] || 'Team member') : 'Unassigned';
+  const visibleWork = [...activities]
+    .filter(activity => activity.status !== 'Cancelled')
+    .sort((a, b) => {
+      const aOverdue = isOverdue(a) ? 0 : 1;
+      const bOverdue = isOverdue(b) ? 0 : 1;
+      if (aOverdue !== bOverdue) return aOverdue - bOverdue;
+      return new Date(a.activity_date || 8.64e15) - new Date(b.activity_date || 8.64e15);
+    })
+    .slice(0, 8);
+
+  return <>
+    <PageHeading eyebrow="PEOPLE & SUPERVISION" title="HR Panel" description="People and work operations across the organization." />
+    <div className="stats-grid">
+      <StatCard label="Employees" value={activeEmployees} hint="Active staff" tone="green" icon="E" />
+      <StatCard label="Pending work" value={openWork.length} hint="Open activities" tone="orange" icon="!" onClick={() => document.getElementById('hr-work-operations')?.scrollIntoView({ behavior: 'smooth', block: 'start' })} />
+      <StatCard label="Overdue work" value={overdueWork.length} hint="Past their due date" tone="red" icon="!" onClick={() => document.getElementById('hr-work-operations')?.scrollIntoView({ behavior: 'smooth', block: 'start' })} />
+      <StatCard label="Completed work" value={completedWork.length} hint="Completed activities" tone="blue" icon="✓" onClick={() => document.getElementById('hr-work-operations')?.scrollIntoView({ behavior: 'smooth', block: 'start' })} />
+      <StatCard label="Birthdays today" value={birthdayContactsToday.length} hint="Customer & lead birthdays" tone="purple" icon="🎂" onClick={() => document.getElementById('hr-birthdays')?.scrollIntoView({ behavior: 'smooth', block: 'start' })} />
+    </div>
+
+    <div className="panel hr-birthday-panel" id="hr-birthdays">
+      <div className="panel-heading">
+        <div>
+          <h3>Birthdays today</h3>
+          <p>Customer and lead contacts celebrating today.</p>
+        </div>
+        <span className="count-badge">{birthdayContactsToday.length}</span>
+      </div>
+      {birthdayContactsToday.length === 0 ? (
+        <div className="birthday-empty">No customer or lead birthdays today.</div>
+      ) : (
+        <div className="hr-birthday-list">
+          {birthdayContactsToday.map(contact => (
+            <div className="hr-birthday-row" key={`${contact.id}-${contact.birthday}`}>
+              <div className="birthday-avatar">🎂</div>
+              <div className="birthday-person">
+                <strong>{contact.name || 'Unnamed contact'}</strong>
+                <span>{contact.company || 'Lead'}</span>
+              </div>
+              <strong>{formatBirthday(contact.birthday)}</strong>
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+
+    <div className="panel hr-work-operations" id="hr-work-operations">
+      <div className="panel-heading">
+        <div><h3>Work Operations</h3><p>See the current work assigned across the organization.</p></div>
+        <div className="hr-work-summary"><span>{openWork.length} pending</span><span>{overdueWork.length} overdue</span><span>{completedWork.length} completed</span></div>
+      </div>
+      <div className="table-wrap">
+        <table className="hr-work-table">
+          <thead><tr><th>Work</th><th>Assigned to</th><th>Priority</th><th>Due</th><th>Status</th></tr></thead>
+          <tbody>
+            {visibleWork.length === 0 ? <tr><td colSpan="5"><div className="empty-state"><p>No work activities yet.</p></div></td></tr> : visibleWork.map(activity => {
+              const overdue = isOverdue(activity);
+              return <tr key={activity.id}>
+                <td><strong>{activity.title || 'Untitled work'}</strong><small>{activity.type || 'Task'}</small></td>
+                <td>{getAssignee(activity)}</td>
+                <td><span className={`priority-pill priority-${String(activity.priority || 'Medium').toLowerCase()}`}>{activity.priority || 'Medium'}</span></td>
+                <td className={overdue ? 'hr-overdue-date' : ''}>{formatDateTime(activity.activity_date)}</td>
+                <td><span className={`status ${overdue ? 'overdue' : String(activity.status || 'Scheduled').toLowerCase().replace(/\s+/g, '-')}`}>{overdue ? 'Overdue' : (activity.status || 'Scheduled')}</span></td>
+              </tr>;
+            })}
+          </tbody>
+        </table>
+      </div>
+    </div>
+
+    <div className="panel role-panel-summary">
+      <h3>HR scope</h3>
+      <p>HR manages people and work operations. Commercial approvals, pricing, sales ownership and financial records remain outside the HR role.</p>
+    </div>
+  </>;
 }
 
 function TechnicalSupportPanel({ tickets = [], customers = [], formatAmount, currentUserId, ticketError, onAddTicket, onStatusChange, onDeleteTicket, onEditTicket, onViewTicket, isAdmin, role, canManage, staffName, staffOptions, onAssign, setPage }) {

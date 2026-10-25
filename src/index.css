@@ -11799,3 +11799,41 @@ select {
 .deal-action-menu button:hover { background: var(--surface-soft, #f5f6fa); }
 .deal-action-menu button.danger { color: #c53b46; }
 .deal-action-menu button.danger:hover { background: #fff1f2; }
+
+/* HR Panel — lean work-operations dashboard */
+.hr-work-operations .panel-heading { gap: 16px; align-items: flex-start; }
+.hr-work-summary { display: flex; gap: 8px; flex-wrap: wrap; justify-content: flex-end; }
+.hr-work-summary span { padding: 6px 10px; border: 1px solid var(--border, #e5e7eb); border-radius: 999px; font-size: 12px; font-weight: 700; color: var(--muted, #64748b); background: var(--surface, #fff); }
+.hr-work-table td strong { display: block; }
+.hr-work-table td small { display: block; margin-top: 3px; color: var(--muted, #64748b); }
+.hr-overdue-date { font-weight: 700; }
+@media (max-width: 760px) { .hr-work-operations .panel-heading { flex-direction: column; } .hr-work-summary { justify-content: flex-start; } }
+
+
+/* HR birthdays */
+.hr-birthday-panel {
+  max-width: 900px;
+}
+
+.hr-birthday-list {
+  display: grid;
+  gap: 8px;
+}
+
+.hr-birthday-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 12px;
+  border: 1px solid var(--border, #e5e7eb);
+  border-radius: 10px;
+  background: var(--surface, #fff);
+}
+
+.hr-birthday-row .birthday-person {
+  flex: 1;
+}
+
+.hr-birthday-row > strong {
+  font-size: 13px;
+}
