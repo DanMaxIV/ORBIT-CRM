@@ -11770,3 +11770,32 @@ select {
     min-width: 0;
   }
 }
+
+/* Deal -> Quote -> Invoice commercial workflow */
+.deal-action-menu {
+  position: absolute;
+  top: calc(100% + 6px);
+  right: 0;
+  z-index: 40;
+  min-width: 170px;
+  padding: 6px;
+  border: 1px solid var(--border, #e6e8ef);
+  border-radius: 10px;
+  background: var(--surface, #fff);
+  box-shadow: 0 14px 32px rgba(22, 28, 45, 0.14);
+}
+.deal-action-menu button {
+  display: block;
+  width: 100%;
+  padding: 9px 10px;
+  border: 0;
+  border-radius: 7px;
+  background: transparent;
+  color: inherit;
+  text-align: left;
+  font: inherit;
+  cursor: pointer;
+}
+.deal-action-menu button:hover { background: var(--surface-soft, #f5f6fa); }
+.deal-action-menu button.danger { color: #c53b46; }
+.deal-action-menu button.danger:hover { background: #fff1f2; }
