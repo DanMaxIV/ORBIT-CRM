@@ -43,6 +43,20 @@ const DEFAULT_ROLE = 'sales';
 const ADMIN_ROLES = ['admin'];
 const isAdminRole = role => ADMIN_ROLES.includes(role);
 const isSystemAdminOrMD = role => ['admin', 'manager'].includes(role);
+
+// PostgREST returns at most 1,000 rows per request, so any list longer than that was being cut off
+// silently. This pages through the table in chunks so lists (and totals built from them) stay complete.
+// `id` is added as a tie-breaker so rows never repeat or go missing between pages.
+async function fetchAllRows(makeQuery, pageSize = 1000) {
+  const rows = [];
+  for (let from = 0; ; from += pageSize) {
+    const { data, error } = await makeQuery().order('id', { ascending: true }).range(from, from + pageSize - 1);
+    if (error) return { data: null, error };
+    rows.push(...(data || []));
+    if (!data || data.length < pageSize) break;
+  }
+  return { data: rows, error: null };
+}
 const isCommercialDeleter = role => ['admin', 'manager', 'head_of_sales'].includes(role);
 const isCommercialEditor = role => ['admin', 'manager'].includes(role);
 const ROLE_PANEL_PAGE = {
@@ -73,15 +87,52 @@ const roleLabel = role => {
   return role.charAt(0).toUpperCase() + role.slice(1).replace(/_/g, ' '); // e.g. a legacy "member" row
 };
 
-function AuthScreen({ onGoogleSignIn, onEmailSignIn, onEmailSignUp, onPortalSignUp, authMode, setAuthMode, email, setEmail, password, setPassword,
+function AuthScreen({ onGoogleSignIn, onMicrosoftSignIn, onEmailSignIn, onEmailSignUp, onPortalSignUp, authMode, setAuthMode, email, setEmail, password, setPassword,
   error,
   notice,
-  loading
+  loading,
+  staffInvite, staffInviteChecking, staffInviteError, onStaffInviteSignUp
 }) {
 
   const [showSignupModal, setShowSignupModal] = useState(false);
   const [showPortalSignup, setShowPortalSignup] = useState(false);
   const [portalFullName, setPortalFullName] = useState('');
+  const [staffInviteName, setStaffInviteName] = useState('');
+  const [staffInvitePassword, setStaffInvitePassword] = useState('');
+
+  const staffRoleLabel = roleValue => ROLE_OPTIONS.find(r => r.value === roleValue)?.label || roleValue;
+
+  // A valid, still-open staff invitation replaces the normal sign-in screen.
+  if (staffInviteChecking) {
+    return <div className="auth-page"><div className="auth-card auth-loading"><div className="auth-brand"><div className="brand-mark"><img src="/storhetLogo.png" alt="Storhet CRM" /></div><span className="brand-name">Storhet<span className="brand-accent">CRM</span></span></div><p>Checking your invitation…</p></div></div>;
+  }
+  if (staffInviteError) {
+    return <div className="auth-page"><div className="auth-card"><div className="auth-brand"><div className="brand-mark"><img src="/storhetLogo.png" alt="Storhet CRM" /></div><span className="brand-name">Storhet<span className="brand-accent">CRM</span></span></div><div className="auth-error" role="alert">{staffInviteError}</div><p className="authSignUp"><button type="button" className="auth-toggle-btn" onClick={() => window.location.href = window.location.pathname}>Go to sign in</button></p></div></div>;
+  }
+  if (staffInvite) {
+    return (
+      <div className="auth-page">
+        <div className="auth-card">
+          <div className="auth-brand"><div className="brand-mark"><img src="/storhetLogo.png" alt="Storhet CRM" /></div><span className="brand-name">Storhet<span className="brand-accent">CRM</span></span></div>
+          <div className="auth-heading"><h1>You're invited to join the team</h1><p>You've been invited to Storhet CRM as <strong>{staffRoleLabel(staffInvite.role)}</strong>.</p></div>
+          {error && <div className="auth-error" role="alert">{error}</div>}
+          <form className="email-login-form" onSubmit={event => { event.preventDefault(); onStaffInviteSignUp(event, staffInviteName, staffInvitePassword); }}>
+            <label>Full name
+              <input type="text" autoComplete="name" placeholder="Your full name" value={staffInviteName} onChange={e => setStaffInviteName(e.target.value)} required />
+            </label>
+            <label>Email address
+              <input type="email" value={staffInvite.email} readOnly disabled />
+            </label>
+            <label>Password
+              <input type="password" autoComplete="new-password" placeholder="At least 6 characters" value={staffInvitePassword} onChange={e => setStaffInvitePassword(e.target.value)} minLength={6} required />
+            </label>
+            <button type="submit" className="primary-btn" disabled={loading}>{loading ? 'Creating account…' : 'Create account'}</button>
+          </form>
+          <p className="invite-expiry">This invitation expires {new Date(staffInvite.expires_at).toLocaleDateString()}.</p>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="auth-page">
@@ -185,6 +236,20 @@ function AuthScreen({ onGoogleSignIn, onEmailSignIn, onEmailSignUp, onPortalSign
           </svg>
 
           {loading ? 'Signing in...' : 'Continue with Google'}
+        </button>
+
+        <button
+          className="microsoft-signin-btn"
+          onClick={onMicrosoftSignIn}
+          disabled={loading}
+        >
+          <svg width="18" height="18" viewBox="0 0 23 23" aria-hidden="true">
+            <rect x="1" y="1" width="10" height="10" fill="#f25022" />
+            <rect x="12" y="1" width="10" height="10" fill="#7fba00" />
+            <rect x="1" y="12" width="10" height="10" fill="#00a4ef" />
+            <rect x="12" y="12" width="10" height="10" fill="#ffb900" />
+          </svg>
+          {loading ? 'Signing in...' : 'Continue with Microsoft'}
         </button>
 
         <div className="portal-auth-entry">
@@ -914,6 +979,15 @@ function App() {
   const refreshingRef = useRef(false);
   const loadedDataRef = useRef(new Set());
   const [refreshing, setRefreshing] = useState(false);
+  const [staffInviteToken, setStaffInviteToken] = useState(null);
+  const [staffInviteInfo, setStaffInviteInfo] = useState(null);
+  const [staffInviteChecking, setStaffInviteChecking] = useState(false);
+  const [staffInviteError, setStaffInviteError] = useState('');
+  const [showStaffOnboarding, setShowStaffOnboarding] = useState(false);
+  const [staffInvitations, setStaffInvitations] = useState([]);
+  const [staffInvitationsLoading, setStaffInvitationsLoading] = useState(false);
+  const [staffInvitationsError, setStaffInvitationsError] = useState('');
+  const [staffInvitationActionId, setStaffInvitationActionId] = useState(null);
   const [toast, setToast] = useState('');
 
   const [theme, setTheme] = useState(readStoredTheme);
@@ -1046,6 +1120,22 @@ function App() {
 
     if (error) {
       console.error('Google sign-in error:', error);
+      setAuthError(error.message);
+    }
+  }
+  async function signInWithMicrosoft() {
+    setAuthError('');
+
+    const { error } = await supabase.auth.signInWithOAuth({
+      provider: 'azure',
+      options: {
+        redirectTo: window.location.origin,
+        scopes: 'email'
+      }
+    });
+
+    if (error) {
+      console.error('Microsoft sign-in error:', error);
       setAuthError(error.message);
     }
   }
@@ -1185,6 +1275,47 @@ function App() {
       setEmailLoading(false);
     }
   }
+  // A staff invite link (?staff_invite=<token>) is checked once, before sign-in.
+  useEffect(() => {
+    const token = new URLSearchParams(window.location.search).get('staff_invite');
+    if (!token) return;
+    setStaffInviteToken(token);
+    setStaffInviteChecking(true);
+    supabase.rpc('staff_invitation_lookup', { p_token: token }).then(({ data, error }) => {
+      setStaffInviteChecking(false);
+      if (error || !data || data.length === 0) {
+        setStaffInviteError('This invitation link is invalid or has expired. Please ask your MD or admin for a new one.');
+        return;
+      }
+      setStaffInviteInfo({ ...data[0], token });
+    });
+  }, []);
+
+  async function signUpStaffInvite(event, fullName, invitePassword) {
+    event.preventDefault();
+    setAuthError('');
+    setAuthNotice('');
+    if (!fullName.trim() || !invitePassword) { setAuthError('Please enter your name and a password.'); return; }
+    if (invitePassword.length < 6) { setAuthError('Password must be at least 6 characters long.'); return; }
+    setEmailLoading(true);
+    try {
+      const { error } = await supabase.auth.signUp({
+        email: staffInviteInfo.email,
+        password: invitePassword,
+        options: {
+          data: { account_type: 'staff_invite', full_name: fullName.trim(), staff_invite_token: staffInviteInfo.token }
+        }
+      });
+      if (error) throw error;
+      setAuthNotice('Account created. Verify your email if prompted, then you will be taken straight into Storhet CRM.');
+    } catch (err) {
+      console.error('Staff invite sign-up error:', err);
+      setAuthError(err.message || 'Unable to create your account.');
+    } finally {
+      setEmailLoading(false);
+    }
+  }
+
   const resetWorkspace = () => {
     setPage('Dashboard');
     setCustomers([]);
@@ -1307,6 +1438,38 @@ function App() {
       }
     }
 
+    // An invited worker has no authorized_users row yet on their very first
+    // sign-in; this is the only time this branch runs, since every later
+    // login finds an active row and returns from the top of this function.
+    if (
+      !data &&
+      currentSession.user.user_metadata?.account_type === 'staff_invite' &&
+      currentSession.user.email_confirmed_at
+    ) {
+      try {
+        const { error: inviteCompletionError } = await supabase.rpc('complete_staff_invitation_signup', {
+          p_token: currentSession.user.user_metadata?.staff_invite_token,
+          p_full_name: currentSession.user.user_metadata?.full_name || null
+        });
+        if (inviteCompletionError) throw inviteCompletionError;
+        const refreshed = await supabase.from('authorized_users').select('role, status').eq('user_id', currentSession.user.id).maybeSingle();
+        if (refreshed.error) throw refreshed.error;
+        if (refreshed.data?.status === 'active') {
+          setAuthorized(true);
+          setAuthorizationProfile(refreshed.data);
+          setAuthorizationLoading(false);
+          setShowStaffOnboarding(true);
+          return;
+        }
+      } catch (staffInviteCompletionError) {
+        console.error('Staff invitation completion failed:', staffInviteCompletionError);
+        setAuthError(staffInviteCompletionError.message || 'Unable to complete your invited sign-up.');
+        setAuthorizationLoading(false);
+        await supabase.auth.signOut();
+        return;
+      }
+    }
+
     setAuthorizationLoading(false);
     await supabase.auth.signOut();
     if (!justSignedUp.current) {
@@ -1316,12 +1479,12 @@ function App() {
   const fetchCustomers = async () => {
     setLoading(true);
 
-    const { data, error } = await supabase
+    const { data, error } = await fetchAllRows(() => supabase
       .from("customers")
       .select("*")
       .order("created_at", {
         ascending: false,
-      });
+      }));
 
     if (error) {
       console.error("Error fetching customers:", error);
@@ -1332,10 +1495,10 @@ function App() {
     setLoading(false);
   };
   const fetchDeals = async () => {
-    const { data, error } = await supabase
+    const { data, error } = await fetchAllRows(() => supabase
       .from('deals')
       .select('*')
-      .order('created_at', { ascending: false });
+      .order('created_at', { ascending: false }));
 
     if (error) {
       console.error('Error fetching deals:', error);
@@ -1344,10 +1507,10 @@ function App() {
     }
   };
   async function fetchActivities() {
-    const { data, error } = await supabase
+    const { data, error } = await fetchAllRows(() => supabase
       .from('activities')
       .select('*')
-      .order('activity_date', { ascending: true });
+      .order('activity_date', { ascending: true }));
     if (error) {
       console.error('Error fetching activities:', error);
       return;
@@ -1355,7 +1518,7 @@ function App() {
     setActivities(data || []);
   }
   async function fetchTickets() {
-    const { data, error } = await supabase
+    const { data, error } = await fetchAllRows(() => supabase
       .from('tickets')
       .select(`
       *,
@@ -1364,7 +1527,7 @@ function App() {
         company
       )
     `)
-      .order('created_at', { ascending: false });
+      .order('created_at', { ascending: false }));
 
     if (error) {
       console.error('Error fetching tickets:', error);
@@ -1399,9 +1562,9 @@ function App() {
   }
 
   async function fetchLeads() {
-    const { data, error } = await supabase.from('leads')
+    const { data, error } = await fetchAllRows(() => supabase.from('leads')
       .select('*, customers(name,company)')
-      .order('created_at', { ascending: false });
+      .order('created_at', { ascending: false }));
     if (error) {
       console.error('Error fetching leads:', error);
       return;
@@ -1430,11 +1593,11 @@ function App() {
   async function fetchEmailLogs() { 
     if (!session?.user?.id) return;
     
-    const { data, error } = await supabase
+    const { data, error } = await fetchAllRows(() => supabase
       .from('email_logs')
       .select('*, customers(name,company)')
       .eq('created_by', session.user.id) // <--- Adds privacy filter
-      .order('sent_at', { ascending: false });
+      .order('sent_at', { ascending: false }));
       
     if (error) { 
       console.error('Error fetching email logs:', error); 
@@ -1527,16 +1690,16 @@ function App() {
   }
 
   async function fetchCalendarEvents() {
-    const { data, error } = await supabase.from('calendar_events').select('*, customers(name,company)').order('start_at', { ascending: true });
+    const { data, error } = await fetchAllRows(() => supabase.from('calendar_events').select('*, customers(name,company)').order('start_at', { ascending: true }));
     if (error) { console.error('Error fetching calendar events:', error); return; }
     setCalendarEvents(data || []);
     createDueCalendarNotifications(data || []);
   }
   async function fetchQuotes() {
-    const { data, error } = await supabase
+    const { data, error } = await fetchAllRows(() => supabase
       .from('quotes')
       .select('*')
-      .order('created_at', { ascending: false });
+      .order('created_at', { ascending: false }));
     if (error) { console.error('Error fetching quotes:', error); return; }
     setQuotes(data || []);
   }
@@ -1599,12 +1762,12 @@ function App() {
 
     return data || [];
   }
-  async function fetchInvoices() { const { data, error } = await supabase.from('invoices').select('*, customers(name,company)').order('created_at', { ascending: false }); if (error) { console.error('Error fetching invoices:', error); return; } setInvoices(data || []); }
-  async function fetchPayments() { const { data, error } = await supabase.from('payments').select('*').order('paid_at', { ascending: false }); if (error) { console.error('Error fetching payments:', error); return; } setPayments(data || []); }
-  async function fetchDocuments() { const { data, error } = await supabase.from('documents').select('*, customers(name,company)').order('created_at', { ascending: false }); if (error) { console.error('Error fetching documents:', error); return; } setDocuments(data || []); }
-  async function fetchWorkflows() { const { data, error } = await supabase.from('workflows').select('*').order('created_at', { ascending: false }); if (error) { console.error('Error fetching workflows:', error); return; } setWorkflows(data || []); }
-  async function fetchSegments() { const { data, error } = await supabase.from('customer_segments').select('*').order('created_at', { ascending: false }); if (error) { console.error('Error fetching segments:', error); return; } setSegments(data || []); }
-  async function fetchProducts() { const { data, error } = await supabase.from('products').select('*').order('created_at', { ascending: false }); if (error) { console.error('Error fetching products:', error); return; } setProducts(data || []); }
+  async function fetchInvoices() { const { data, error } = await fetchAllRows(() => supabase.from('invoices').select('*, customers(name,company)').order('created_at', { ascending: false })); if (error) { console.error('Error fetching invoices:', error); return; } setInvoices(data || []); }
+  async function fetchPayments() { const { data, error } = await fetchAllRows(() => supabase.from('payments').select('*').order('paid_at', { ascending: false })); if (error) { console.error('Error fetching payments:', error); return; } setPayments(data || []); }
+  async function fetchDocuments() { const { data, error } = await fetchAllRows(() => supabase.from('documents').select('*, customers(name,company)').order('created_at', { ascending: false })); if (error) { console.error('Error fetching documents:', error); return; } setDocuments(data || []); }
+  async function fetchWorkflows() { const { data, error } = await fetchAllRows(() => supabase.from('workflows').select('*').order('created_at', { ascending: false })); if (error) { console.error('Error fetching workflows:', error); return; } setWorkflows(data || []); }
+  async function fetchSegments() { const { data, error } = await fetchAllRows(() => supabase.from('customer_segments').select('*').order('created_at', { ascending: false })); if (error) { console.error('Error fetching segments:', error); return; } setSegments(data || []); }
+  async function fetchProducts() { const { data, error } = await fetchAllRows(() => supabase.from('products').select('*').order('created_at', { ascending: false })); if (error) { console.error('Error fetching products:', error); return; } setProducts(data || []); }
   async function fetchSupportEngineers() {
     const { data, error } = await supabase.from('support_engineers').select('*').order('name', { ascending: true });
     if (error) { console.error('Error fetching support engineers:', error); return; }
@@ -2136,6 +2299,38 @@ function App() {
   async function deleteDocument(doc) { if (!window.confirm('Delete this document?')) return; const { error: storageError } = await supabase.storage.from('crm-documents').remove([doc.storage_path]); if (storageError) { console.error(storageError); } const { error } = await supabase.from('documents').delete().eq('id', doc.id); if (error) { alert(error.message); return; } setDocuments(prev => prev.filter(x => x.id !== doc.id)); }
   async function downloadDocument(doc) { const { data, error } = await supabase.storage.from('crm-documents').download(doc.storage_path); if (error) { alert(error.message); return; } const url = URL.createObjectURL(data); const a = document.createElement('a'); a.href = url; a.download = doc.name; a.click(); URL.revokeObjectURL(url); }
 
+  async function fetchStaffInvitations() {
+    setStaffInvitationsLoading(true);
+    setStaffInvitationsError('');
+    const { data, error } = await supabase
+      .from('staff_invitations')
+      .select('*')
+      .order('created_at', { ascending: false })
+      .limit(200);
+    setStaffInvitationsLoading(false);
+    if (error) { console.error('Error fetching staff invitations:', error); setStaffInvitationsError('Unable to load invitations. Run the staff_invitations.sql migration, then refresh.'); return; }
+    setStaffInvitations(data || []);
+  }
+
+  // Generates the invite link and hands it back so the caller (the invite modal) can show it to copy or email.
+  async function inviteStaffWorker(toEmail, role) {
+    const { data, error } = await supabase.rpc('staff_invite_worker', { p_email: toEmail, p_role: role });
+    if (error) throw new Error(error.message);
+    const row = Array.isArray(data) ? data[0] : data;
+    const link = `${window.location.origin}${window.location.pathname}?staff_invite=${row.token}`;
+    fetchStaffInvitations();
+    return { link, expiresAt: row.expires_at };
+  }
+
+  async function revokeStaffInvitation(id) {
+    setStaffInvitationActionId(id);
+    const { error } = await supabase.rpc('revoke_staff_invitation', { p_invitation_id: id });
+    setStaffInvitationActionId(null);
+    if (error) { showToast(`Could not revoke invitation: ${error.message}`); return; }
+    showToast('Invitation revoked.');
+    fetchStaffInvitations();
+  }
+
   async function fetchAuthorizedUsers() {
     setUsersLoading(true);
     setUsersError('');
@@ -2228,6 +2423,9 @@ function App() {
     if (page === 'UserManagement' && isAdminRole(authorizationProfile?.role)) {
       fetchPendingPortalAccounts();
     }
+    if ((page === 'UserManagement' || page === 'MD Panel') && isSystemAdminOrMD(authorizationProfile?.role)) {
+      fetchStaffInvitations();
+    }
   }, [page, authorizationProfile?.role]);
 
   const displayUserName = profileName.trim() || session?.user?.email || 'Signed-in user';
@@ -2313,6 +2511,9 @@ function App() {
 
       if (isAdminRole(authorizationProfile?.role)) {
         jobs.push(fetchAuthorizedUsers(), fetchPendingPortalAccounts());
+      }
+      if (isSystemAdminOrMD(authorizationProfile?.role)) {
+        jobs.push(fetchStaffInvitations());
       }
 
       await Promise.all(jobs);
@@ -3439,10 +3640,30 @@ function App() {
     return <PortalStatusScreen account={portalAccount} email={session.user.email} onSignOut={handleSignOut} />;
   }
 
+  if (session?.user && authorized && showStaffOnboarding) {
+    const roleLabel = ROLE_OPTIONS.find(r => r.value === authorizationProfile?.role)?.label || authorizationProfile?.role;
+    return (
+      <div className="auth-page">
+        <div className="auth-card onboarding-card">
+          <div className="auth-brand"><div className="brand-mark"><img src="/storhetLogo.png" alt="Storhet CRM" /></div><span className="brand-name">Storhet<span className="brand-accent">CRM</span></span></div>
+          <div className="auth-heading"><h1>Welcome to the team</h1><p>Your account is set up as <strong>{roleLabel}</strong>.</p></div>
+          <ul className="onboarding-checklist">
+            <li>Your dashboard shows what's relevant to your role, check it first.</li>
+            <li>Look for customers, deals or tickets already assigned to you.</li>
+            <li>Add a profile photo and your details under Settings.</li>
+            <li>Not sure where something is? Ask your MD or an admin.</li>
+          </ul>
+          <button type="button" className="primary-btn" onClick={() => setShowStaffOnboarding(false)}>Get started</button>
+        </div>
+      </div>
+    );
+  }
+
   if (!session || !authorized) {
     return (
       <AuthScreen
         onGoogleSignIn={signInWithGoogle}
+        onMicrosoftSignIn={signInWithMicrosoft}
         onEmailSignIn={signInWithEmail}
         onEmailSignUp={signUpWithEmail}
         onPortalSignUp={signUpCustomerPortal}
@@ -3455,6 +3676,10 @@ function App() {
         error={authError}
         notice={authNotice}
         loading={authLoading || authorizationLoading || emailLoading}
+        staffInvite={staffInviteInfo}
+        staffInviteChecking={staffInviteChecking}
+        staffInviteError={staffInviteError}
+        onStaffInviteSignUp={signUpStaffInvite}
       />
     );
   }
@@ -3606,7 +3831,7 @@ function App() {
           {page === 'Dashboard' && (
             <Dashboard revenue={revenue} customers={customers} leads={leads} deals={deals} activities={activities} tickets={tickets} setPage={setPage} formatAmount={formatAmount} onSelectCustomer={setSelectedCustomer} onEditCustomer={setEditingCustomer} onDeleteCustomer={deleteCustomer} currentUserId={session.user.id} role={authorizationProfile?.role} />
           )}
-          {page === 'MD Panel' && authorizationProfile?.role === 'manager' && <MDPanel deals={deals} quotes={quotes} invoices={invoices} customers={customers} formatAmount={formatAmount} onApprove={approveCommercialRecord} onReject={rejectCommercialRecord} />}
+          {page === 'MD Panel' && authorizationProfile?.role === 'manager' && <MDPanel deals={deals} quotes={quotes} invoices={invoices} customers={customers} formatAmount={formatAmount} onApprove={approveCommercialRecord} onReject={rejectCommercialRecord} onInviteStaff={inviteStaffWorker} onOpenInviteEmail={openCompose} staffInvitations={staffInvitations} onRevokeStaffInvitation={revokeStaffInvitation} staffInvitationActionId={staffInvitationActionId} />}
           {page === 'HOS Panel' && authorizationProfile?.role === 'head_of_sales' && <HOSPanel deals={deals} quotes={quotes} invoices={invoices} quoteItems={quoteItems} tickets={tickets} ownerProfiles={ownerProfiles} formatAmount={formatAmount} currentUserId={session.user.id} role={authorizationProfile?.role} setPage={setPage} onApprove={approveCommercialRecord} onReject={rejectCommercialRecord} />}
           {page === 'HR Panel' && authorizationProfile?.role === 'hr' && <HRPanel deals={deals} quotes={quotes} invoices={invoices} tickets={tickets} customers={customers} formatAmount={formatAmount} />}
           {page === 'Technical Support Panel' && authorizationProfile?.role === 'technical_support' && <TechnicalSupportPanel tickets={tickets} customers={customers} formatAmount={formatAmount} currentUserId={session.user.id} ticketError={ticketError} onAddTicket={() => { setTicketError(''); setNewTicket(t => ({ ...t, customer_id: '' })); setShowTicketForm(true); }} onStatusChange={updateTicketStatus} onDeleteTicket={deleteTicket} onEditTicket={ticket => { setEditTicketError(''); setEditingTicket(ticket); }} onViewTicket={setSelectedTicket} isAdmin={isAdminRole(authorizationProfile?.role)} role={authorizationProfile?.role} canManage={canManageTicket} staffName={staffName} staffOptions={getStaffOptions()} onAssign={assignTicket} setPage={setPage} />}
@@ -3695,7 +3920,7 @@ function App() {
           {page === 'Chat' && <Chat />}
           {page === 'Reports' && <AdvancedReports customers={customers} deals={deals} activities={activities} tickets={tickets} leads={leads} quotes={quotes} invoices={invoices} payments={payments} formatAmount={formatAmount} />}
           {page === 'Email Logs' && <EmailLogs emailLogs={emailLogs} customers={customers} onAdd={addEmailLog} />}
-          {page === 'UserManagement' && <UserManagement users={authorizedUsers} loading={usersLoading} error={usersError} onRefresh={fetchAuthorizedUsers} onUpdateUser={updateAuthorizedUser} currentUserId={session?.user?.id} pendingPortalAccounts={pendingPortalAccounts} portalRequestsLoading={portalRequestsLoading} portalRequestsError={portalRequestsError} portalRequestsNotice={portalRequestsNotice} onRefreshPortalRequests={fetchPendingPortalAccounts} onReviewPortalRequest={reviewPortalRequest} portalRequestActionId={portalRequestActionId} />}
+          {page === 'UserManagement' && isAdminRole(authorizationProfile?.role) && <UserManagement users={authorizedUsers} loading={usersLoading} error={usersError} onRefresh={fetchAuthorizedUsers} onUpdateUser={updateAuthorizedUser} currentUserId={session?.user?.id} pendingPortalAccounts={pendingPortalAccounts} portalRequestsLoading={portalRequestsLoading} portalRequestsError={portalRequestsError} portalRequestsNotice={portalRequestsNotice} onRefreshPortalRequests={fetchPendingPortalAccounts} onReviewPortalRequest={reviewPortalRequest} portalRequestActionId={portalRequestActionId} onInviteStaff={inviteStaffWorker} onOpenInviteEmail={openCompose} staffInvitations={staffInvitations} onRevokeStaffInvitation={revokeStaffInvitation} staffInvitationActionId={staffInvitationActionId} />}
           {page === 'Settings' && <SettingsPage currency={currency} setCurrency={setCurrency} theme={theme} setTheme={setTheme} />}
         </section>
       </RefreshContext.Provider>
@@ -8592,11 +8817,14 @@ function Chat() {
     </div>
   );
 }
-function MDPanel({ deals = [], quotes = [], invoices = [], customers = [], formatAmount, onApprove, onReject }) {
+function MDPanel({ deals = [], quotes = [], invoices = [], customers = [], formatAmount, onApprove, onReject, onInviteStaff, onOpenInviteEmail, staffInvitations = [], onRevokeStaffInvitation, staffInvitationActionId }) {
+  const [showStaffInvite, setShowStaffInvite] = useState(false);
   // Deals are not commercial approval records; only quotes and invoices can reach MD.
   const approvals = [...quotes.map(x => ({ ...x, _type: 'quote' })), ...invoices.map(x => ({ ...x, _type: 'invoice' }))].filter(item => item.approval_status === 'MD_PENDING');
   const pending = [...quotes, ...invoices].filter(item => ['SALES_PENDING', 'HOS_PENDING', 'MD_PENDING'].includes(item.approval_status)).length;
-  return <><PageHeading eyebrow="EXECUTIVE" title="MD Panel" description="Executive overview and final approval queue." /><div className="stats-grid"><StatCard label="Customers" value={customers.length} hint="Active customer records" tone="blue" icon="C" onClick={() => document.getElementById('md-customers')?.scrollIntoView({ behavior: 'smooth' })} /><StatCard label="Won revenue" value={formatAmount(deals.filter(d => d.stage === 'Won').reduce((s, d) => s + Number(d.amount || 0), 0))} hint="Pipeline revenue" tone="green" icon="$" onClick={() => document.getElementById('md-revenue')?.scrollIntoView({ behavior: 'smooth' })} /><StatCard label="Pending approvals" value={pending} hint="Commercial approval queue" tone="orange" icon="!" onClick={() => document.getElementById('md-approval-queue')?.scrollIntoView({ behavior: 'smooth' })} /><StatCard label="Open invoices" value={invoices.filter(i => !['Paid', 'Cancelled'].includes(i.status)).length} hint="Outstanding billing" tone="purple" icon="I" onClick={() => setPage?.('Invoices')} /></div><div className="panel" id="md-revenue"><div className="panel-heading"><div><h3>MD executive revenue</h3><p>Company-wide revenue visibility.</p></div></div><div className="panel-subsection" id="md-customers"><p>Customers: <strong>{customers.length}</strong> · Won revenue: <strong>{formatAmount(deals.filter(d => d.stage === 'Won').reduce((s, d) => s + Number(d.amount || 0), 0))}</strong> · Open invoices: <strong>{invoices.filter(i => !['Paid', 'Cancelled'].includes(i.status)).length}</strong></p></div></div><div className="panel" id="md-approval-queue"><div className="panel-heading"><div><h3>MD final approval queue</h3><p>Only $50,000+ records reach this queue after HOS approval.</p></div></div><div className="table-wrap"><table><thead><tr><th>Type</th><th>Record</th><th>Amount</th><th>Action</th></tr></thead><tbody>{approvals.length === 0 ? <tr><td colSpan="4">No MD approvals pending.</td></tr> : approvals.map(item => <tr key={`${item._type}-${item.id}`}><td>{item._type}</td><td>{item.title || item.quote_number || item.invoice_number || 'Record'}</td><td>{formatAmount(item.total ?? item.amount)}</td><td><div className="toolbar-actions"><button className="primary-btn" onClick={async () => { try { await onApprove(item._type, item.id) } catch (e) { alert(e.message) } }}>Approve</button><button className="secondary-btn" onClick={async () => { const note = window.prompt('Rejection reason / note:'); if (note) try { await onReject(item._type, item.id, note) } catch (e) { alert(e.message) } }}>Reject</button></div></td></tr>)}</tbody></table></div></div></>;
+  return <><PageHeading eyebrow="EXECUTIVE" title="MD Panel" description="Executive overview and final approval queue." action="Invite a worker" onAction={() => setShowStaffInvite(true)} />
+  {showStaffInvite && <StaffInviteModal onInvite={onInviteStaff} onOpenEmail={onOpenInviteEmail} onClose={() => setShowStaffInvite(false)} />}
+  <StaffInvitationsPanel invitations={staffInvitations} onRevoke={onRevokeStaffInvitation} actionId={staffInvitationActionId} /><div className="stats-grid"><StatCard label="Customers" value={customers.length} hint="Active customer records" tone="blue" icon="C" onClick={() => document.getElementById('md-customers')?.scrollIntoView({ behavior: 'smooth' })} /><StatCard label="Won revenue" value={formatAmount(deals.filter(d => d.stage === 'Won').reduce((s, d) => s + Number(d.amount || 0), 0))} hint="Pipeline revenue" tone="green" icon="$" onClick={() => document.getElementById('md-revenue')?.scrollIntoView({ behavior: 'smooth' })} /><StatCard label="Pending approvals" value={pending} hint="Commercial approval queue" tone="orange" icon="!" onClick={() => document.getElementById('md-approval-queue')?.scrollIntoView({ behavior: 'smooth' })} /><StatCard label="Open invoices" value={invoices.filter(i => !['Paid', 'Cancelled'].includes(i.status)).length} hint="Outstanding billing" tone="purple" icon="I" onClick={() => setPage?.('Invoices')} /></div><div className="panel" id="md-revenue"><div className="panel-heading"><div><h3>MD executive revenue</h3><p>Company-wide revenue visibility.</p></div></div><div className="panel-subsection" id="md-customers"><p>Customers: <strong>{customers.length}</strong> · Won revenue: <strong>{formatAmount(deals.filter(d => d.stage === 'Won').reduce((s, d) => s + Number(d.amount || 0), 0))}</strong> · Open invoices: <strong>{invoices.filter(i => !['Paid', 'Cancelled'].includes(i.status)).length}</strong></p></div></div><div className="panel" id="md-approval-queue"><div className="panel-heading"><div><h3>MD final approval queue</h3><p>Only $50,000+ records reach this queue after HOS approval.</p></div></div><div className="table-wrap"><table><thead><tr><th>Type</th><th>Record</th><th>Amount</th><th>Action</th></tr></thead><tbody>{approvals.length === 0 ? <tr><td colSpan="4">No MD approvals pending.</td></tr> : approvals.map(item => <tr key={`${item._type}-${item.id}`}><td>{item._type}</td><td>{item.title || item.quote_number || item.invoice_number || 'Record'}</td><td>{formatAmount(item.total ?? item.amount)}</td><td><div className="toolbar-actions"><button className="primary-btn" onClick={async () => { try { await onApprove(item._type, item.id) } catch (e) { alert(e.message) } }}>Approve</button><button className="secondary-btn" onClick={async () => { const note = window.prompt('Rejection reason / note:'); if (note) try { await onReject(item._type, item.id, note) } catch (e) { alert(e.message) } }}>Reject</button></div></td></tr>)}</tbody></table></div></div></>;
 }
 
 function HOSPanel({
@@ -8855,9 +9083,11 @@ function TechnicalSupportPanel({ tickets = [], customers = [], formatAmount, cur
 function UserManagement({
   users = [], loading = false, error = '', onRefresh, onUpdateUser, currentUserId,
   pendingPortalAccounts = [], portalRequestsLoading = false, portalRequestsError = '', portalRequestsNotice = '',
-  onRefreshPortalRequests, onReviewPortalRequest, portalRequestActionId
+  onRefreshPortalRequests, onReviewPortalRequest, portalRequestActionId,
+  onInviteStaff, onOpenInviteEmail, staffInvitations = [], onRevokeStaffInvitation, staffInvitationActionId
 }) {
   const [draggedUserId, setDraggedUserId] = useState(null);
+  const [showStaffInvite, setShowStaffInvite] = useState(false);
   const [dropTargetRole, setDropTargetRole] = useState(null);
   const [search, setSearch] = useState('');
   const [view, setView] = useState('chart');
@@ -9296,7 +9526,127 @@ function UserManagement({
           </table></div>
         )}
       </div>
+
+      <StaffInvitationsPanel invitations={staffInvitations} onRevoke={onRevokeStaffInvitation} actionId={staffInvitationActionId} onInvite={() => setShowStaffInvite(true)} />
+      {showStaffInvite && <StaffInviteModal onInvite={onInviteStaff} onOpenEmail={onOpenInviteEmail} onClose={() => setShowStaffInvite(false)} />}
     </>
   );
 }
+
+function StaffInviteModal({ onInvite, onOpenEmail, onClose }) {
+  const [emailValue, setEmailValue] = useState('');
+  const [role, setRole] = useState('sales');
+  const [sending, setSending] = useState(false);
+  const [error, setError] = useState('');
+  const [link, setLink] = useState('');
+  const [expiresAt, setExpiresAt] = useState(null);
+  const [copied, setCopied] = useState(false);
+  const invitableRoles = ROLE_OPTIONS.filter(r => r.value !== 'admin');
+  const roleLabel = ROLE_OPTIONS.find(r => r.value === role)?.label || role;
+
+  async function submit(event) {
+    event.preventDefault();
+    setError('');
+    setSending(true);
+    try {
+      const result = await onInvite(emailValue.trim(), role);
+      setLink(result.link);
+      setExpiresAt(result.expiresAt);
+    } catch (err) {
+      setError(err.message || 'Could not create the invitation.');
+    } finally {
+      setSending(false);
+    }
+  }
+
+  function copyLink() {
+    navigator.clipboard?.writeText(link).then(() => { setCopied(true); setTimeout(() => setCopied(false), 2000); });
+  }
+
+  function sendByEmail() {
+    onOpenEmail({
+      to: emailValue.trim(),
+      subject: "You're invited to join Storhet CRM",
+      body: `Hi,
+
+You've been invited to join Storhet CRM as ${roleLabel}.
+
+Create your account here:
+${link}
+
+This link expires on ${expiresAt ? new Date(expiresAt).toLocaleDateString() : 'in 7 days'}.
+
+Thanks,`
+    });
+    onClose();
+  }
+
+  return (
+    <div className="modal-backdrop">
+      <form className="modal" onSubmit={submit}>
+        <div className="modal-heading">
+          <div><h2>Invite a worker</h2><p>They will skip the usual approval queue and land straight in Storhet CRM with the role you pick.</p></div>
+          <button type="button" className="icon-btn" onClick={onClose} aria-label="Close invite form"><X size={18} /></button>
+        </div>
+        {error && <div className="form-error" role="alert">{error}</div>}
+        {link ? (
+          <>
+            <p className="detail-empty">Invitation created. Share this link with them, it expires in 7 days.</p>
+            <div className="invite-link-row">
+              <input type="text" value={link} readOnly onFocus={e => e.target.select()} />
+              <button type="button" className="secondary-btn" onClick={copyLink}>{copied ? 'Copied' : 'Copy'}</button>
+            </div>
+            <div className="modal-actions">
+              <button type="button" className="secondary-btn" onClick={onClose}>Done</button>
+              {onOpenEmail && <button type="button" className="primary-btn" onClick={sendByEmail}>Send via email</button>}
+            </div>
+          </>
+        ) : (
+          <>
+            <label>Email address
+              <input type="email" value={emailValue} onChange={e => setEmailValue(e.target.value)} required />
+            </label>
+            <label>Role
+              <select value={role} onChange={e => setRole(e.target.value)}>
+                {invitableRoles.map(r => <option key={r.value} value={r.value}>{r.label}</option>)}
+              </select>
+            </label>
+            <div className="modal-actions">
+              <button type="button" className="secondary-btn" onClick={onClose} disabled={sending}>Cancel</button>
+              <button type="submit" className="primary-btn" disabled={sending}>{sending ? 'Creating link…' : 'Create invite link'}</button>
+            </div>
+          </>
+        )}
+      </form>
+    </div>
+  );
+}
+
+function StaffInvitationsPanel({ invitations = [], onRevoke, actionId, onInvite }) {
+  const status = invite => invite.revoked_at ? 'Revoked' : invite.accepted_at ? 'Accepted' : new Date(invite.expires_at) < new Date() ? 'Expired' : 'Pending';
+  return (
+    <div className="panel user-management-panel pending-customer-access-panel">
+      <div className="panel-header">
+        <div><h3>Staff Invitations</h3><p>Workers invited directly by the MD or an Admin, skipping the sign-up approval queue.</p></div>
+        {onInvite && <button type="button" className="primary-btn" onClick={onInvite}>Invite a worker</button>}
+      </div>
+      {invitations.length === 0 ? <p>No invitations sent yet.</p> : (
+        <div className="table-wrapper"><table className="data-table">
+          <thead><tr><th>Email</th><th>Role</th><th>Sent</th><th>Expires</th><th>Status</th><th>Actions</th></tr></thead>
+          <tbody>{invitations.map(invite => { const s = status(invite); return <tr key={invite.id}>
+            <td>{invite.email}</td>
+            <td>{ROLE_OPTIONS.find(r => r.value === invite.role)?.label || invite.role}</td>
+            <td>{invite.created_at ? new Date(invite.created_at).toLocaleDateString() : '—'}</td>
+            <td>{invite.expires_at ? new Date(invite.expires_at).toLocaleDateString() : '—'}</td>
+            <td><span className={`portal-request-status invite-status-${s.toLowerCase()}`}>{s}</span></td>
+            <td className="portal-request-actions">
+              {s === 'Pending' && onRevoke && <button type="button" className="secondary-btn" disabled={actionId === invite.id} onClick={() => onRevoke(invite.id)}>{actionId === invite.id ? 'Revoking...' : 'Revoke'}</button>}
+            </td>
+          </tr>; })}</tbody>
+        </table></div>
+      )}
+    </div>
+  );
+}
+
 export default App;

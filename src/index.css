@@ -11770,3 +11770,48 @@ select {
     min-width: 0;
   }
 }
+
+/* Staff invitations and onboarding */
+.invite-expiry { margin-top: 14px; text-align: center; color: #9a9fb0; font-size: 12px; }
+.auth-card input[readonly] { background: #f3f4f8; color: #8a90a3; cursor: not-allowed; }
+.onboarding-card { max-width: 440px; }
+.onboarding-checklist { list-style: none; margin: 18px 0; padding: 0; display: flex; flex-direction: column; gap: 10px; }
+.onboarding-checklist li { padding: 10px 14px; border: 1px solid #e7e9f0; border-radius: 10px; background: #fafbff; font-size: 13.5px; line-height: 1.5; }
+.invite-link-row { display: flex; gap: 8px; margin: 10px 0 16px; }
+.invite-link-row input { flex: 1; padding: 9px 10px; border: 1px solid #e5e6ed; border-radius: 8px; background: #f7f8fc; font-size: 12.5px; }
+.invite-status-pending { background: #eaf1ff; color: #3f6fd8; }
+.invite-status-accepted { background: #e8f8ef; color: #1f7a4d; }
+.invite-status-expired, .invite-status-revoked { background: #f0f0f4; color: #5b6473; }
+:root[data-theme="dark"] .onboarding-checklist li { border-color: #30323c; background: #171b26; color: #d3d5e3; }
+:root[data-theme="dark"] .invite-link-row input { border-color: #30323c; background: #171b26; color: #d3d5e3; }
+:root[data-theme="dark"] .auth-card input[readonly] { background: #1d212c; color: #7d8295; }
+.microsoft-signin-btn {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 12px;
+  min-height: 48px;
+  margin-top: 10px;
+  border: 1px solid #dfe3eb;
+  border-radius: 10px;
+  background: #ffffff;
+  color: #292d3d;
+  font-size: 14px;
+  font-weight: 700;
+  cursor: pointer;
+  transition: background 0.2s ease, border-color 0.2s ease;
+}
+.microsoft-signin-btn:hover {
+  background: #f7f8fb;
+  border-color: #c8cedc;
+}
+:root[data-theme="dark"] .microsoft-signin-btn {
+  border: 1px solid #32363f;
+  background: #171b26;
+  color: #cdd0dd;
+}
+:root[data-theme="dark"] .microsoft-signin-btn:hover {
+  background: #20232e;
+  border-color: #393d47;
+}
