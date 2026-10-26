@@ -6,7 +6,7 @@ import timeGridPlugin from '@fullcalendar/react/timegrid';
 import listPlugin from '@fullcalendar/react/list';
 import interactionPlugin from '@fullcalendar/react/interaction';
 import '@fullcalendar/react/skeleton.css';
-import { LayoutDashboard, Users, Kanban, CalendarCheck, BarChart3, Settings, Bell, Search, Plus, ArrowUpRight, MoreHorizontal, Menu, X, UserRound, Pencil, Receipt, LogOut, UserCog, MessageCircle, UserPlus, Mail, CalendarDays, FileText, Workflow, TrendingUp, Tags, DollarSign, CreditCard, Upload, Download, Play, Target, CheckCircle2, ArrowLeft, ChevronRight, Building2, RefreshCw, GripVertical } from 'lucide-react';
+import { LayoutDashboard, Users, Kanban, CalendarCheck, BarChart3, Settings, Bell, Search, Plus, ArrowUpRight, MoreHorizontal, Menu, X, UserRound, Pencil, Receipt, LogOut, UserCog, MessageCircle, UserPlus, Mail, CalendarDays, FileText, Workflow, TrendingUp, Tags, DollarSign, CreditCard, Upload, Download, Play, Target, CheckCircle2, ArrowLeft, ChevronRight, Building2, RefreshCw, GripVertical, MapPin } from 'lucide-react';
 
 // Lets every page heading refresh the latest workspace data without prop-drilling.
 const RefreshContext = createContext(null);
@@ -61,6 +61,7 @@ const isCommercialDeleter = role => ['admin', 'manager', 'head_of_sales'].includ
 const isCommercialEditor = role => ['admin', 'manager'].includes(role);
 const ROLE_PANEL_PAGE = {
   manager: 'MD Panel',
+  admin: 'MD Panel',
   head_of_sales: 'HOS Panel',
   hr: 'HR Panel',
   technical_support: 'Technical Support Panel'
@@ -73,11 +74,11 @@ const approvalRequirement = amount => {
   return { band: 'SALES', label: 'Sales Rep' };
 };
 const canApproveForRole = (role, amount, approvalStatus = 'PENDING') => {
-  if (role === 'admin') return false;
+  const effectiveRole = role === 'admin' ? 'manager' : role;
   const requirement = approvalRequirement(amount).band;
-  if (approvalStatus === 'HOS_PENDING' && role === 'head_of_sales') return requirement === 'HOS' || requirement === 'HOS_MD';
-  if (approvalStatus === 'MD_PENDING' && role === 'manager') return requirement === 'HOS_MD';
-  if (approvalStatus === 'SALES_PENDING' && role === 'sales') return requirement === 'SALES';
+  if (approvalStatus === 'HOS_PENDING' && effectiveRole === 'head_of_sales') return requirement === 'HOS' || requirement === 'HOS_MD';
+  if (approvalStatus === 'MD_PENDING' && effectiveRole === 'manager') return requirement === 'HOS_MD';
+  if (approvalStatus === 'SALES_PENDING' && effectiveRole === 'sales') return requirement === 'SALES';
   return false;
 };
 const roleLabel = role => {
@@ -86,6 +87,24 @@ const roleLabel = role => {
   if (known) return known.label;
   return role.charAt(0).toUpperCase() + role.slice(1).replace(/_/g, ' '); // e.g. a legacy "member" row
 };
+
+function distanceInMeters(lat1, lon1, lat2, lon2) {
+  const R = 6371000;
+  const toRad = value => value * Math.PI / 180;
+  const dLat = toRad(lat2 - lat1);
+  const dLon = toRad(lon2 - lon1);
+  const a = Math.sin(dLat / 2) ** 2 + Math.cos(toRad(lat1)) * Math.cos(toRad(lat2)) * Math.sin(dLon / 2) ** 2;
+  return 2 * R * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+}
+
+function distanceInMeters(lat1, lon1, lat2, lon2) {
+  const R = 6371000;
+  const toRad = value => value * Math.PI / 180;
+  const dLat = toRad(lat2 - lat1);
+  const dLon = toRad(lon2 - lon1);
+  const a = Math.sin(dLat / 2) ** 2 + Math.cos(toRad(lat1)) * Math.cos(toRad(lat2)) * Math.sin(dLon / 2) ** 2;
+  return 2 * R * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+}
 
 function AuthScreen({ onGoogleSignIn, onMicrosoftSignIn, onEmailSignIn, onEmailSignUp, onPortalSignUp, authMode, setAuthMode, email, setEmail, password, setPassword,
   error,
@@ -840,7 +859,7 @@ function CustomerPortalHome({ user, account, onSignOut }) {
 const navSections = [
   { title: 'Overview', items: [['Dashboard', LayoutDashboard], ['Reports', BarChart3]] },
   { title: 'Customers & Sales', items: [['Customers', Users], ['Leads', UserPlus], ['Pipeline', Kanban], ['Products', FileText], ['Quotes', FileText], ['Invoices', CreditCard], ['Forecast', TrendingUp]] },
-  { title: 'Work & Support', items: [['Activities', CalendarCheck], ['Calendar', CalendarDays], ['Technical Support', UserCog], ['Tickets', Receipt], ['Documents', FileText]] },
+  { title: 'Work & Support', items: [['Activities', CalendarCheck], ['Field Visits', MapPin], ['Calendar', CalendarDays], ['Technical Support', UserCog], ['Tickets', Receipt], ['Documents', FileText]] },
   { title: 'Communication', items: [['Email', Mail], ['Chat', MessageCircle]] },
   { title: 'Automation & Insights', items: [['Automation', Workflow], ['Segments', Tags]] },
   { title: 'System', items: [['Settings', Settings]] }
@@ -848,6 +867,7 @@ const navSections = [
 
 const rolePanelNav = [
   ['MD Panel', BarChart3, 'manager'],
+  ['MD Panel', BarChart3, 'admin'],
   ['HOS Panel', CheckCircle2, 'head_of_sales'],
   ['HR Panel', Users, 'hr'],
   ['Technical Support Panel', UserCog, 'technical_support']
@@ -889,7 +909,27 @@ function App() {
   // Keep the user's current CRM page across browser refreshes.
   // resetWorkspace() still explicitly sends the user to Dashboard when they sign out.
   const [page, setPage] = useState(readStoredPage);
+  const [commercialLaunch, setCommercialLaunch] = useState(null);
+  const [commercialView, setCommercialView] = useState(null);
   useEffect(() => { if (authorizationProfile?.role === 'technical_support' && page === 'Tickets') setPage('Technical Support Panel'); }, [authorizationProfile?.role, page]);
+
+  const launchQuoteFromDeal = deal => {
+    if (!deal || deal.stage !== 'Won') return;
+    setCommercialLaunch({ type: 'quote', dealId: deal.id });
+    setCommercialView({ type: 'quotes', dealId: deal.id });
+    setPage('Quotes');
+  };
+  const launchInvoiceFromQuote = quote => {
+    if (!quote || quote.approval_status !== 'APPROVED') return;
+    setCommercialLaunch({ type: 'invoice', dealId: quote.deal_id || '', quoteId: quote.id });
+    setCommercialView({ type: 'invoices', dealId: quote.deal_id || '' });
+    setPage('Invoices');
+  };
+  const viewDealCommercials = (type, deal) => {
+    setCommercialLaunch(null);
+    setCommercialView({ type, dealId: deal?.id || '' });
+    setPage(type === 'quotes' ? 'Quotes' : 'Invoices');
+  };
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [customers, setCustomers] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -921,11 +961,13 @@ function App() {
   const [search, setSearch] = useState('');
   const [globalSearch, setGlobalSearch] = useState('');
   const [showCustomerForm, setShowCustomerForm] = useState(false);
-  const [newCustomer, setNewCustomer] = useState({ name: '', company: '', email: '', phone: '', job_title: '', birthday: '', status: 'Active' });
+  const [newCustomer, setNewCustomer] = useState({ name: '', company: '', email: '', phone: '', job_title: '', birthday: '', location_address: '', latitude: '', longitude: '', status: 'Active' });
   const [selectedCustomer, setSelectedCustomer] = useState(null);
   const [openCustomerMenu, setOpenCustomerMenu] = useState(null);
   const [editingCustomer, setEditingCustomer] = useState(null);
   const [activities, setActivities] = useState([]);
+  const [fieldVisits, setFieldVisits] = useState([]);
+  const [fieldVisitError, setFieldVisitError] = useState('');
   const [showActivityForm, setShowActivityForm] = useState(false);
   const [newActivity, setNewActivity] = useState({
     title: '', type: 'Task', activity_date: '', customer_id: '',
@@ -1517,6 +1559,20 @@ function App() {
     }
     setActivities(data || []);
   }
+
+  async function fetchFieldVisits() {
+    const { data, error } = await supabase
+      .from('field_visits')
+      .select('*')
+      .order('check_in_at', { ascending: false });
+    if (error) {
+      if (!['42P01', 'PGRST205'].includes(error.code)) console.error('Error fetching field visits:', error);
+      setFieldVisitError(error.code === '42P01' || error.code === 'PGRST205' ? 'Field visits are not set up yet. Run the Phase 1 field-visit SQL migration.' : error.message);
+      return;
+    }
+    setFieldVisitError('');
+    setFieldVisits(data || []);
+  }
   async function fetchTickets() {
     const { data, error } = await fetchAllRows(() => supabase
       .from('tickets')
@@ -1922,6 +1978,18 @@ function App() {
   async function addCalendarEvent(payload) { const { data, error } = await supabase.from('calendar_events').insert([{ ...payload, created_by: session.user.id }]).select('*, customers(name,company)').single(); if (error) throw error; setCalendarEvents(prev => [...prev, data].sort((a, b) => new Date(a.start_at) - new Date(b.start_at))); return data; }
   async function updateCalendarEvent(id, payload) { const { data, error } = await supabase.from('calendar_events').update(payload).eq('id', id).select('*, customers(name,company)').single(); if (error) throw error; setCalendarEvents(prev => prev.map(x => x.id === id ? data : x)); return data; }
   async function deleteCalendarEvent(id) { const { error } = await supabase.from('calendar_events').delete().eq('id', id); if (error) throw error; setCalendarEvents(prev => prev.filter(x => x.id !== id)); }
+  async function loadInvoiceItems(invoiceOrId) {
+    const invoiceId = typeof invoiceOrId === 'object' ? invoiceOrId?.id : invoiceOrId;
+    if (!invoiceId) return [];
+    const { data, error } = await supabase
+      .from('invoice_items')
+      .select('*')
+      .eq('invoice_id', invoiceId)
+      .order('created_at', { ascending: true });
+    if (error) throw error;
+    return data || [];
+  }
+
   async function addQuote(payload, items = []) {
     if (!payload?.deal_id) throw new Error('A quote must be linked to a Won Deal.');
     const linkedDeal = deals.find(deal => deal.id === payload.deal_id);
@@ -2183,13 +2251,77 @@ function App() {
     return data;
   }
 
-  async function addInvoice(payload) { const amount = Number(payload?.amount) || 0; if (!payload?.deal_id) throw new Error('An invoice must be linked to a Won Deal.'); const linkedDeal = deals.find(deal => deal.id === payload.deal_id); if (!linkedDeal || linkedDeal.stage !== 'Won') throw new Error('An invoice can only be linked to a Won Deal.'); payload = { ...payload, customer_id: payload.customer_id || linkedDeal.customer_id || null, sales_rep_id: payload.sales_rep_id || linkedDeal.created_by || session.user.id, approval_status: null, approval_stage: null }; const { data, error } = await supabase.from('invoices').insert([{ ...payload, created_by: session.user.id }]).select('*, customers(name,company)').single(); if (error) throw error; setInvoices(prev => [data, ...prev]); if (amount >= 20000) await notifyRoles(['head_of_sales'], 'Invoice approval required', `Invoice ${data.invoice_number} is waiting for HOS approval.`, 'Invoices'); return data; }
-  async function updateInvoice(id, payload) {
+  async function addInvoice(payload, items = []) {
+    const amount = Number(payload?.amount) || 0;
+    if (!payload?.deal_id) throw new Error('An invoice must be linked to a Won Deal.');
+    const linkedDeal = deals.find(deal => deal.id === payload.deal_id);
+    if (!linkedDeal || linkedDeal.stage !== 'Won') throw new Error('An invoice can only be linked to a Won Deal.');
+    payload = {
+      ...payload,
+      customer_id: payload.customer_id || linkedDeal.customer_id || null,
+      sales_rep_id: payload.sales_rep_id || linkedDeal.created_by || session.user.id,
+      approval_status: null,
+      approval_stage: null
+    };
+    const invoiceId = crypto.randomUUID();
+    const invoiceToInsert = { id: invoiceId, ...payload, created_by: session.user.id };
+    const { error } = await supabase.from('invoices').insert([invoiceToInsert]);
+    if (error) throw error;
+    setInvoices(prev => [invoiceToInsert, ...prev]);
+
+    const rows = (items || []).map(item => ({
+      invoice_id: invoiceId,
+      product_id: item.product_id || null,
+      product_name: item.product_name,
+      description: item.description || null,
+      quantity: Number(item.quantity) || 1,
+      unit_price: Number(item.unit_price) || 0,
+      discount: Number(item.discount) || 0,
+      tax: Number(item.tax) || 0,
+      total: Number(item.total) || 0
+    }));
+    if (rows.length) {
+      const { error: itemError } = await supabase.from('invoice_items').insert(rows);
+      if (itemError) throw new Error(`Invoice was created, but its line items could not be saved: ${itemError.message}`);
+    }
+
+    if (amount >= 20000) await notifyRoles(['head_of_sales'], 'Invoice approval required', `Invoice ${invoiceToInsert.invoice_number} is waiting for HOS approval.`, 'Invoices');
+    return invoiceToInsert;
+  }
+
+  async function updateInvoice(id, payload, items = null) {
     const current = invoices.find(item => item.id === id);
     const role = authorizationProfile?.role;
     if (!isCommercialEditor(role) && current?.created_by !== session.user.id) throw new Error('You can only edit your own invoice.');
-    const { data, error } = await supabase.from('invoices').update(payload).eq('id', id).select('*, customers(name,company)').single(); if (error) throw error; setInvoices(prev => prev.map(x => x.id === id ? data : x)); return data;
+    const { error } = await supabase.from('invoices').update(payload).eq('id', id);
+    if (error) throw error;
+
+    if (items !== null) {
+      const rows = (items || []).map(item => ({
+        id: crypto.randomUUID(),
+        invoice_id: id,
+        product_id: item.product_id || null,
+        product_name: item.product_name,
+        description: item.description || null,
+        quantity: Number(item.quantity) || 1,
+        unit_price: Number(item.unit_price) || 0,
+        discount: Number(item.discount) || 0,
+        tax: Number(item.tax) || 0,
+        total: Number(item.total) || 0
+      }));
+      if (rows.length) {
+        const { error: insertError } = await supabase.from('invoice_items').insert(rows);
+        if (insertError) throw new Error(`Invoice was updated, but its line items could not be updated: ${insertError.message}`);
+      }
+      const { error: deleteError } = await supabase.from('invoice_items').delete().eq('invoice_id', id).not('id', 'in', rows.length ? `(${rows.map(row => row.id).join(',')})` : '(null)');
+      if (deleteError) throw deleteError;
+    }
+
+    const data = { ...(current || {}), ...payload, id };
+    setInvoices(prev => prev.map(x => x.id === id ? data : x));
+    return data;
   }
+
   async function sendQuoteToHOS(id) {
     const quote = quotes.find(item => item.id === id);
     if (!quote || quote.created_by !== session.user.id) throw new Error('You can only send your own quote for approval.');
@@ -2501,7 +2633,7 @@ function App() {
 
     try {
       const jobs = [
-        fetchCustomers(), fetchDeals(), fetchActivities(), fetchTickets(), fetchStaffUsers(),
+        fetchCustomers(), fetchDeals(), fetchActivities(), fetchFieldVisits(), fetchTickets(), fetchStaffUsers(),
         fetchLeads(), fetchLeadProducts(), fetchDealProducts(), fetchEmailLogs(), fetchCalendarEvents(),
         fetchQuotes(), fetchQuoteItems(), fetchInvoices(), fetchPayments(), fetchDocuments(),
         fetchWorkflows(), fetchSegments(), fetchProducts(), fetchSupportEngineers(),
@@ -2893,6 +3025,9 @@ function App() {
             phone: newCustomer.phone.trim() || null,
             job_title: newCustomer.job_title.trim() || null,
             birthday: newCustomer.birthday || null,
+            location_address: newCustomer.location_address?.trim() || null,
+            latitude: newCustomer.latitude || null,
+            longitude: newCustomer.longitude || null,
             status: newCustomer.status || 'Active',
             created_by: session.user.id
           }
@@ -2915,6 +3050,9 @@ function App() {
         phone: '',
         job_title: '',
         birthday: '',
+        location_address: '',
+        latitude: '',
+        longitude: '',
         status: 'Active'
       });
 
@@ -2973,6 +3111,9 @@ function App() {
         phone: editingCustomer.phone?.trim() || null,
         job_title: editingCustomer.job_title?.trim() || null,
         birthday: editingCustomer.birthday || null,
+        location_address: editingCustomer.location_address?.trim() || null,
+        latitude: editingCustomer.latitude || null,
+        longitude: editingCustomer.longitude || null,
         status: editingCustomer.status || 'Active'
       })
       .eq('id', editingCustomer.id)
@@ -3435,6 +3576,162 @@ function App() {
       setEditDealSaving(false);
     }
   }
+  function captureCurrentLocation(onSuccess, onFailure) {
+    if (!navigator.geolocation) {
+      onFailure?.(new Error('Location is not supported by this browser.'));
+      return;
+    }
+    navigator.geolocation.getCurrentPosition(
+      position => onSuccess?.(position.coords),
+      error => onFailure?.(new Error(error.code === 1 ? 'Location permission was denied.' : 'Unable to get your current location.')),
+      { enableHighAccuracy: true, timeout: 15000, maximumAge: 0 }
+    );
+  }
+
+  async function startFieldVisit(visitForm = {}) {
+    setFieldVisitError('');
+    const {
+      targetType = 'customer',
+      customerId = '',
+      targetName = '',
+      targetOrganization = '',
+      targetAddress = '',
+      visitType = 'Customer visit',
+      contactPerson = '',
+      objective = '',
+      notes = ''
+    } = visitForm;
+
+    if (targetType === 'customer' && !customerId) throw new Error('Select a customer before starting a field visit.');
+    if (targetType === 'other' && !targetName.trim()) throw new Error('Enter the person or organization you are visiting.');
+    if (!objective.trim()) throw new Error('Enter the visit objective before starting.');
+
+    const customer = targetType === 'customer' ? customers.find(item => item.id === customerId) : null;
+    if (targetType === 'customer' && !customer) throw new Error('Customer could not be found.');
+
+    return new Promise((resolve, reject) => {
+      // The browser requests location permission only after the visit form is submitted.
+      captureCurrentLocation(async coords => {
+        try {
+          const activityId = crypto.randomUUID();
+          const now = new Date().toISOString();
+          const customerLat = customer ? Number(customer.latitude) : NaN;
+          const customerLng = customer ? Number(customer.longitude) : NaN;
+          const hasCustomerLocation = targetType === 'customer' && Number.isFinite(customerLat) && Number.isFinite(customerLng);
+          const distance = hasCustomerLocation ? distanceInMeters(coords.latitude, coords.longitude, customerLat, customerLng) : null;
+          const verification = targetType === 'other'
+            ? 'LOCATION_CAPTURED'
+            : !hasCustomerLocation
+              ? 'NOT_CONFIGURED'
+              : distance <= 300
+                ? 'VERIFIED'
+                : distance <= 1000
+                  ? 'NEARBY'
+                  : 'MISMATCH';
+
+          const resolvedName = targetType === 'customer' ? customer.name : targetName.trim();
+          const resolvedOrganization = targetType === 'customer' ? (customer.company || '') : targetOrganization.trim();
+          const resolvedAddress = targetType === 'customer' ? (customer.location_address?.trim() || '') : targetAddress.trim();
+          const visitNotes = [
+            contactPerson ? `Contact: ${contactPerson}` : '',
+            resolvedOrganization ? `Organization: ${resolvedOrganization}` : '',
+            objective ? `Objective: ${objective}` : '',
+            notes ? `Notes: ${notes}` : '',
+            resolvedAddress ? `Visit address: ${resolvedAddress}` : '',
+            `Field visit started. GPS accuracy: ${Math.round(coords.accuracy || 0)}m.`
+          ].filter(Boolean).join('\n');
+          const title = `${visitType} — ${resolvedName}`;
+
+          const { error: activityError } = await supabase.from('activities').insert({
+            id: activityId,
+            title,
+            type: 'Field Visit',
+            activity_date: now,
+            customer_id: customer?.id || null,
+            notes: visitNotes,
+            status: 'In Progress',
+            priority: 'Medium',
+            assigned_to: session.user.id,
+            created_by: session.user.id
+          });
+          if (activityError) throw activityError;
+
+          const { data, error } = await supabase.from('field_visits').insert({
+            activity_id: activityId,
+            sales_rep_id: session.user.id,
+            customer_id: customer?.id || null,
+            target_type: targetType,
+            target_name: resolvedName,
+            target_organization: resolvedOrganization || null,
+            target_address: resolvedAddress || null,
+            purpose: visitType,
+            contact_person: contactPerson.trim() || null,
+            objective: objective.trim(),
+            notes: notes.trim() || null,
+            check_in_at: now,
+            check_in_latitude: coords.latitude,
+            check_in_longitude: coords.longitude,
+            check_in_accuracy: coords.accuracy || null,
+            check_in_location_url: googleMapsLocationUrl(coords.latitude, coords.longitude),
+            customer_latitude: hasCustomerLocation ? customerLat : null,
+            customer_longitude: hasCustomerLocation ? customerLng : null,
+            customer_location_address: targetType === 'customer' ? (customer.location_address?.trim() || null) : null,
+            distance_from_customer: distance,
+            verification_status: verification
+          }).select().single();
+          if (error) {
+            await supabase.from('activities').delete().eq('id', activityId);
+            throw error;
+          }
+
+          setActivities(prev => [{
+            id: activityId,
+            title,
+            type: 'Field Visit',
+            activity_date: now,
+            customer_id: customer?.id || null,
+            notes: visitNotes,
+            status: 'In Progress',
+            priority: 'Medium',
+            assigned_to: session.user.id,
+            created_by: session.user.id
+          }, ...prev]);
+          setFieldVisits(prev => [data, ...prev]);
+          resolve(data);
+        } catch (error) { reject(error); }
+      }, reject);
+    });
+  }
+
+  async function endFieldVisit(visit) {
+    return new Promise((resolve, reject) => {
+      captureCurrentLocation(async coords => {
+        try {
+          const now = new Date().toISOString();
+          const customerLat = Number(visit.customer_latitude);
+          const customerLng = Number(visit.customer_longitude);
+          const hasCustomerLocation = Number.isFinite(customerLat) && Number.isFinite(customerLng);
+          const distance = hasCustomerLocation ? distanceInMeters(coords.latitude, coords.longitude, customerLat, customerLng) : null;
+          const verification = !hasCustomerLocation ? 'NOT_CONFIGURED' : distance <= 300 ? 'VERIFIED' : distance <= 1000 ? 'NEARBY' : 'MISMATCH';
+          const { data, error } = await supabase.from('field_visits').update({
+            check_out_at: now,
+            check_out_latitude: coords.latitude,
+            check_out_longitude: coords.longitude,
+            check_out_accuracy: coords.accuracy || null,
+            check_out_location_url: googleMapsLocationUrl(coords.latitude, coords.longitude),
+            distance_from_customer: distance ?? visit.distance_from_customer,
+            verification_status: verification
+          }).eq('id', visit.id).select().single();
+          if (error) throw error;
+          await supabase.from('activities').update({ status: 'Completed', notes: `Field visit completed. Check-out GPS accuracy: ${Math.round(coords.accuracy || 0)}m.` }).eq('id', visit.activity_id);
+          setFieldVisits(prev => prev.map(item => item.id === data.id ? data : item));
+          setActivities(prev => prev.map(item => item.id === visit.activity_id ? { ...item, status: 'Completed', notes: `Field visit completed. Check-out GPS accuracy: ${Math.round(coords.accuracy || 0)}m.` } : item));
+          resolve(data);
+        } catch (error) { reject(error); }
+      }, reject);
+    });
+  }
+
   async function addActivity() {
     setActivityError('');
 
@@ -3831,9 +4128,9 @@ function App() {
           {page === 'Dashboard' && (
             <Dashboard revenue={revenue} customers={customers} leads={leads} deals={deals} activities={activities} tickets={tickets} setPage={setPage} formatAmount={formatAmount} onSelectCustomer={setSelectedCustomer} onEditCustomer={setEditingCustomer} onDeleteCustomer={deleteCustomer} currentUserId={session.user.id} role={authorizationProfile?.role} />
           )}
-          {page === 'MD Panel' && authorizationProfile?.role === 'manager' && <MDPanel deals={deals} quotes={quotes} invoices={invoices} customers={customers} formatAmount={formatAmount} onApprove={approveCommercialRecord} onReject={rejectCommercialRecord} onInviteStaff={inviteStaffWorker} onOpenInviteEmail={openCompose} staffInvitations={staffInvitations} onRevokeStaffInvitation={revokeStaffInvitation} staffInvitationActionId={staffInvitationActionId} />}
+          {page === 'MD Panel' && ['manager', 'admin'].includes(authorizationProfile?.role) && <MDPanel deals={deals} quotes={quotes} invoices={invoices} customers={customers} formatAmount={formatAmount} onApprove={approveCommercialRecord} onReject={rejectCommercialRecord} />}
           {page === 'HOS Panel' && authorizationProfile?.role === 'head_of_sales' && <HOSPanel deals={deals} quotes={quotes} invoices={invoices} quoteItems={quoteItems} tickets={tickets} ownerProfiles={ownerProfiles} formatAmount={formatAmount} currentUserId={session.user.id} role={authorizationProfile?.role} setPage={setPage} onApprove={approveCommercialRecord} onReject={rejectCommercialRecord} />}
-          {page === 'HR Panel' && authorizationProfile?.role === 'hr' && <HRPanel deals={deals} quotes={quotes} invoices={invoices} tickets={tickets} customers={customers} formatAmount={formatAmount} />}
+          {page === 'HR Panel' && authorizationProfile?.role === 'hr' && <HRPanel activities={activities} authorizedUsers={authorizedUsers} ownerProfiles={ownerProfiles} customers={customers} leads={leads} />}
           {page === 'Technical Support Panel' && authorizationProfile?.role === 'technical_support' && <TechnicalSupportPanel tickets={tickets} customers={customers} formatAmount={formatAmount} currentUserId={session.user.id} ticketError={ticketError} onAddTicket={() => { setTicketError(''); setNewTicket(t => ({ ...t, customer_id: '' })); setShowTicketForm(true); }} onStatusChange={updateTicketStatus} onDeleteTicket={deleteTicket} onEditTicket={ticket => { setEditTicketError(''); setEditingTicket(ticket); }} onViewTicket={setSelectedTicket} isAdmin={isAdminRole(authorizationProfile?.role)} role={authorizationProfile?.role} canManage={canManageTicket} staffName={staffName} staffOptions={getStaffOptions()} onAssign={assignTicket} setPage={setPage} />}
           {page === 'Customers' && (
             <Customers customers={filteredCustomers}
@@ -3858,8 +4155,8 @@ function App() {
           {page === 'Leads' && <Leads leads={leads} customers={customers} products={products} leadProducts={leadProducts} onAdd={addLead} onUpdate={updateLead} onSyncProducts={syncLeadProducts} onDelete={deleteLead} currentUserId={session.user.id} isAdmin={['admin', 'manager', 'head_of_sales'].includes(authorizationProfile?.role)} />}
           {page === 'Email' && <EmailPage emailLogs={emailLogs} customers={customers} integrations={emailIntegrations} loading={emailIntegrationLoading} error={emailIntegrationError} onConnect={connectEmailProvider} onDisconnect={disconnectEmailProvider} onCompose={() => openCompose()} onAdd={async payload => { try { await addEmailLog(payload); showToast('Email logged.'); } catch (e) { alert(e.message); } }} />}
           {page === 'Calendar' && <CalendarPage events={calendarEvents} customers={customers} onAdd={addCalendarEvent} onUpdate={updateCalendarEvent} onDelete={deleteCalendarEvent} onRefresh={fetchCalendarEvents} />}
-          {page === 'Quotes' && <Quotes quotes={quotes} products={products} deals={deals} dealProducts={dealProducts} customers={customers} quoteItems={quoteItems} onLoadQuoteItems={loadQuoteItems} onAdd={addQuote} onUpdate={updateQuote} onDelete={deleteQuote} formatAmount={formatAmount} currentUserId={session.user.id} isAdmin={isAdminRole(authorizationProfile?.role)} role={authorizationProfile?.role} onSendToHOS={sendQuoteToHOS} />}
-          {page === 'Invoices' && <Invoices invoices={invoices} payments={payments} customers={customers} products={products} deals={deals} quotes={quotes} onAdd={addInvoice} onUpdate={updateInvoice} onDelete={deleteInvoice} onAddPayment={addPayment} formatAmount={formatAmount} currentUserId={session.user.id} isAdmin={isAdminRole(authorizationProfile?.role)} role={authorizationProfile?.role} onSendToHOS={sendInvoiceToHOS} />}
+          {page === 'Quotes' && <Quotes quotes={quotes} products={products} deals={deals} dealProducts={dealProducts} customers={customers} quoteItems={quoteItems} onLoadQuoteItems={loadQuoteItems} onAdd={addQuote} onUpdate={updateQuote} onDelete={deleteQuote} formatAmount={formatAmount} currentUserId={session.user.id} isAdmin={isAdminRole(authorizationProfile?.role)} role={authorizationProfile?.role} onSendToHOS={sendQuoteToHOS} initialDealId={commercialLaunch?.type === 'quote' ? commercialLaunch.dealId : ''} dealFilterId={commercialView?.type === 'quotes' ? commercialView.dealId : ''} onLaunchConsumed={() => setCommercialLaunch(null)} onCreateInvoice={launchInvoiceFromQuote} />}
+          {page === 'Invoices' && <Invoices invoices={invoices} payments={payments} customers={customers} products={products} deals={deals} dealProducts={dealProducts} quotes={quotes} onAdd={addInvoice} onUpdate={updateInvoice} onDelete={deleteInvoice} onAddPayment={addPayment} formatAmount={formatAmount} currentUserId={session.user.id} isAdmin={isAdminRole(authorizationProfile?.role)} role={authorizationProfile?.role} onSendToHOS={sendInvoiceToHOS} onLoadInvoiceItems={loadInvoiceItems} onLoadQuoteItems={loadQuoteItems} initialDealId={commercialLaunch?.type === 'invoice' ? commercialLaunch.dealId : ''} initialQuoteId={commercialLaunch?.type === 'invoice' ? commercialLaunch.quoteId : ''} dealFilterId={commercialView?.type === 'invoices' ? commercialView.dealId : ''} onLaunchConsumed={() => setCommercialLaunch(null)} />}
           {page === 'Documents' && <Documents documents={documents} customers={customers} onUpload={uploadDocument} onDownload={downloadDocument} onDelete={deleteDocument} />}
           {page === 'Automation' && <Automation workflows={workflows} onAdd={addWorkflow} onUpdate={updateWorkflow} />}
           {page === 'Segments' && <Segments segments={segments} customers={customers} onAdd={addSegment} onUpdate={updateSegment} />}
@@ -3877,6 +4174,8 @@ function App() {
               ownerProfiles={ownerProfiles}
               isAdmin={isAdminRole(authorizationProfile?.role)}
               role={authorizationProfile?.role}
+              onCreateQuoteFromDeal={launchQuoteFromDeal}
+              onViewDealCommercials={viewDealCommercials}
               onEdit={deal => {
                 setEditDealError('');
                 setEditingDeal({
@@ -3897,6 +4196,9 @@ function App() {
           )}
           {page === 'Activities' && (
             <Activities activities={activities} customers={customers} ownerProfiles={ownerProfiles} currentUserEmail={session.user.email} onAdd={() => { setActivityError(''); setNewActivity(a => ({ ...a, customer_id: '' })); setShowActivityForm(true); }} onStatusChange={updateActivityStatus} onDelete={deleteActivity} onEdit={activity => { setEditActivityError(''); setEditingActivity({ ...activity, activity_date: formatDateTimeLocal(activity.activity_date) }); }} onView={setSelectedActivity} currentUserId={session.user.id} isAdmin={isSystemAdminOrMD(authorizationProfile?.role)} />
+          )}
+          {page === 'Field Visits' && ['sales', 'head_of_sales', 'manager', 'admin'].includes(authorizationProfile?.role) && (
+            <FieldVisits customers={customers} fieldVisits={fieldVisits} currentUserId={session.user.id} role={authorizationProfile?.role} onStart={startFieldVisit} onEnd={endFieldVisit} error={fieldVisitError} />
           )}
           {page === 'Tickets' && authorizationProfile?.role !== 'technical_support' && (
             <Tickets
@@ -3950,6 +4252,8 @@ function App() {
           <label>Phone<input value={newCustomer.phone} onChange={e => setNewCustomer({ ...newCustomer, phone: e.target.value })} placeholder="+234..." /></label>
           <JobTitleField value={newCustomer.job_title} onChange={value => setNewCustomer({ ...newCustomer, job_title: value })} />
           <BirthdayField value={newCustomer.birthday} onChange={value => setNewCustomer({ ...newCustomer, birthday: value })} />
+          <label>Branch / visit address<input value={newCustomer.location_address || ''} onChange={e => setNewCustomer({ ...newCustomer, location_address: e.target.value })} placeholder="e.g. UBA CMS, Marina, Lagos" /></label>
+          <LocationCaptureFields latitude={newCustomer.latitude} longitude={newCustomer.longitude} onCapture={coords => setNewCustomer(prev => ({ ...prev, latitude: String(coords.latitude), longitude: String(coords.longitude) }))} />
           <label>
             Status
             <select value={newCustomer.status} onChange={e => setNewCustomer({ ...newCustomer, status: e.target.value })}>
@@ -4058,6 +4362,8 @@ function App() {
           </label>
           <JobTitleField value={editingCustomer.job_title} onChange={value => setEditingCustomer({ ...editingCustomer, job_title: value })} />
           <BirthdayField value={editingCustomer.birthday} onChange={value => setEditingCustomer({ ...editingCustomer, birthday: value })} />
+          <label>Branch / visit address<input value={editingCustomer.location_address || ''} onChange={e => setEditingCustomer({ ...editingCustomer, location_address: e.target.value })} placeholder="e.g. UBA CMS, Marina, Lagos" /></label>
+          <LocationCaptureFields latitude={editingCustomer.latitude} longitude={editingCustomer.longitude} onCapture={coords => setEditingCustomer(prev => ({ ...prev, latitude: String(coords.latitude), longitude: String(coords.longitude) }))} />
           <label>
             Status
             <select
@@ -5034,15 +5340,95 @@ function JobTitleField({ value, onChange, label = 'Job title' }) {
   return <label>{label}<input list="orbit-job-title-options" value={value || ''} onChange={e => onChange(e.target.value)} placeholder="e.g. CTO" autoComplete="organization-title" /><datalist id="orbit-job-title-options">{JOB_TITLE_SUGGESTIONS.map(title => <option key={title} value={title} />)}</datalist></label>;
 }
 
+function birthdayDisplayValue(value) {
+  if (!value) return '';
+  const raw = String(value).trim();
+  const iso = raw.match(/^(\d{4})-(\d{2})-(\d{2})$/);
+  if (iso) return `${iso[3]}-${iso[2]}`;
+  const dayMonth = raw.match(/^(\d{1,2})-(\d{1,2})$/);
+  if (dayMonth) return `${dayMonth[1].padStart(2, '0')}-${dayMonth[2].padStart(2, '0')}`;
+  return raw;
+}
+
+function normalizeBirthdayValue(value) {
+  if (!value) return null;
+  const raw = String(value).trim();
+  const iso = raw.match(/^(\d{4})-(\d{2})-(\d{2})$/);
+  if (iso) return raw;
+  const dayMonth = raw.match(/^(\d{2})-(\d{2})$/);
+  if (!dayMonth) return null;
+  const day = Number(dayMonth[1]);
+  const month = Number(dayMonth[2]);
+  if (month < 1 || month > 12 || day < 1 || day > new Date(2000, month, 0).getDate()) return null;
+  return `2000-${dayMonth[2]}-${dayMonth[1]}`;
+}
+
+function LocationCaptureFields({ latitude, longitude, onCapture }) {
+  const [capturing, setCapturing] = useState(false);
+  const [error, setError] = useState('');
+  const capture = () => {
+    setError('');
+    if (!navigator.geolocation) { setError('Location is not supported by this browser.'); return; }
+    setCapturing(true);
+    navigator.geolocation.getCurrentPosition(
+      position => { setCapturing(false); onCapture(position.coords); },
+      error => { setCapturing(false); setError(error.code === 1 ? 'Location permission was denied.' : 'Could not capture location.'); },
+      { enableHighAccuracy: true, timeout: 15000, maximumAge: 0 }
+    );
+  };
+  const mapUrl = googleMapsLocationUrl(latitude, longitude);
+  return <div className="location-capture-fields">
+    <div className="location-capture-heading"><div><strong>Customer branch location</strong><span>Used to verify field visits and retained for audit.</span></div><button type="button" className="secondary-btn" onClick={capture} disabled={capturing}>{capturing ? 'Capturing…' : 'Capture branch GPS'}</button></div>
+    {(latitude && longitude) && <div className="location-capture-meta"><small className="location-coordinates">{Number(latitude).toFixed(6)}, {Number(longitude).toFixed(6)}</small>{mapUrl && <a href={mapUrl} target="_blank" rel="noreferrer" className="field-visit-map-link">Open in Google Maps</a>}</div>}
+    {error && <small className="form-error">{error}</small>}
+  </div>;
+}
+
 function BirthdayField({ value, onChange, label = 'Birthday' }) {
-  return <label>{label}<input type="date" value={value || ''} onChange={e => onChange(e.target.value)} /></label>;
+  const [inputValue, setInputValue] = useState(() => birthdayDisplayValue(value));
+
+  useEffect(() => {
+    setInputValue(birthdayDisplayValue(value));
+  }, [value]);
+
+  const handleChange = e => {
+    const next = e.target.value.replace(/[^0-9-]/g, '').slice(0, 5);
+    setInputValue(next);
+
+    if (!next) {
+      onChange('');
+      return;
+    }
+
+    if (/^\d{2}-\d{2}$/.test(next)) {
+      const normalized = normalizeBirthdayValue(next);
+      if (normalized) onChange(normalized);
+    }
+  };
+
+  return (
+    <label>{label}
+      <input
+        type="text"
+        inputMode="numeric"
+        value={inputValue}
+        onChange={handleChange}
+        placeholder="DD-MM"
+        maxLength={5}
+        autoComplete="bday"
+      />
+    </label>
+  );
 }
 
 function birthdayIsToday(value, now = new Date()) {
   if (!value) return false;
-  const parts = String(value).slice(0, 10).split('-');
-  if (parts.length !== 3) return false;
-  return Number(parts[1]) === now.getMonth() + 1 && Number(parts[2]) === now.getDate();
+  const raw = String(value).trim();
+  const iso = raw.match(/^\d{4}-(\d{2})-(\d{2})$/);
+  if (iso) return Number(iso[1]) === now.getMonth() + 1 && Number(iso[2]) === now.getDate();
+  const dayMonth = raw.match(/^(\d{2})-(\d{2})$/);
+  if (dayMonth) return Number(dayMonth[2]) === now.getMonth() + 1 && Number(dayMonth[1]) === now.getDate();
+  return false;
 }
 
 function formatBirthday(value) {
@@ -5718,10 +6104,12 @@ function CustomerDetail({ currentUserId, customer, deals, activities, tickets, q
     </div>
   );
 }
-function Pipeline({ deals, customers, dealSupport = [], supportEngineers = [], moveDeal, deleteDeal, onEdit, onAdd, formatAmount, currentUserId, ownerProfiles = {}, isAdmin, role }) {
+function Pipeline({ deals, customers, dealSupport = [], supportEngineers = [], moveDeal, deleteDeal, onEdit, onAdd, formatAmount, currentUserId, ownerProfiles = {}, isAdmin, role, onCreateQuoteFromDeal, onViewDealCommercials }) {
   const [query, setQuery] = useState('');
   const [mineOnly, setMineOnly] = useState(false);
   const [dragOver, setDragOver] = useState(null);
+  const [openDealMenu, setOpenDealMenu] = useState(null);
+  const [viewingDeal, setViewingDeal] = useState(null);
   const [, setClock] = useState(Date.now());
 
   useEffect(() => {
@@ -5797,10 +6185,19 @@ function Pipeline({ deals, customers, dealSupport = [], supportEngineers = [], m
                     </div>
                     <div className="deal-top">
                       <span className="deal-label">DEAL</span>
-                      {(canEdit || canDeleteDeal(deal)) && (
-                        <div className="deal-actions">
-                          {canEdit && <button type="button" className="icon-btn" title="Edit deal" onClick={() => onEdit(deal)}><Pencil size={16} /></button>}
-                          {canDeleteDeal(deal) && <button type="button" className="icon-btn" title="Delete deal" onClick={() => deleteDeal(deal.id)}><X size={16} /></button>}
+                      {(canEdit || canDeleteDeal(deal) || deal.stage === 'Won') && (
+                        <div className="deal-actions" style={{ position: 'relative' }}>
+                          <button type="button" className="icon-btn" title="Deal actions" onClick={() => setOpenDealMenu(openDealMenu === deal.id ? null : deal.id)}><MoreHorizontal size={17} /></button>
+                          {openDealMenu === deal.id && (
+                            <div className="deal-action-menu">
+                              <button type="button" onClick={() => { setViewingDeal(deal); setOpenDealMenu(null); }}>View Deal</button>
+                              {canEdit && <button type="button" onClick={() => { onEdit(deal); setOpenDealMenu(null); }}>Edit Deal</button>}
+                              {deal.stage === 'Won' && <button type="button" onClick={() => { onCreateQuoteFromDeal(deal); setOpenDealMenu(null); }}>Create Quote</button>}
+                              {deal.stage === 'Won' && <button type="button" onClick={() => { onViewDealCommercials('quotes', deal); setOpenDealMenu(null); }}>View Quotes</button>}
+                              {deal.stage === 'Won' && <button type="button" onClick={() => { onViewDealCommercials('invoices', deal); setOpenDealMenu(null); }}>View Invoices</button>}
+                              {canDeleteDeal(deal) && <button type="button" className="danger" onClick={() => { setOpenDealMenu(null); deleteDeal(deal.id); }}>Delete Deal</button>}
+                            </div>
+                          )}
                         </div>
                       )}
                     </div>
@@ -5840,10 +6237,228 @@ function Pipeline({ deals, customers, dealSupport = [], supportEngineers = [], m
           );
         })}
       </div>
+
+      {viewingDeal && (
+        <div className="modal-backdrop" onClick={() => setViewingDeal(null)}>
+          <div className="modal modal-wide" onClick={e => e.stopPropagation()}>
+            <div className="modal-heading">
+              <div><h2>{viewingDeal.title}</h2><p>Deal details</p></div>
+              <button type="button" className="icon-btn" onClick={() => setViewingDeal(null)}><X size={18} /></button>
+            </div>
+            <div className="detail-grid">
+              <div><small>Company</small><p>{viewingDeal.company || '—'}</p></div>
+              <div><small>Stage</small><p>{viewingDeal.stage}</p></div>
+              <div><small>Value</small><p>{formatAmount(viewingDeal.amount)}</p></div>
+              <div><small>Owner</small><p>{ownerProfiles[viewingDeal.created_by] || 'Sales Rep'}</p></div>
+              <div><small>Customer</small><p>{customers.find(c => c.id === viewingDeal.customer_id)?.name || '—'}</p></div>
+              <div><small>Contact</small><p>{viewingDeal.contact_email || viewingDeal.contact_phone || '—'}</p></div>
+            </div>
+            {viewingDeal.stage === 'Won' && <div className="modal-actions">
+              <button type="button" className="secondary-btn" onClick={() => { onViewDealCommercials('quotes', viewingDeal); setViewingDeal(null); }}>View Quotes</button>
+              <button type="button" className="secondary-btn" onClick={() => { onViewDealCommercials('invoices', viewingDeal); setViewingDeal(null); }}>View Invoices</button>
+              <button type="button" className="primary-btn" onClick={() => { onCreateQuoteFromDeal(viewingDeal); setViewingDeal(null); }}>Create Quote</button>
+            </div>}
+          </div>
+        </div>
+      )}
     </>
   );
 }
 
+
+function googleMapsLocationUrl(latitude, longitude, address = '') {
+  const cleanAddress = String(address || '').trim();
+  if (cleanAddress) return `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(cleanAddress)}`;
+  const lat = Number(latitude);
+  const lng = Number(longitude);
+  if (!Number.isFinite(lat) || !Number.isFinite(lng)) return '';
+  return `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(`${lat},${lng}`)}`;
+}
+
+function FieldVisits({ customers = [], fieldVisits = [], currentUserId, role, onStart, onEnd, error }) {
+  const [targetType, setTargetType] = useState('customer');
+  const [customerId, setCustomerId] = useState('');
+  const [targetName, setTargetName] = useState('');
+  const [targetOrganization, setTargetOrganization] = useState('');
+  const [targetAddress, setTargetAddress] = useState('');
+  const [visitType, setVisitType] = useState('Customer visit');
+  const [contactPerson, setContactPerson] = useState('');
+  const [objective, setObjective] = useState('');
+  const [notes, setNotes] = useState('');
+  const [busy, setBusy] = useState(false);
+
+  const visibleVisits = fieldVisits.filter(visit => role === 'manager' || role === 'admin' || visit.sales_rep_id === currentUserId);
+  const activeVisits = visibleVisits.filter(visit => !visit.check_out_at);
+  const selectedCustomer = customers.find(customer => customer.id === customerId);
+
+  const resetForm = () => {
+    setCustomerId('');
+    setTargetName('');
+    setTargetOrganization('');
+    setTargetAddress('');
+    setVisitType('Customer visit');
+    setContactPerson('');
+    setObjective('');
+    setNotes('');
+  };
+
+  const start = async () => {
+    if (targetType === 'customer' && !customerId) return;
+    if (targetType === 'other' && !targetName.trim()) return;
+    if (!objective.trim()) return;
+    setBusy(true);
+    try {
+      await onStart({ targetType, customerId, targetName, targetOrganization, targetAddress, visitType, contactPerson, objective, notes });
+      resetForm();
+    } catch (e) {
+      alert(e.message || 'Unable to start field visit.');
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const statusLabel = visit => ({
+    VERIFIED: 'Verified',
+    NEARBY: 'Nearby — review',
+    MISMATCH: 'Location mismatch',
+    LOW_ACCURACY: 'Low accuracy',
+    NOT_CONFIGURED: 'Customer location not configured',
+    LOCATION_CAPTURED: 'Location captured'
+  }[visit.verification_status] || visit.verification_status || 'Pending');
+
+  const targetLabel = visit => {
+    const customer = customers.find(c => c.id === visit.customer_id);
+    return visit.target_name || customer?.name || 'Visit target';
+  };
+
+  return <>
+    <PageHeading
+      eyebrow="WORK & SUPPORT"
+      title="Field Visits"
+      description="Record customer or external field visits with GPS check-in and check-out. Location is captured only when a visit is started or ended."
+    />
+
+    <div className="panel">
+      <div className="panel-heading">
+        <div>
+          <h3>Start a field visit</h3>
+          <p>Complete the visit details first. Your browser will request location permission only when you start the visit.</p>
+        </div>
+      </div>
+      {error && <div className="form-error">{error}</div>}
+
+      <div className="field-visit-form field-visit-form-expanded">
+        <label>Visit target
+          <select value={targetType} onChange={e => { setTargetType(e.target.value); setCustomerId(''); setTargetName(''); setTargetOrganization(''); setTargetAddress(''); }}>
+            <option value="customer">CRM Customer</option>
+            <option value="other">Other person / organization</option>
+          </select>
+        </label>
+
+        {targetType === 'customer' ? <label>Customer
+          <select value={customerId} onChange={e => setCustomerId(e.target.value)}>
+            <option value="">Select customer</option>
+            {customers.filter(c => c.status !== 'Inactive').map(c => <option key={c.id} value={c.id}>{c.name}{c.company ? ` — ${c.company}` : ''}</option>)}
+          </select>
+        </label> : <label>Person / organization name
+          <input value={targetName} onChange={e => setTargetName(e.target.value)} placeholder="e.g. Mr. Chinedu Okafor" />
+        </label>}
+
+        {targetType === 'other' && <label>Organization / company
+          <input value={targetOrganization} onChange={e => setTargetOrganization(e.target.value)} placeholder="Optional" />
+        </label>}
+
+        {targetType === 'other' && <label>Visit address
+          <input value={targetAddress} onChange={e => setTargetAddress(e.target.value)} placeholder="e.g. UBA CMS, Marina, Lagos" />
+        </label>}
+
+        <label>Visit type
+          <select value={visitType} onChange={e => setVisitType(e.target.value)}>
+            <option>Customer visit</option>
+            <option>Sales meeting</option>
+            <option>Product presentation</option>
+            <option>Follow-up</option>
+            <option>Technical / solution discussion</option>
+            <option>Relationship meeting</option>
+            <option>Other</option>
+          </select>
+        </label>
+
+        <label>Contact person
+          <input value={contactPerson} onChange={e => setContactPerson(e.target.value)} placeholder="Who are you meeting?" />
+        </label>
+
+        <label className="field-visit-full">Visit objective
+          <textarea value={objective} onChange={e => setObjective(e.target.value)} rows="3" placeholder="What is the purpose of this visit?" />
+        </label>
+
+        <label className="field-visit-full">Additional notes
+          <textarea value={notes} onChange={e => setNotes(e.target.value)} rows="3" placeholder="Anything else the team should know?" />
+        </label>
+
+        {targetType === 'customer' && selectedCustomer?.location_address && <div className="field-visit-location-preview field-visit-full">
+          <strong>Registered customer location</strong>
+          <span>{selectedCustomer.location_address}</span>
+          {googleMapsLocationUrl(selectedCustomer.latitude, selectedCustomer.longitude, selectedCustomer.location_address) && <a href={googleMapsLocationUrl(selectedCustomer.latitude, selectedCustomer.longitude, selectedCustomer.location_address)} target="_blank" rel="noreferrer" className="field-visit-map-link">Open customer location in Google Maps</a>}
+        </div>}
+
+        <div className="field-visit-location-notice field-visit-full">
+          <span className="field-visit-location-dot">●</span>
+          <div><strong>Location verification</strong><p>When you click Start Visit, the browser will ask for permission to use your current location. The CRM captures your live location once, saves a Google Maps link with the exact GPS point, and keeps the timestamp and accuracy for audit. No continuous location tracking is used.</p></div>
+        </div>
+
+        <div className="field-visit-form-actions field-visit-full">
+          <button type="button" className="primary-btn" onClick={start} disabled={(targetType === 'customer' ? !customerId : !targetName.trim()) || !objective.trim() || busy}>
+            {busy ? 'Requesting location…' : 'Start Visit & Capture Location'}
+          </button>
+        </div>
+      </div>
+    </div>
+
+    {activeVisits.length > 0 && <div className="panel">
+      <div className="panel-heading"><div><h3>Visits in progress</h3><p>End the visit when you leave the location.</p></div></div>
+      <div className="field-visit-cards">
+        {activeVisits.map(visit => {
+          const customer = customers.find(c => c.id === visit.customer_id);
+          const checkInMapUrl = visit.check_in_location_url || googleMapsLocationUrl(visit.check_in_latitude, visit.check_in_longitude);
+          const targetMapUrl = googleMapsLocationUrl(visit.customer_latitude, visit.customer_longitude, visit.customer_location_address || visit.target_address || customer?.location_address);
+          return <div className="field-visit-card" key={visit.id}>
+            <div>
+              <strong>{targetLabel(visit)}</strong>
+              <span>{visit.target_organization || customer?.company || visit.purpose || 'Field visit'}</span>
+              <small>{visit.contact_person ? `Contact: ${visit.contact_person}` : 'No contact person recorded'}</small>
+              <small>Started {formatDateTime(visit.check_in_at)}</small>
+              {visit.target_address && <small className="field-visit-address">{visit.target_address}</small>}
+              <div className="field-visit-links">
+                {checkInMapUrl && <a href={checkInMapUrl} target="_blank" rel="noreferrer" className="field-visit-map-link">Open live location</a>}
+                {targetMapUrl && <a href={targetMapUrl} target="_blank" rel="noreferrer" className="field-visit-map-link">Open target location</a>}
+              </div>
+            </div>
+            <div><span className={`status ${String(visit.verification_status || '').toLowerCase()}`}>{statusLabel(visit)}</span><button type="button" className="secondary-btn" onClick={async () => { try { await onEnd(visit); } catch (e) { alert(e.message || 'Unable to end visit.'); } }}>End Visit</button></div>
+          </div>;
+        })}
+      </div>
+    </div>}
+
+    <div className="panel">
+      <div className="panel-heading"><div><h3>Visit history</h3><p>{visibleVisits.length} visit{visibleVisits.length === 1 ? '' : 's'} recorded. Location links are retained for audit.</p></div></div>
+      {visibleVisits.length === 0 ? <div className="empty-state"><p>No field visits yet.</p></div> : <div className="table-wrap"><table><thead><tr><th>Visit target</th><th>Started</th><th>Ended</th><th>Distance</th><th>Verification</th><th>Location</th></tr></thead><tbody>{visibleVisits.map(visit => {
+        const customer = customers.find(c => c.id === visit.customer_id);
+        const checkInMapUrl = visit.check_in_location_url || googleMapsLocationUrl(visit.check_in_latitude, visit.check_in_longitude);
+        const checkOutMapUrl = visit.check_out_location_url || googleMapsLocationUrl(visit.check_out_latitude, visit.check_out_longitude);
+        const targetMapUrl = googleMapsLocationUrl(visit.customer_latitude, visit.customer_longitude, visit.customer_location_address || visit.target_address || customer?.location_address);
+        return <tr key={visit.id}>
+          <td><strong>{targetLabel(visit)}</strong><div className="deal-customer">{visit.target_organization || customer?.company || visit.purpose || 'Field visit'}</div>{visit.target_address && <div className="field-visit-address">{visit.target_address}</div>}</td>
+          <td>{formatDateTime(visit.check_in_at)}</td>
+          <td>{visit.check_out_at ? formatDateTime(visit.check_out_at) : 'In progress'}</td>
+          <td>{visit.distance_from_customer == null ? '—' : `${Math.round(Number(visit.distance_from_customer))}m`}</td>
+          <td><span className={`status ${String(visit.verification_status || '').toLowerCase()}`}>{statusLabel(visit)}</span></td>
+          <td><div className="field-visit-links field-visit-links-table">{checkInMapUrl && <a href={checkInMapUrl} target="_blank" rel="noreferrer" className="field-visit-map-link">Live location</a>}{checkOutMapUrl && <a href={checkOutMapUrl} target="_blank" rel="noreferrer" className="field-visit-map-link">Check-out location</a>}{targetMapUrl && <a href={targetMapUrl} target="_blank" rel="noreferrer" className="field-visit-map-link">Target location</a>}</div></td>
+        </tr>;
+      })}</tbody></table></div>}
+    </div>
+  </>;
+}
 
 function Activities({ activities, customers, ownerProfiles = {}, currentUserEmail, onAdd, onStatusChange, onDelete, onEdit, onView, currentUserId, isAdmin }) {
   const [tab, setTab] = useState('All');
@@ -6995,7 +7610,7 @@ function CalendarPage({ events = [], customers = [], onAdd, onUpdate, onDelete, 
   </>;
 }
 
-function Quotes({ quotes = [], products = [], quoteItems = [], deals = [], dealProducts = [], customers = [], onLoadQuoteItems, onAdd, onUpdate, onDelete, formatAmount, currentUserId, isAdmin, role, onSendToHOS }) {
+function Quotes({ quotes = [], products = [], quoteItems = [], deals = [], dealProducts = [], customers = [], onLoadQuoteItems, onAdd, onUpdate, onDelete, formatAmount, currentUserId, isAdmin, role, onSendToHOS, initialDealId = '', dealFilterId = '', onLaunchConsumed, onCreateInvoice }) {
   const [show, setShow] = useState(false);
   const [editing, setEditing] = useState(null);
   const [saving, setSaving] = useState(false);
@@ -7037,9 +7652,10 @@ function Quotes({ quotes = [], products = [], quoteItems = [], deals = [], dealP
 
   const [form, setForm] = useState(blank);
   const [items, setItems] = useState([emptyItem()]);
-  const visibleQuotes = role === 'sales'
-    ? quotes.filter(q => q.created_by === currentUserId)
-    : quotes;
+  const visibleQuotes = quotes.filter(q =>
+    (role !== 'sales' || q.created_by === currentUserId) &&
+    (!dealFilterId || q.deal_id === dealFilterId)
+  );
 
   const moneyNumber = value => Number(value) || 0;
   const lineSubtotal = item => moneyNumber(item.quantity) * moneyNumber(item.unit_price);
@@ -7085,14 +7701,22 @@ function Quotes({ quotes = [], products = [], quoteItems = [], deals = [], dealP
     }
   };
 
-  const openNew = () => {
+  const openNew = (dealId = '') => {
     setEditing(null);
     setError('');
     setExpandedVendor(null);
     setForm({ ...blank, quote_number: `Q-${Date.now().toString().slice(-6)}` });
     setItems([emptyItem()]);
     setShow(true);
+    if (dealId) window.setTimeout(() => selectDeal(dealId), 0);
   };
+
+  useEffect(() => {
+    if (initialDealId) {
+      openNew(initialDealId);
+      onLaunchConsumed?.();
+    }
+  }, [initialDealId]);
 
   const openEdit = async quote => {
     setEditing(quote);
@@ -7250,6 +7874,7 @@ function Quotes({ quotes = [], products = [], quoteItems = [], deals = [], dealP
                   {(isCommercialEditor(role) || q.created_by === currentUserId) && <button className="secondary-btn" onClick={() => openEdit(q)}>Edit</button>}
                   {isCommercialDeleter(role) && <button type="button" className="icon-btn" title="Delete quote" onClick={async () => { if (!window.confirm('Delete this quote?')) return; try { await onDelete(q.id); } catch (err) { alert(err.message || 'Unable to delete quote.'); } }}><X size={16} /></button>}
                   {q.created_by === currentUserId && ['HOS_PENDING', 'APPROVED', 'MD_PENDING'].indexOf(q.approval_status) === -1 && <button type="button" className="primary-btn approval-btn" onClick={async () => { try { await onSendToHOS(q.id); } catch (err) { alert(err.message); } }}>{q.approval_status === 'REJECTED' ? 'Resubmit to HOS' : 'Send to HOS'}</button>}
+                  {q.approval_status === 'APPROVED' && q.deal_id && <button type="button" className="secondary-btn" onClick={() => onCreateInvoice(q)}>Create Invoice</button>}
                 </div></td>
               </tr>
             ))}
@@ -7373,509 +7998,141 @@ function Quotes({ quotes = [], products = [], quoteItems = [], deals = [], dealP
     </div>}
   </>;
 }
-function Invoices({ invoices, payments, customers, products, deals = [], quotes = [], onAdd, onUpdate, onDelete, onAddPayment, formatAmount, currentUserId, isAdmin, role, onSendToHOS }) {
+function Invoices({ invoices, payments, customers, products, deals = [], dealProducts = [], quotes = [], onAdd, onUpdate, onDelete, onAddPayment, formatAmount, currentUserId, isAdmin, role, onSendToHOS, onLoadInvoiceItems, onLoadQuoteItems, initialDealId = '', initialQuoteId = '', dealFilterId = '', onLaunchConsumed }) {
   const [show, setShow] = useState(false);
   const [pay, setPay] = useState(null);
   const [preview, setPreview] = useState(null);
-  const blank = {
-    invoice_number: `INV-${Date.now().toString().slice(-6)}`,
-    title: '',
-    customer_id: '',
-    product_id: '',
-    item_type: 'Product',
-    quantity: 1,
-    unit_price: 0,
-    amount: 0,
-    discount: 0,
-    tax: 0,
-    due_date: '',
-    payment_terms: 'Due on receipt',
-    status: 'Draft',
-    notes: '',
-    resubmission_note: '',
-    deal_id: '',
-    quote_id: '',
-    sales_rep_id: ''
-  };
-  const [form, setForm] = useState(blank);
-  const visibleInvoices = role === 'sales'
-    ? invoices.filter(i => i.created_by === currentUserId)
-    : invoices;
+  const [loadingItems, setLoadingItems] = useState(false);
+  const [error, setError] = useState('');
+  const [form, setForm] = useState({
+    invoice_number: `INV-${Date.now().toString().slice(-6)}`, title: '', customer_id: '', deal_id: '', quote_id: '', sales_rep_id: '',
+    due_date: '', payment_terms: 'Due on receipt', status: 'Draft', notes: '', resubmission_note: '', approval_status: null, approval_stage: null
+  });
+  const emptyItem = () => ({ product_id: '', product_name: '', description: '', quantity: 1, unit_price: 0, discount: 0, tax: 0 });
+  const [items, setItems] = useState([emptyItem()]);
+  const visibleInvoices = invoices.filter(i => (role !== 'sales' || i.created_by === currentUserId) && (!dealFilterId || i.deal_id === dealFilterId));
+  const wonDeals = deals.filter(d => d.stage === 'Won' && (role !== 'sales' || d.created_by === currentUserId));
+  const selectableQuotes = quotes.filter(q => q.deal_id && (!form.deal_id || q.deal_id === form.deal_id) && (role !== 'sales' || q.created_by === currentUserId));
+  const money = v => Number(v) || 0;
+  const lineSubtotal = item => Math.max(0, money(item.quantity)) * Math.max(0, money(item.unit_price));
+  const lineTotal = item => Math.max(0, lineSubtotal(item) - money(item.discount) + money(item.tax));
+  const subtotal = items.reduce((s, item) => s + lineSubtotal(item), 0);
+  const discount = items.reduce((s, item) => s + money(item.discount), 0);
+  const tax = items.reduce((s, item) => s + money(item.tax), 0);
+  const total = Math.max(0, subtotal - discount + tax);
 
-  const selectableWonDeals = deals.filter(deal => deal.stage === 'Won' && (role !== 'sales' || deal.created_by === currentUserId));
-  const selectableQuotes = quotes.filter(quote => quote.deal_id && (!form.deal_id || quote.deal_id === form.deal_id) && (role !== 'sales' || quote.created_by === currentUserId));
-  const selectInvoiceDeal = dealId => {
-    const deal = deals.find(item => item.id === dealId);
-    const customer = deal?.customer_id ? customers.find(item => item.id === deal.customer_id) : null;
-    setForm(prev => ({ ...prev, deal_id: deal?.id || '', quote_id: '', customer_id: customer?.id || deal?.customer_id || '', sales_rep_id: deal?.created_by || currentUserId }));
+  const applyDeal = dealId => {
+    const deal = deals.find(d => d.id === dealId);
+    if (!deal) return;
+    const customer = customers.find(c => c.id === deal.customer_id);
+    const inheritedProductIds = dealProducts.filter(row => row.deal_id === deal.id).map(row => row.product_id);
+    const ids = inheritedProductIds.map(id => products.find(product => product.id === id)).filter(Boolean);
+    setForm(prev => ({ ...prev, deal_id: deal.id, quote_id: '', customer_id: deal.customer_id || '', sales_rep_id: deal.created_by || currentUserId, title: prev.title || `${deal.title} Invoice` }));
+    if (ids.length) setItems(ids.map(product => ({ product_id: product.id, product_name: product.name, description: product.description || '', quantity: 1, unit_price: money(product.unit_price), discount: 0, tax: 0 })));
+    else setItems([emptyItem()]);
+    if (customer && !form.title) setForm(prev => ({ ...prev, customer_id: customer.id }));
   };
-  const selectInvoiceQuote = quoteId => {
-    const quote = quotes.find(item => item.id === quoteId);
+
+  const applyQuote = async quoteId => {
+    const quote = quotes.find(q => q.id === quoteId);
     if (!quote) return;
-    const deal = deals.find(item => item.id === quote.deal_id);
-    setForm(prev => ({
-      ...prev,
-      quote_id: quote.id,
-      deal_id: quote.deal_id || prev.deal_id,
-      customer_id: quote.customer_id || deal?.customer_id || prev.customer_id,
-      sales_rep_id: quote.sales_rep_id || quote.created_by || deal?.created_by || currentUserId,
-      title: quote.title || prev.title || '',
-      amount: Number(quote.total) || prev.amount,
-      notes: quote.notes || prev.notes || ''
-    }));
+    setForm(prev => ({ ...prev, quote_id: quote.id, deal_id: quote.deal_id || prev.deal_id, customer_id: quote.customer_id || prev.customer_id, sales_rep_id: quote.sales_rep_id || quote.created_by || prev.sales_rep_id, title: quote.title || prev.title || '', notes: quote.notes || prev.notes || '' }));
+    try {
+      setLoadingItems(true);
+      const loaded = onLoadQuoteItems ? await onLoadQuoteItems(quote) : [];
+      const mapped = (loaded || []).map(item => ({ product_id: item.product_id || '', product_name: item.product_name || '', description: item.description || '', quantity: money(item.quantity) || 1, unit_price: money(item.unit_price), discount: money(item.discount), tax: money(item.tax) }));
+      if (mapped.length) setItems(mapped);
+    } catch (err) { setError(err.message || 'Unable to load quote items.'); }
+    finally { setLoadingItems(false); }
   };
 
-  const recalculateInvoice = values => {
-    const quantity = Math.max(0, Number(values.quantity) || 0);
-    const unitPrice = Math.max(0, Number(values.unit_price) || 0);
-    const subtotal = quantity * unitPrice;
-    const discount = Math.max(0, Number(values.discount) || 0);
-    const tax = Math.max(0, Number(values.tax) || 0);
-    return {
-      ...values,
-      amount: Math.max(0, subtotal - discount + tax)
-    };
+  const openNew = async (dealId = '', quoteId = '') => {
+    setError('');
+    setForm({ invoice_number: `INV-${Date.now().toString().slice(-6)}`, title: '', customer_id: '', deal_id: '', quote_id: '', sales_rep_id: currentUserId, due_date: '', payment_terms: 'Due on receipt', status: 'Draft', notes: '', resubmission_note: '', approval_status: null, approval_stage: null });
+    setItems([emptyItem()]);
+    setShow(true);
+    if (dealId) window.setTimeout(() => applyDeal(dealId), 0);
+    if (quoteId) window.setTimeout(() => applyQuote(quoteId), 0);
   };
 
-  const setInvoiceField = (field, value) => {
-    setForm(prev => recalculateInvoice({ ...prev, [field]: value }));
-  };
+  useEffect(() => {
+    if (initialDealId || initialQuoteId) { openNew(initialDealId, initialQuoteId); onLaunchConsumed?.(); }
+  }, [initialDealId, initialQuoteId]);
 
-  const availableInvoiceProducts = products.filter(product => (product.status || 'Active') === 'Active' && (product.type || 'Product') === form.item_type);
-
-  const setInvoiceProduct = productId => {
-    const product = products.find(item => item.id === productId);
-    if (!product) {
-      setForm(prev => ({ ...prev, product_id: '', title: '', unit_price: 0, amount: 0 }));
-      return;
-    }
-
-    const unitPrice = Math.max(0, Number(product.unit_price) || 0);
-    const quantity = Math.max(1, Number(form.quantity) || 1);
-    setForm(prev => recalculateInvoice({
-      ...prev,
-      product_id: product.id,
-      title: product.name,
-      item_type: product.type || 'Product',
-      unit_price: unitPrice,
-      quantity
-    }));
-  };
-
-  const setInvoiceItemType = value => {
-    setForm(prev => ({
-      ...prev,
-      item_type: value,
-      product_id: '',
-      title: '',
-      unit_price: 0,
-      amount: 0,
-      discount: 0,
-      tax: 0
-    }));
-  };
-
-  const setPaymentTerms = value => {
-    const today = new Date();
-    let dueDate = '';
-
-    if (value === 'Due on receipt') {
-      dueDate = today.toISOString().slice(0, 10);
-    } else if (value.startsWith('Net ')) {
-      const days = Number(value.replace('Net ', '')) || 0;
-      today.setDate(today.getDate() + days);
-      dueDate = today.toISOString().slice(0, 10);
-    }
-
-    setForm(prev => ({
-      ...prev,
-      payment_terms: value,
-      due_date: value === 'Custom' ? prev.due_date : dueDate
-    }));
+  const openEdit = async invoice => {
+    setError(''); setForm({ ...form, ...invoice, invoice_number: invoice.invoice_number || form.invoice_number, resubmission_note: '' }); setShow(true);
+    try {
+      setLoadingItems(true);
+      const loaded = onLoadInvoiceItems ? await onLoadInvoiceItems(invoice) : [];
+      const mapped = (loaded || []).map(item => ({ product_id: item.product_id || '', product_name: item.product_name || '', description: item.description || '', quantity: money(item.quantity) || 1, unit_price: money(item.unit_price), discount: money(item.discount), tax: money(item.tax) }));
+      setItems(mapped.length ? mapped : [{ product_id: invoice.product_id || '', product_name: invoice.title || '', description: '', quantity: money(invoice.quantity) || 1, unit_price: money(invoice.unit_price), discount: money(invoice.discount), tax: money(invoice.tax) }]);
+    } catch (err) { setError(err.message || 'Unable to load invoice items.'); }
+    finally { setLoadingItems(false); }
   };
 
   const save = async e => {
-    e.preventDefault();
+    e.preventDefault(); setError('');
     try {
-      if (!form.deal_id) throw new Error('Select the Won Deal this invoice belongs to.');
-      const selectedDeal = deals.find(deal => deal.id === form.deal_id);
-      if (!selectedDeal || selectedDeal.stage !== 'Won') throw new Error('An invoice can only be created from a Won Deal.');
+      const deal = deals.find(d => d.id === form.deal_id);
+      if (!deal || deal.stage !== 'Won') throw new Error('Select a Won Deal for this invoice.');
       if (form.quote_id) {
-        const selectedQuote = quotes.find(quote => quote.id === form.quote_id);
-        if (!selectedQuote) throw new Error('The selected source quote could not be found.');
-        if (selectedQuote.deal_id !== form.deal_id) throw new Error('The source quote must belong to the selected Won Deal.');
+        const quote = quotes.find(q => q.id === form.quote_id);
+        if (!quote || quote.deal_id !== form.deal_id) throw new Error('The selected Quote must belong to the selected Won Deal.');
       }
-      if (['Paid', 'Partially Paid'].includes(form.status) && form.approval_status !== 'APPROVED' && !form.id) { throw new Error('An invoice must be approved before payment can be recorded.'); }
-      const calculatedForm = recalculateInvoice(form);
+      const validItems = items.filter(item => item.product_name || item.product_id);
+      if (!validItems.length) throw new Error('Add at least one invoice solution.');
+      if (validItems.some(item => money(item.quantity) <= 0)) throw new Error('Each invoice item must have a quantity greater than 0.');
+      const calculatedItems = validItems.map(item => ({ ...item, quantity: money(item.quantity), unit_price: money(item.unit_price), discount: money(item.discount), tax: money(item.tax), total: lineTotal(item) }));
       const payload = {
-        invoice_number: calculatedForm.invoice_number,
-        title: calculatedForm.title,
-        customer_id: calculatedForm.customer_id || null,
-        deal_id: calculatedForm.deal_id || null,
-        quote_id: calculatedForm.quote_id || null,
-        sales_rep_id: calculatedForm.sales_rep_id || selectedDeal.created_by || currentUserId,
-        product_id: calculatedForm.product_id || null,
-        item_type: calculatedForm.item_type || 'Product',
-        quantity: Number(calculatedForm.quantity) || 1,
-        unit_price: Number(calculatedForm.unit_price) || 0,
-        amount: Number(calculatedForm.amount) || 0,
-        due_date: calculatedForm.due_date || null,
-        status: calculatedForm.status,
-        notes: calculatedForm.notes || ''
+        invoice_number: form.invoice_number, title: form.title || calculatedItems[0]?.product_name || 'Invoice', customer_id: form.customer_id || deal.customer_id || null,
+        deal_id: form.deal_id, quote_id: form.quote_id || null, sales_rep_id: form.sales_rep_id || deal.created_by || currentUserId,
+        product_id: calculatedItems[0]?.product_id || null, item_type: 'Product', quantity: calculatedItems[0]?.quantity || 1, unit_price: calculatedItems[0]?.unit_price || 0,
+        amount: total, discount, tax, due_date: form.due_date || null, payment_terms: form.payment_terms || 'Due on receipt', status: form.status || 'Draft', notes: form.notes || ''
       };
-      if (form.id) await onUpdate(form.id, { ...payload, approval_status: form.approval_status === 'REJECTED' ? null : form.approval_status, approval_stage: form.approval_status === 'REJECTED' ? null : form.approval_stage, resubmission_note: form.resubmission_note?.trim() || null });
-      else await onAdd(payload);
+      const approvalPatch = form.approval_status === 'REJECTED' ? { approval_status: null, approval_stage: null, resubmission_note: form.resubmission_note?.trim() || null } : {};
+      if (form.id) await onUpdate(form.id, { ...payload, ...approvalPatch }, calculatedItems);
+      else await onAdd(payload, calculatedItems);
       setShow(false);
-    } catch (err) {
-      alert(err.message);
-    }
+    } catch (err) { setError(err.message || 'Unable to save invoice.'); }
   };
 
-  const openEditInvoice = invoice => {
-    if (!invoice) return;
-    const normalized = {
-      ...blank,
-      id: invoice.id,
-      invoice_number: invoice.invoice_number || blank.invoice_number,
-      title: invoice.title || '',
-      customer_id: invoice.customer_id || '',
-      product_id: invoice.product_id || '',
-      item_type: invoice.item_type || 'Product',
-      quantity: Number(invoice.quantity) || 1,
-      unit_price: Number(invoice.unit_price) || 0,
-      amount: Number(invoice.amount) || 0,
-      discount: Number(invoice.discount) || 0,
-      tax: Number(invoice.tax) || 0,
-      due_date: invoice.due_date || '',
-      payment_terms: invoice.payment_terms || 'Due on receipt',
-      status: invoice.status || 'Draft',
-      notes: invoice.notes || '',
-      resubmission_note: '',
-      deal_id: invoice.deal_id || '',
-      quote_id: invoice.quote_id || '',
-      sales_rep_id: invoice.sales_rep_id || invoice.created_by || currentUserId,
-      approval_status: invoice.approval_status || null,
-      approval_stage: invoice.approval_stage || null,
-      created_by: invoice.created_by || null
-    };
-    setForm(recalculateInvoice(normalized));
-    setShow(true);
-  };
-
-  const paymentSave = async e => {
-    e.preventDefault();
-    try {
-      await onAddPayment({ ...pay, payment_method: pay.payment_method || 'Bank transfer' });
-      setPay(null);
-    } catch (err) {
-      alert(err.message);
-    }
-  };
-
-  const getCustomer = invoice => {
-    return customers.find(customer => customer.id === invoice.customer_id) || null;
-  };
+  const paymentSave = async e => { e.preventDefault(); try { await onAddPayment({ ...pay, payment_method: pay.payment_method || 'Bank transfer' }); setPay(null); } catch (err) { alert(err.message); } };
+  const customerFor = invoice => customers.find(c => c.id === invoice.customer_id) || null;
 
   return <>
-    <PageHeading
-      eyebrow="BILLING"
-      title="Invoices & payments"
-      description="Track invoices, balances and payments."
-      action="New invoice"
-      onAction={() => {
-        setForm({ ...blank, invoice_number: `INV-${Date.now().toString().slice(-6)}` });
-        setShow(true);
-      }}
-    />
-
+    <PageHeading eyebrow="BILLING" title="Invoices & payments" description="Track invoices, balances and payments." action="New invoice" onAction={() => openNew()} />
     <div className="stats-grid">
       <StatCard label="Invoiced" value={formatAmount(invoices.reduce((s, x) => s + Number(x.amount || 0), 0))} hint={`${invoices.length} invoices`} tone="blue" icon="$" />
       <StatCard label="Paid" value={formatAmount(payments.reduce((s, x) => s + Number(x.amount || 0), 0))} hint={`${payments.length} payments`} tone="green" icon="✓" />
       <StatCard label="Outstanding" value={formatAmount(invoices.filter(x => !['Paid', 'Cancelled'].includes(x.status)).reduce((s, x) => s + Number(x.amount || 0), 0))} hint="Open balances" tone="orange" icon="!" />
     </div>
+    {dealFilterId && <div className="panel" style={{ marginBottom: 12 }}><strong>Invoices for Deal:</strong> {deals.find(d => d.id === dealFilterId)?.title || dealFilterId}</div>}
+    <div className="panel"><div className="table-wrap"><table><thead><tr><th>Invoice</th><th>Customer</th><th>Deal</th><th>Source Quote</th><th>Amount</th><th>Status</th><th>Due</th><th>Actions</th></tr></thead><tbody>
+      {visibleInvoices.length === 0 ? <tr><td colSpan="8">No invoices yet.</td></tr> : visibleInvoices.map(i => <tr key={i.id}>
+        <td><strong>{i.invoice_number}</strong><div className="deal-customer">{i.title}</div></td><td>{i.customers?.name || customerFor(i)?.name || '—'}</td><td>{deals.find(d => d.id === i.deal_id)?.title || '—'}</td><td>{quotes.find(q => q.id === i.quote_id)?.quote_number || '—'}</td><td>{formatAmount(i.amount)}</td><td><div>{i.status}</div><small className="approval-range-hint">{approvalRequirement(i.amount).label} approval</small></td><td>{i.due_date ? formatDate(i.due_date) : '—'}</td>
+        <td><div className="toolbar-actions"><button type="button" className="secondary-btn" onClick={() => setPreview(i)}><FileText size={15} /> View</button>{(isCommercialEditor(role) || i.created_by === currentUserId) && <button type="button" className="secondary-btn" onClick={() => openEdit(i)}>Edit</button>}{i.created_by === currentUserId && ['HOS_PENDING','APPROVED','MD_PENDING'].indexOf(i.approval_status) === -1 && <button type="button" className="primary-btn approval-btn" onClick={async () => { try { await onSendToHOS(i.id); } catch (err) { alert(err.message); } }}>{i.approval_status === 'REJECTED' ? 'Resubmit to HOS' : 'Send to HOS'}</button>}{isCommercialDeleter(role) && <button type="button" className="icon-btn" title="Delete invoice" onClick={async () => { if (!window.confirm('Delete this invoice?')) return; try { await onDelete(i.id); } catch (err) { alert(err.message); } }}><X size={16} /></button>}{i.status !== 'Paid' && i.approval_status === 'APPROVED' && <button className="secondary-btn" onClick={() => setPay({ invoice_id: i.id, amount: i.amount, paid_at: new Date().toISOString().slice(0,16), payment_method: 'Bank transfer' })}>Record payment</button>}{(isCommercialEditor(role) || i.created_by === currentUserId) && i.status !== 'Paid' && i.approval_status === 'APPROVED' && <button className="secondary-btn" onClick={() => onUpdate(i.id, { status: 'Paid' })}>Mark paid</button>}</div></td>
+      </tr>)}
+    </tbody></table></div></div>
 
-    <div className="panel">
-      <div className="table-wrap">
-        <table>
-          <thead>
-            <tr><th>Invoice</th><th>Customer</th><th>Deal</th><th>Source Quote</th><th>Amount</th><th>Status</th><th>Due</th><th>Actions</th></tr>
-          </thead>
-          <tbody>
-            {invoices.length === 0 ? <tr><td colSpan="8">No invoices yet.</td></tr> : invoices.map(i => (
-              <tr key={i.id}>
-                <td><strong>{i.invoice_number}</strong><div className="deal-customer">{i.title}</div></td>
-                <td>{i.customers?.name || '—'}</td>
-                <td>{deals.find(d => d.id === i.deal_id)?.title || '—'}</td>
-                <td>{quotes.find(q => q.id === i.quote_id)?.quote_number || '—'}</td>
-                <td>{formatAmount(i.amount)}</td>
-                <td><div>{i.status}</div><small className="approval-range-hint">{approvalRequirement(i.amount).label} approval</small></td>
-                <td>{i.due_date ? formatDate(i.due_date) : '—'}</td>
-                <td><div className="toolbar-actions">
-                  <button type="button" className="secondary-btn" onClick={() => setPreview(i)}><FileText size={15} /> View</button>
-                  {(isCommercialEditor(role) || i.created_by === currentUserId) && <button type="button" className="secondary-btn" onClick={() => openEditInvoice(i)}>Edit</button>}
-                  {i.created_by === currentUserId && ['HOS_PENDING', 'APPROVED', 'MD_PENDING'].indexOf(i.approval_status) === -1 && <button type="button" className="primary-btn approval-btn" onClick={async () => { try { await onSendToHOS(i.id); } catch (err) { alert(err.message); } }}>{i.approval_status === 'REJECTED' ? 'Resubmit to HOS' : 'Send to HOS'}</button>}
-                  {isCommercialDeleter(role) && <button type="button" className="icon-btn" title="Delete invoice" onClick={async () => { if (!window.confirm('Delete this invoice?')) return; try { await onDelete(i.id); } catch (err) { alert(err.message); } }}><X size={16} /></button>}
-                  {i.status !== 'Paid' && i.approval_status === 'APPROVED' && <button className="secondary-btn" onClick={() => setPay({ invoice_id: i.id, amount: i.amount, paid_at: new Date().toISOString().slice(0, 16), payment_method: 'Bank transfer' })}>Record payment</button>}
-                  {(isCommercialEditor(role) || i.created_by === currentUserId) && i.status !== 'Paid' && i.approval_status === 'APPROVED' && <button className="secondary-btn" onClick={() => onUpdate(i.id, { status: i.status === 'Paid' ? 'Sent' : 'Paid' })}>Mark paid</button>}
-                </div></td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
+    {show && <div className="modal-backdrop" onClick={() => setShow(false)}><form className="modal modal-wide invoice-form-modal" onSubmit={save} onClick={e => e.stopPropagation()}><div className="modal-heading"><div><h2>{form.id ? 'Edit invoice' : 'New invoice'}</h2><p>Attach this invoice to a Won Deal and optionally inherit an approved Quote.</p></div><button type="button" className="icon-btn" onClick={() => setShow(false)}><X size={18} /></button></div>{error && <div className="form-error">{error}</div>}
+      <div className="form-grid-2"><label>Invoice number<input required value={form.invoice_number} readOnly={!!form.id} onChange={e => setForm({ ...form, invoice_number: e.target.value })} /></label><label>Invoice title<input required value={form.title} onChange={e => setForm({ ...form, title: e.target.value })} /></label>
+        <label>Won Deal<select required value={form.deal_id} onChange={e => applyDeal(e.target.value)}><option value="">Select Won Deal</option>{wonDeals.map(d => <option key={d.id} value={d.id}>{d.title}{d.company ? ` · ${d.company}` : ''}</option>)}</select></label>
+        <label>Source Quote<select value={form.quote_id} onChange={e => applyQuote(e.target.value)}><option value="">No source quote</option>{selectableQuotes.map(q => <option key={q.id} value={q.id}>{q.quote_number} · {q.title}</option>)}</select></label>
+        <label>Customer<select value={form.customer_id} onChange={e => setForm({ ...form, customer_id: e.target.value })}><option value="">Select customer</option>{customers.map(c => <option key={c.id} value={c.id}>{c.name}{c.company ? ` · ${c.company}` : ''}</option>)}</select></label>
+        <label>Due date<input type="date" value={form.due_date || ''} onChange={e => setForm({ ...form, due_date: e.target.value })} /></label>
+        <label>Status<select value={form.status} onChange={e => setForm({ ...form, status: e.target.value })}>{['Draft','Sent','Partially Paid','Paid','Overdue','Cancelled'].map(x => <option key={x}>{x}</option>)}</select></label>
       </div>
-    </div>
+      {form.approval_status === 'REJECTED' && <label>Resubmission note<textarea required rows="3" value={form.resubmission_note || ''} onChange={e => setForm({ ...form, resubmission_note: e.target.value })} /></label>}
+      <div className="quote-items-section"><div className="section-heading-row"><div><h3>Invoice items</h3><p>Items are inherited from the Deal or Quote, but the Sales Rep can adjust them.</p></div><button type="button" className="secondary-btn" onClick={() => setItems(prev => [...prev, emptyItem()])}><Plus size={15} /> Add solution</button></div>
+        {loadingItems && <div className="invoice-item-empty">Loading commercial items…</div>}
+        {items.map((item, index) => <div className="quote-line-item" key={index}><div className="quote-line-header"><strong>Item {index + 1}</strong>{items.length > 1 && <button type="button" className="icon-btn" onClick={() => setItems(prev => prev.filter((_, i) => i !== index))}><X size={15} /></button>}</div><div className="form-grid-2"><label>Solution<select value={item.product_id || ''} onChange={e => { const product = products.find(p => p.id === e.target.value); setItems(prev => prev.map((x,i) => i===index ? { ...x, product_id: product?.id || '', product_name: product?.name || '', description: x.description || product?.description || '', unit_price: product?.unit_price ?? x.unit_price } : x)); }}><option value="">Select solution</option>{products.filter(p => (p.status || 'Active') === 'Active').map(p => <option key={p.id} value={p.id}>{p.name}{p.vendor ? ` · ${p.vendor}` : ''}</option>)}</select></label><label>Description<input value={item.description || ''} onChange={e => setItems(prev => prev.map((x,i) => i===index ? { ...x, description: e.target.value } : x))} /></label><label>Quantity<input type="number" min="1" value={item.quantity} onChange={e => setItems(prev => prev.map((x,i) => i===index ? { ...x, quantity: e.target.value } : x))} /></label><label>Unit price<input type="number" min="0" step="0.01" value={item.unit_price} onChange={e => setItems(prev => prev.map((x,i) => i===index ? { ...x, unit_price: e.target.value } : x))} /></label><label>Discount<input type="number" min="0" step="0.01" value={item.discount} onChange={e => setItems(prev => prev.map((x,i) => i===index ? { ...x, discount: e.target.value } : x))} /></label><label>Tax / VAT<input type="number" min="0" step="0.01" value={item.tax} onChange={e => setItems(prev => prev.map((x,i) => i===index ? { ...x, tax: e.target.value } : x))} /></label></div><div className="quote-line-total"><span>Line total</span><strong>{formatAmount(lineTotal(item))}</strong></div></div>)}
+      </div><div className="quote-total-card"><div><span>Subtotal</span><strong>{formatAmount(subtotal)}</strong></div><div><span>Discount</span><strong>- {formatAmount(discount)}</strong></div><div><span>Tax</span><strong>{formatAmount(tax)}</strong></div><div className="grand-total"><span>Total</span><strong>{formatAmount(total)}</strong></div></div>
+      <label>Notes<textarea rows="3" value={form.notes || ''} onChange={e => setForm({ ...form, notes: e.target.value })} /></label><div className="modal-actions"><button type="button" className="secondary-btn" onClick={() => setShow(false)}>Cancel</button><button className="primary-btn" disabled={loadingItems}>{form.id ? 'Save changes' : 'Create invoice'}</button></div>
+    </form></div>}
 
-    {show && <div className="modal-backdrop" onClick={() => setShow(false)}>
-      <form className="modal invoice-form-modal" onSubmit={save} onClick={e => e.stopPropagation()}>
-        <div className="modal-heading">
-          <div>
-            <h2>{form.id ? 'Edit invoice' : 'New invoice'}</h2>
-            <span className="invoice-form-subtitle">Create a simple professional invoice for your customer.</span>
-          </div>
-          <button type="button" className="icon-btn" onClick={() => setShow(false)}><X size={18} /></button>
-        </div>
+    {pay && <div className="modal-backdrop" onClick={() => setPay(null)}><form className="modal" onSubmit={paymentSave} onClick={e => e.stopPropagation()}><div className="modal-heading"><h2>Record payment</h2><button type="button" className="icon-btn" onClick={() => setPay(null)}><X size={18} /></button></div><label>Amount<input type="number" min="0" value={pay.amount} onChange={e => setPay({ ...pay, amount: Number(e.target.value) })} /></label><label>Method<select value={pay.payment_method} onChange={e => setPay({ ...pay, payment_method: e.target.value })}>{['Bank transfer','Card','Cash','Online','Other'].map(x => <option key={x}>{x}</option>)}</select></label><label>Date<input type="datetime-local" value={pay.paid_at} onChange={e => setPay({ ...pay, paid_at: e.target.value })} /></label><div className="modal-actions"><button type="button" className="secondary-btn" onClick={() => setPay(null)}>Cancel</button><button className="primary-btn">Save payment</button></div></form></div>}
 
-        <div className="invoice-form-section">
-          <div className="invoice-form-section-title">Invoice details</div>
-          <div className="invoice-form-grid">
-            <label>
-              Invoice number
-              <input required value={form.invoice_number} onChange={e => setForm({ ...form, invoice_number: e.target.value })} />
-            </label>
-
-            <label className="full-width-form-field">
-              Won Deal *
-              <select required value={form.deal_id || ''} onChange={e => selectInvoiceDeal(e.target.value)} disabled={!!form.id}>
-                <option value="">Select Won Deal</option>
-                {selectableWonDeals.map(deal => <option key={deal.id} value={deal.id}>{deal.title} · {deal.company || 'No company'} · {formatAmount(deal.amount)}</option>)}
-              </select>
-              <small className="invoice-payment-term-help">Required for commercial traceability.</small>
-            </label>
-            <label>
-              Source quote (optional)
-              <select value={form.quote_id || ''} onChange={e => selectInvoiceQuote(e.target.value)} disabled={!!form.id}>
-                <option value="">No source quote</option>
-                {selectableQuotes.map(quote => <option key={quote.id} value={quote.id}>{quote.quote_number || quote.id} · {quote.title || 'Quote'}</option>)}
-              </select>
-            </label>
-            <label>
-              Customer
-              <select required value={form.customer_id} onChange={e => setForm({ ...form, customer_id: e.target.value })}>
-                <option value="">Select customer</option>
-                {customers.map(c => <option key={c.id} value={c.id}>{c.name}{c.company ? ` · ${c.company}` : ''}</option>)}
-              </select>
-            </label>
-
-            <label>
-              Invoice date
-              <input type="date" value={new Date().toISOString().slice(0, 10)} readOnly />
-            </label>
-
-            <label className="invoice-payment-terms-field">
-              Payment terms
-              <select value={form.payment_terms} onChange={e => setPaymentTerms(e.target.value)}>
-                <option>Due on receipt</option>
-                <option>Net 15</option>
-                <option>Net 30</option>
-                <option>Net 45</option>
-                <option>Net 60</option>
-                <option>Custom</option>
-              </select>
-              <span className="invoice-payment-term-help">
-                {form.payment_terms === 'Due on receipt'
-                  ? 'Payment is due when the invoice is received.'
-                  : form.payment_terms === 'Custom'
-                    ? 'Choose the exact due date below.'
-                    : `Payment is due ${form.payment_terms.replace('Net ', '')} days after the invoice date.`}
-              </span>
-            </label>
-
-            <label>
-              Due date
-              <input type="date" value={form.due_date || ''} onChange={e => setForm({ ...form, due_date: e.target.value })} />
-            </label>
-
-            <label>
-              Status
-              <select value={form.status} onChange={e => setForm({ ...form, status: e.target.value })}>
-                {['Draft', 'Sent', 'Partially Paid', 'Paid', 'Overdue', 'Cancelled'].map(x => <option key={x}>{x}</option>)}
-              </select>
-            </label>
-          </div>
-        </div>
-
-        <div className="invoice-form-section">
-          <div className="invoice-form-section-title">Items</div>
-          <div className="invoice-item-editor">
-            <label>
-              Type
-              <select value={form.item_type} onChange={e => setInvoiceItemType(e.target.value)}>
-                <option value="Product">Product</option>
-                <option value="Service">Service</option>
-              </select>
-            </label>
-
-            <label className="invoice-item-description">
-              Item / service
-              <select required value={form.product_id} onChange={e => setInvoiceProduct(e.target.value)}>
-                <option value="">Select from solutions</option>
-                {availableInvoiceProducts.map(product => (
-                  <option key={product.id} value={product.id}>
-                    {product.name}{product.vendor ? ` · ${product.vendor}` : ''}
-                  </option>
-                ))}
-              </select>
-            </label>
-
-            <label>
-              Qty
-              <input type="number" min="1" step="1" value={form.quantity} onChange={e => setInvoiceField('quantity', e.target.value)} />
-            </label>
-
-            <label>
-              Unit price
-              <input type="number" min="0" step="0.01" value={form.unit_price} onChange={e => setInvoiceField('unit_price', e.target.value)} />
-              <span className="invoice-payment-term-help">Pulled from the selected solution. You can adjust the invoice price.</span>
-            </label>
-
-            <label>
-              Discount
-              <input type="number" min="0" step="0.01" value={form.discount || 0} onChange={e => setInvoiceField('discount', e.target.value)} />
-            </label>
-
-            <label>
-              Tax / VAT
-              <input type="number" min="0" step="0.01" value={form.tax || 0} onChange={e => setInvoiceField('tax', e.target.value)} />
-            </label>
-
-            <div className="invoice-item-total">
-              <span>Amount</span>
-              <strong>{formatAmount(form.amount)}</strong>
-            </div>
-          </div>
-          {form.item_type && availableInvoiceProducts.length === 0 && (
-            <div className="invoice-item-empty">No active {form.item_type.toLowerCase()} solutions have a selling price in the catalogue yet.</div>
-          )}
-
-          <div className="invoice-form-total">
-            <div><span>Subtotal</span><strong>{formatAmount((Math.max(0, Number(form.quantity) || 0) * Math.max(0, Number(form.unit_price) || 0)))}</strong></div>
-            <div><span>Discount</span><strong>- {formatAmount(Math.max(0, Number(form.discount) || 0))}</strong></div>
-            <div><span>Tax / VAT</span><strong>{formatAmount(Math.max(0, Number(form.tax) || 0))}</strong></div>
-            <div className="grand-total"><span>Total</span><strong>{formatAmount(form.amount)}</strong></div>
-          </div>
-        </div>
-
-        <div className="invoice-form-section">
-          <div className="invoice-form-section-title">Notes</div>
-          <label>
-            Customer notes
-            <textarea rows="3" placeholder="Thank you for your business." value={form.notes || ''} onChange={e => setForm({ ...form, notes: e.target.value })} />
-          </label>
-        </div>
-
-        <div className="modal-actions">
-          <button type="button" className="secondary-btn" onClick={() => setShow(false)}>Cancel</button>
-          <button className="primary-btn">{form.id ? 'Save changes' : 'Create invoice'}</button>
-        </div>
-      </form>
-    </div>}
-
-    {pay && <div className="modal-backdrop" onClick={() => setPay(null)}>
-      <form className="modal" onSubmit={paymentSave} onClick={e => e.stopPropagation()}>
-        <div className="modal-heading"><h2>Record payment</h2><button type="button" className="icon-btn" onClick={() => setPay(null)}><X size={18} /></button></div>
-        <label>Amount<input type="number" min="0" value={pay.amount} onChange={e => setPay({ ...pay, amount: Number(e.target.value) })} /></label>
-        <label>Method<select value={pay.payment_method} onChange={e => setPay({ ...pay, payment_method: e.target.value })}>{['Bank transfer', 'Card', 'Cash', 'Online', 'Other'].map(x => <option key={x}>{x}</option>)}</select></label>
-        <label>Date<input type="datetime-local" value={pay.paid_at} onChange={e => setPay({ ...pay, paid_at: e.target.value })} /></label>
-        <div className="modal-actions"><button type="button" className="secondary-btn" onClick={() => setPay(null)}>Cancel</button><button className="primary-btn">Save payment</button></div>
-      </form>
-    </div>}
-
-    {preview && (() => {
-      const customer = getCustomer(preview);
-      const invoiceDate = preview.created_at || new Date().toISOString();
-      const amount = Number(preview.amount || 0);
-      return <div className="invoice-preview-backdrop" onClick={() => setPreview(null)}>
-        <div className="invoice-preview-shell" onClick={e => e.stopPropagation()}>
-          <div className="invoice-preview-toolbar">
-            <div>
-              <strong>Invoice preview</strong>
-              <span>Temporary document template</span>
-            </div>
-            <div className="invoice-preview-actions">
-              <button type="button" className="secondary-btn" onClick={() => window.print()}><Download size={15} /> Print / Save PDF</button>
-              <button type="button" className="icon-btn" onClick={() => setPreview(null)}><X size={18} /></button>
-            </div>
-          </div>
-
-          <div className="invoice-print-sheet">
-            <header className="invoice-document-header">
-              <div className="invoice-company-block">
-                <img src="/storhet-logo.png" alt="Storhet Solutions" className="invoice-company-logo" />
-                <div>
-                  <h2>STORHET SOLUTIONS</h2>
-                  <p>Technology Solutions & Services</p>
-                </div>
-              </div>
-              <div className="invoice-title-block">
-                <div className="invoice-document-title">INVOICE</div>
-                <div className="invoice-status-pill">{preview.status || 'Draft'}</div>
-              </div>
-            </header>
-
-            <div className="invoice-document-rule" />
-
-            <section className="invoice-meta-grid">
-              <div>
-                <span className="invoice-label">BILL TO</span>
-                <strong>{customer?.name || preview.customers?.name || 'Customer'}</strong>
-                {customer?.company && <span>{customer.company}</span>}
-                {customer?.email && <span>{customer.email}</span>}
-                {customer?.phone && <span>{customer.phone}</span>}
-              </div>
-              <div className="invoice-details-box">
-                <div><span>Invoice #</span><strong>{preview.invoice_number}</strong></div>
-                <div><span>Invoice Date</span><strong>{formatDate(invoiceDate)}</strong></div>
-                <div><span>Due Date</span><strong>{preview.due_date ? formatDate(preview.due_date) : '—'}</strong></div>
-              </div>
-            </section>
-
-            <table className="invoice-document-table">
-              <thead><tr><th>#</th><th>ITEM &amp; DESCRIPTION</th><th>QTY</th><th>RATE</th><th>AMOUNT</th></tr></thead>
-              <tbody>
-                <tr>
-                  <td>1</td>
-                  <td><strong>{preview.title || 'Professional services'}</strong><span>{preview.item_type || 'Product'} · Storhet Solutions solution delivery</span></td>
-                  <td>{preview.quantity || 1}</td>
-                  <td>{formatAmount(preview.unit_price ?? amount)}</td>
-                  <td>{formatAmount(amount)}</td>
-                </tr>
-              </tbody>
-            </table>
-
-            <section className="invoice-bottom-grid">
-              <div className="invoice-notes-block">
-                <span className="invoice-label">NOTES</span>
-                <p>{preview.notes || 'Thank you for your business.'}</p>
-              </div>
-              <div className="invoice-totals-block">
-                <div><span>Subtotal</span><strong>{formatAmount(amount)}</strong></div>
-                <div><span>Discount</span><strong>{formatAmount(0)}</strong></div>
-                <div className="invoice-total-row"><span>TOTAL</span><strong>{formatAmount(amount)}</strong></div>
-                <div className="invoice-balance-row"><span>BALANCE DUE</span><strong>{formatAmount(amount)}</strong></div>
-              </div>
-            </section>
-
-            <footer className="invoice-document-footer">
-              <div>
-                <strong>Payment / Terms</strong>
-                <p>Please make payment by the stated due date. Payment details can be added here later.</p>
-              </div>
-              <div className="invoice-thank-you">Thank you for doing business with<br /><strong>STORHET SOLUTIONS</strong>.</div>
-            </footer>
-          </div>
-        </div>
-      </div>;
-    })()}
+    {preview && <div className="invoice-preview-backdrop" onClick={() => setPreview(null)}><div className="invoice-preview-shell" onClick={e => e.stopPropagation()}><div className="invoice-preview-toolbar"><div><strong>Invoice preview</strong><span>Commercial document</span></div><div className="invoice-preview-actions"><button type="button" className="secondary-btn" onClick={() => window.print()}><Download size={15} /> Print / Save PDF</button><button type="button" className="icon-btn" onClick={() => setPreview(null)}><X size={18} /></button></div></div><div className="invoice-print-sheet"><header className="invoice-document-header"><div className="invoice-company-block"><img src="/storhet-logo.png" alt="Storhet Solutions" className="invoice-company-logo" /><div><h2>STORHET SOLUTIONS</h2><p>Technology Solutions & Services</p></div></div><div className="invoice-title-block"><div className="invoice-document-title">INVOICE</div><div className="invoice-status-pill">{preview.status || 'Draft'}</div></div></header><div className="invoice-document-rule" /><section className="invoice-meta-grid"><div><span className="invoice-label">BILL TO</span><strong>{customerFor(preview)?.name || 'Customer'}</strong><span>{customerFor(preview)?.company || ''}</span><span>{customerFor(preview)?.email || ''}</span></div><div className="invoice-details-box"><div><span>Invoice #</span><strong>{preview.invoice_number}</strong></div><div><span>Invoice Date</span><strong>{formatDate(preview.created_at || new Date().toISOString())}</strong></div><div><span>Due Date</span><strong>{preview.due_date ? formatDate(preview.due_date) : '—'}</strong></div></div></section><table className="invoice-document-table"><thead><tr><th>#</th><th>ITEM &amp; DESCRIPTION</th><th>QTY</th><th>RATE</th><th>AMOUNT</th></tr></thead><tbody><tr><td>1</td><td><strong>{preview.title || 'Professional services'}</strong><span>Storhet Solutions delivery</span></td><td>{preview.quantity || 1}</td><td>{formatAmount(preview.unit_price ?? preview.amount)}</td><td>{formatAmount(preview.amount)}</td></tr></tbody></table><section className="invoice-bottom-grid"><div className="invoice-notes-block"><span className="invoice-label">NOTES</span><p>{preview.notes || 'Thank you for your business.'}</p></div><div className="invoice-totals-block"><div><span>Subtotal</span><strong>{formatAmount(preview.amount)}</strong></div><div className="invoice-total-row"><span>TOTAL</span><strong>{formatAmount(preview.amount)}</strong></div><div className="invoice-balance-row"><span>BALANCE DUE</span><strong>{formatAmount(preview.amount)}</strong></div></div></section><footer className="invoice-document-footer"><div><strong>Payment / Terms</strong><p>Please make payment by the stated due date.</p></div><div className="invoice-thank-you">Thank you for doing business with<br /><strong>STORHET SOLUTIONS</strong>.</div></footer></div></div></div>}
   </>;
 }
 function Documents({ documents, customers, onUpload, onDownload, onDelete }) { const [customerId, setCustomerId] = useState(''); const upload = e => { const f = e.target.files?.[0]; if (!f) return; onUpload(f, customerId).catch(err => alert(err.message)); e.target.value = '' }; return <><PageHeading eyebrow="FILES" title="Documents" description="Store customer and CRM files in Supabase Storage." /><div className="panel"><div className="toolbar"><select value={customerId} onChange={e => setCustomerId(e.target.value)}><option value="">No customer link</option>{customers.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}</select><label className="secondary-btn" style={{ display: 'inline-flex', alignItems: 'center', gap: 8, cursor: 'pointer' }}><Upload size={15} /> Upload file<input type="file" hidden onChange={upload} /></label></div><div className="table-wrap"><table><thead><tr><th>File</th><th>Customer</th><th>Type</th><th>Size</th><th>Created</th><th>Actions</th></tr></thead><tbody>{documents.length === 0 ? <tr><td colSpan="6">No documents yet.</td></tr> : documents.map(d => <tr key={d.id}><td><strong>{d.name}</strong></td><td>{d.customers?.name || '—'}</td><td>{d.mime_type}</td><td>{Math.max(1, Math.round(Number(d.size_bytes || 0) / 1024))} KB</td><td>{formatDate(d.created_at)}</td><td><div className="toolbar-actions"><button className="secondary-btn" onClick={() => onDownload(d)}><Download size={14} /> Download</button><button className="icon-btn" onClick={() => onDelete(d)}><X size={16} /></button></div></td></tr>)}</tbody></table></div></div></> }
@@ -9054,10 +9311,89 @@ function HOSPanel({
     )}
   </>;
 }
-function HRPanel({ deals = [], quotes = [], invoices = [], tickets = [], customers = [], formatAmount }) {
-  const pending = [...deals, ...quotes, ...invoices].filter(x => ['SALES_PENDING', 'HOS_PENDING', 'MD_PENDING'].includes(x.approval_status)).length;
-  const openTickets = tickets.filter(t => !['Resolved', 'Closed'].includes(t.status)).length;
-  return <><PageHeading eyebrow="PEOPLE & SUPERVISION" title="HR Panel" description="Supervise pending work across all departments." /><div className="stats-grid"><StatCard label="Pending work" value={pending} hint="Commercial approvals" tone="orange" icon="!" onClick={() => document.getElementById('hr-supervision')?.scrollIntoView({ behavior: 'smooth' })} /><StatCard label="Open support" value={openTickets} hint="Support tickets" tone="blue" icon="T" onClick={() => document.getElementById('hr-supervision')?.scrollIntoView({ behavior: 'smooth' })} /><StatCard label="Customers" value={customers.length} hint="CRM relationships" tone="green" icon="C" /><StatCard label="Invoice value" value={formatAmount(invoices.reduce((s, i) => s + Number(i.amount || 0), 0))} hint="Supervision view" tone="purple" icon="$" /></div><div className="panel role-panel-summary" id="hr-supervision"><h3>Supervision only</h3><p>HR can monitor pending work across departments but does not edit, delete or approve commercial records.</p></div></>;
+function HRPanel({ activities = [], authorizedUsers = [], ownerProfiles = {}, customers = [], leads = [] }) {
+  const activeEmployees = authorizedUsers.filter(user => user.is_active !== false).length;
+  const openWork = activities.filter(activity => isOpenActivity(activity) && !isOverdue(activity));
+  const overdueWork = activities.filter(activity => isOverdue(activity));
+  const completedWork = activities.filter(activity => activity.status === 'Completed');
+  const birthdayContacts = [...customers, ...leads];
+  const birthdayContactsToday = birthdayContacts.filter(contact => birthdayIsToday(contact.birthday));
+  const getAssignee = activity => activity.assigned_to ? (ownerProfiles[activity.assigned_to] || 'Team member') : 'Unassigned';
+  const visibleWork = [...activities]
+    .filter(activity => activity.status !== 'Cancelled')
+    .sort((a, b) => {
+      const aOverdue = isOverdue(a) ? 0 : 1;
+      const bOverdue = isOverdue(b) ? 0 : 1;
+      if (aOverdue !== bOverdue) return aOverdue - bOverdue;
+      return new Date(a.activity_date || 8.64e15) - new Date(b.activity_date || 8.64e15);
+    })
+    .slice(0, 8);
+
+  return <>
+    <PageHeading eyebrow="PEOPLE & SUPERVISION" title="HR Panel" description="People and work operations across the organization." />
+    <div className="stats-grid">
+      <StatCard label="Employees" value={activeEmployees} hint="Active staff" tone="green" icon="E" />
+      <StatCard label="Pending work" value={openWork.length} hint="Open activities" tone="orange" icon="!" onClick={() => document.getElementById('hr-work-operations')?.scrollIntoView({ behavior: 'smooth', block: 'start' })} />
+      <StatCard label="Overdue work" value={overdueWork.length} hint="Past their due date" tone="red" icon="!" onClick={() => document.getElementById('hr-work-operations')?.scrollIntoView({ behavior: 'smooth', block: 'start' })} />
+      <StatCard label="Completed work" value={completedWork.length} hint="Completed activities" tone="blue" icon="✓" onClick={() => document.getElementById('hr-work-operations')?.scrollIntoView({ behavior: 'smooth', block: 'start' })} />
+      <StatCard label="Birthdays today" value={birthdayContactsToday.length} hint="Customer & lead birthdays" tone="purple" icon="🎂" onClick={() => document.getElementById('hr-birthdays')?.scrollIntoView({ behavior: 'smooth', block: 'start' })} />
+    </div>
+
+    <div className="panel hr-birthday-panel" id="hr-birthdays">
+      <div className="panel-heading">
+        <div>
+          <h3>Birthdays today</h3>
+          <p>Customer and lead contacts celebrating today.</p>
+        </div>
+        <span className="count-badge">{birthdayContactsToday.length}</span>
+      </div>
+      {birthdayContactsToday.length === 0 ? (
+        <div className="birthday-empty">No customer or lead birthdays today.</div>
+      ) : (
+        <div className="hr-birthday-list">
+          {birthdayContactsToday.map(contact => (
+            <div className="hr-birthday-row" key={`${contact.id}-${contact.birthday}`}>
+              <div className="birthday-avatar">🎂</div>
+              <div className="birthday-person">
+                <strong>{contact.name || 'Unnamed contact'}</strong>
+                <span>{contact.company || 'Lead'}</span>
+              </div>
+              <strong>{formatBirthday(contact.birthday)}</strong>
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+
+    <div className="panel hr-work-operations" id="hr-work-operations">
+      <div className="panel-heading">
+        <div><h3>Work Operations</h3><p>See the current work assigned across the organization.</p></div>
+        <div className="hr-work-summary"><span>{openWork.length} pending</span><span>{overdueWork.length} overdue</span><span>{completedWork.length} completed</span></div>
+      </div>
+      <div className="table-wrap">
+        <table className="hr-work-table">
+          <thead><tr><th>Work</th><th>Assigned to</th><th>Priority</th><th>Due</th><th>Status</th></tr></thead>
+          <tbody>
+            {visibleWork.length === 0 ? <tr><td colSpan="5"><div className="empty-state"><p>No work activities yet.</p></div></td></tr> : visibleWork.map(activity => {
+              const overdue = isOverdue(activity);
+              return <tr key={activity.id}>
+                <td><strong>{activity.title || 'Untitled work'}</strong><small>{activity.type || 'Task'}</small></td>
+                <td>{getAssignee(activity)}</td>
+                <td><span className={`priority-pill priority-${String(activity.priority || 'Medium').toLowerCase()}`}>{activity.priority || 'Medium'}</span></td>
+                <td className={overdue ? 'hr-overdue-date' : ''}>{formatDateTime(activity.activity_date)}</td>
+                <td><span className={`status ${overdue ? 'overdue' : String(activity.status || 'Scheduled').toLowerCase().replace(/\s+/g, '-')}`}>{overdue ? 'Overdue' : (activity.status || 'Scheduled')}</span></td>
+              </tr>;
+            })}
+          </tbody>
+        </table>
+      </div>
+    </div>
+
+    <div className="panel role-panel-summary">
+      <h3>HR scope</h3>
+      <p>HR manages people and work operations. Commercial approvals, pricing, sales ownership and financial records remain outside the HR role.</p>
+    </div>
+  </>;
 }
 
 function TechnicalSupportPanel({ tickets = [], customers = [], formatAmount, currentUserId, ticketError, onAddTicket, onStatusChange, onDeleteTicket, onEditTicket, onViewTicket, isAdmin, role, canManage, staffName, staffOptions, onAssign, setPage }) {
