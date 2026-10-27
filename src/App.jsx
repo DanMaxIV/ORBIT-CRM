@@ -61,7 +61,6 @@ const isCommercialDeleter = role => ['admin', 'manager', 'head_of_sales'].includ
 const isCommercialEditor = role => ['admin', 'manager'].includes(role);
 const ROLE_PANEL_PAGE = {
   manager: 'MD Panel',
-  admin: 'MD Panel',
   head_of_sales: 'HOS Panel',
   hr: 'HR Panel',
   technical_support: 'Technical Support Panel'
@@ -858,7 +857,6 @@ const navSections = [
 
 const rolePanelNav = [
   ['MD Panel', BarChart3, 'manager'],
-  ['MD Panel', BarChart3, 'admin'],
   ['HOS Panel', CheckCircle2, 'head_of_sales'],
   ['HR Panel', Users, 'hr'],
   ['Technical Support Panel', UserCog, 'technical_support']
@@ -868,6 +866,19 @@ const EXCHANGE_RATES = {
   NGN: { symbol: '₦', rate: 1400 },
   USD: { symbol: '$', rate: 1 },
   EUR: { symbol: '€', rate: 0.92 }
+};
+
+const COMMERCIAL_CURRENCIES = [
+  ['NGN', 'Nigerian Naira'], ['USD', 'US Dollar'], ['EUR', 'Euro'], ['GBP', 'British Pound'],
+  ['GHS', 'Ghanaian Cedi'], ['ZAR', 'South African Rand'], ['KES', 'Kenyan Shilling'],
+  ['XOF', 'West African CFA Franc'], ['CAD', 'Canadian Dollar'], ['AUD', 'Australian Dollar'],
+  ['AED', 'UAE Dirham'], ['SAR', 'Saudi Riyal'], ['CHF', 'Swiss Franc'], ['JPY', 'Japanese Yen'],
+  ['CNY', 'Chinese Yuan'], ['INR', 'Indian Rupee'], ['OTHER', 'Other currency']
+];
+const formatCommercialAmount = (value, currency = 'NGN') => {
+  const code = String(currency || 'NGN').toUpperCase();
+  try { return new Intl.NumberFormat(undefined, { style: 'currency', currency: code === 'OTHER' ? 'USD' : code, maximumFractionDigits: 2 }).format(Number(value) || 0); }
+  catch { return `${code} ${(Number(value) || 0).toLocaleString(undefined, { maximumFractionDigits: 2 })}`; }
 };
 
 
@@ -1982,10 +1993,9 @@ function App() {
   }
 
   async function addQuote(payload, items = []) {
-    if (!payload?.deal_id) throw new Error('A quote must be linked to a Won Deal.');
-    const linkedDeal = deals.find(deal => deal.id === payload.deal_id);
-    if (!linkedDeal || linkedDeal.stage !== 'Won') throw new Error('A quote can only be linked to a Won Deal.');
-    payload = { ...payload, customer_id: payload.customer_id || linkedDeal.customer_id || null, sales_rep_id: payload.sales_rep_id || linkedDeal.created_by || session.user.id };
+    const linkedDeal = payload?.deal_id ? deals.find(deal => deal.id === payload.deal_id) : null;
+    if (payload?.deal_id && (!linkedDeal || linkedDeal.stage !== 'Won')) throw new Error('A quote can only be linked to a Won Deal.');
+    payload = { ...payload, customer_id: payload.customer_id || linkedDeal?.customer_id || null, sales_rep_id: payload.sales_rep_id || linkedDeal?.created_by || session.user.id };
     const quoteAmount = Number(payload?.total) || 0;
     payload = { ...payload, approval_status: null, approval_stage: null };
     // Generate the UUID on the client so the quote and its line items can be
@@ -2020,6 +2030,7 @@ function App() {
       quantity: Number(item.quantity) || 1,
       unit_price: Number(item.unit_price) || 0,
       discount: Number(item.discount) || 0,
+      discount_percent: Number(item.discount_percent) || 0,
       tax: Number(item.tax) || 0,
       total: Number(item.total) || 0
     }));
@@ -2092,6 +2103,7 @@ function App() {
       quantity: Number(item.quantity) || 1,
       unit_price: Number(item.unit_price) || 0,
       discount: Number(item.discount) || 0,
+      discount_percent: Number(item.discount_percent) || 0,
       tax: Number(item.tax) || 0,
       total: Number(item.total) || 0
     }));
@@ -2244,13 +2256,12 @@ function App() {
 
   async function addInvoice(payload, items = []) {
     const amount = Number(payload?.amount) || 0;
-    if (!payload?.deal_id) throw new Error('An invoice must be linked to a Won Deal.');
-    const linkedDeal = deals.find(deal => deal.id === payload.deal_id);
-    if (!linkedDeal || linkedDeal.stage !== 'Won') throw new Error('An invoice can only be linked to a Won Deal.');
+    const linkedDeal = payload?.deal_id ? deals.find(deal => deal.id === payload.deal_id) : null;
+    if (payload?.deal_id && (!linkedDeal || linkedDeal.stage !== 'Won')) throw new Error('An invoice can only be linked to a Won Deal.');
     payload = {
       ...payload,
-      customer_id: payload.customer_id || linkedDeal.customer_id || null,
-      sales_rep_id: payload.sales_rep_id || linkedDeal.created_by || session.user.id,
+      customer_id: payload.customer_id || linkedDeal?.customer_id || null,
+      sales_rep_id: payload.sales_rep_id || linkedDeal?.created_by || session.user.id,
       approval_status: null,
       approval_stage: null
     };
@@ -2297,6 +2308,7 @@ function App() {
         quantity: Number(item.quantity) || 1,
         unit_price: Number(item.unit_price) || 0,
         discount: Number(item.discount) || 0,
+        discount_percent: Number(item.discount_percent) || 0,
         tax: Number(item.tax) || 0,
         total: Number(item.total) || 0
       }));
@@ -2317,9 +2329,7 @@ function App() {
     const quote = quotes.find(item => item.id === id);
     if (!quote || quote.created_by !== session.user.id) throw new Error('You can only send your own quote for approval.');
     const amount = Number(quote.total || 0);
-    if (!quote.deal_id) throw new Error('This quote must be linked to a Won Deal before it can be sent for approval.');
-    const linkedDeal = deals.find(deal => deal.id === quote.deal_id);
-    if (!linkedDeal || linkedDeal.stage !== 'Won') throw new Error('This quote must be linked to a Won Deal before it can be sent for approval.');
+    if (quote.deal_id) { const linkedDeal = deals.find(deal => deal.id === quote.deal_id); if (!linkedDeal || linkedDeal.stage !== 'Won') throw new Error('If linked, the quote must reference a Won Deal.'); }
     const { error } = await supabase.from('quotes').update({
       approval_status: 'HOS_PENDING',
       approval_stage: 'HOS',
@@ -2334,9 +2344,7 @@ function App() {
   async function sendInvoiceToHOS(id) {
     const invoice = invoices.find(item => item.id === id);
     if (!invoice || invoice.created_by !== session.user.id) throw new Error('You can only send your own invoice for approval.');
-    if (!invoice.deal_id) throw new Error('This invoice must be linked to a Won Deal before it can be sent for approval.');
-    const linkedDeal = deals.find(deal => deal.id === invoice.deal_id);
-    if (!linkedDeal || linkedDeal.stage !== 'Won') throw new Error('This invoice must be linked to a Won Deal before it can be sent for approval.');
+    if (invoice.deal_id) { const linkedDeal = deals.find(deal => deal.id === invoice.deal_id); if (!linkedDeal || linkedDeal.stage !== 'Won') throw new Error('If linked, the invoice must reference a Won Deal.'); }
     const { error } = await supabase.from('invoices').update({
       approval_status: 'HOS_PENDING',
       approval_stage: 'HOS',
@@ -6936,6 +6944,8 @@ function Leads({ leads, customers, products, leadProducts, onAdd, onUpdate, onSy
         </div>}
     </div>
 
+
+
     {show && <div className="modal-backdrop" onClick={closeModal}>
       <form className="modal lead-modal" onSubmit={save} onClick={e => e.stopPropagation()}>
         <div className="modal-heading">
@@ -7608,6 +7618,7 @@ function Quotes({ quotes = [], products = [], quoteItems = [], deals = [], dealP
   const [loadingItems, setLoadingItems] = useState(false);
   const [error, setError] = useState('');
   const [expandedVendor, setExpandedVendor] = useState(null);
+  const [preview, setPreview] = useState(null);
 
   const vendors = ['F5', 'Kong', 'IRONSCALES', 'SolarWinds', 'Utimaco'];
   const blank = {
@@ -7628,7 +7639,7 @@ function Quotes({ quotes = [], products = [], quoteItems = [], deals = [], dealP
     resubmission_note: '',
     deal_id: '',
     customer_id: '',
-    sales_rep_id: ''
+    sales_rep_id: '', currency_code: 'NGN', exchange_rate: 1, vat_rate: 7.5, manual_tax: 0
   };
 
   const emptyItem = () => ({
@@ -7650,11 +7661,15 @@ function Quotes({ quotes = [], products = [], quoteItems = [], deals = [], dealP
 
   const moneyNumber = value => Number(value) || 0;
   const lineSubtotal = item => moneyNumber(item.quantity) * moneyNumber(item.unit_price);
-  const lineTotal = item => Math.max(0, lineSubtotal(item) - moneyNumber(item.discount) + moneyNumber(item.tax));
+  const lineDiscountAmount = item => lineSubtotal(item) * Math.min(100, Math.max(0, moneyNumber(item.discount_percent ?? item.discount))) / 100;
+  const lineTotal = item => Math.max(0, lineSubtotal(item) - lineDiscountAmount(item));
   const subtotal = items.reduce((sum, item) => sum + lineSubtotal(item), 0);
-  const discount = items.reduce((sum, item) => sum + moneyNumber(item.discount), 0);
-  const tax = items.reduce((sum, item) => sum + moneyNumber(item.tax), 0);
-  const total = Math.max(0, subtotal - discount + tax);
+  const discount = items.reduce((sum, item) => sum + lineDiscountAmount(item), 0);
+  const taxable = Math.max(0, subtotal - discount);
+  const vat = taxable * Math.max(0, moneyNumber(form.vat_rate ?? 7.5)) / 100;
+  const manualTax = Math.max(0, moneyNumber(form.manual_tax));
+  const tax = vat + manualTax;
+  const total = Math.max(0, taxable + vat + manualTax);
 
   const productsByVendor = vendors.reduce((groups, vendor) => {
     groups[vendor] = products.filter(product => (product.vendor || '').trim().toLowerCase() === vendor.toLowerCase());
@@ -7685,8 +7700,9 @@ function Quotes({ quotes = [], products = [], quoteItems = [], deals = [], dealP
         product_name: product.name,
         description: product.description || '',
         quantity: 1,
-        unit_price: Number(product.unit_price) || 0,
+        unit_price: 0,
         discount: 0,
+        discount_percent: 0,
         tax: 0
       })));
     }
@@ -7714,7 +7730,7 @@ function Quotes({ quotes = [], products = [], quoteItems = [], deals = [], dealP
     setLoadingItems(true);
     setError('');
     setExpandedVendor(null);
-    setForm({ ...blank, ...quote });
+    setForm({ ...blank, ...quote, currency_code: quote.currency_code || 'NGN', exchange_rate: quote.exchange_rate || 1, vat_rate: quote.vat_rate ?? 7.5, manual_tax: quote.manual_tax ?? 0 });
     setItems([emptyItem()]);
     setShow(true);
 
@@ -7770,8 +7786,7 @@ function Quotes({ quotes = [], products = [], quoteItems = [], deals = [], dealP
     if (!form.quote_number.trim()) return setError('Quote number is required.');
     if (!form.title.trim()) return setError('Quote title is required.');
     if (!form.quote_date) return setError('Quote date is required.');
-    if (!form.deal_id) return setError('Select the Won Deal this quote belongs to.');
-    if (!selectedDeal || selectedDeal.stage !== 'Won') return setError('A quote can only be created from a Won Deal.');
+    if (form.deal_id && (!selectedDeal || selectedDeal.stage !== 'Won')) return setError('If a Deal is selected, it must be a Won Deal.');
     if (!form.customer_name.trim() && !form.company.trim()) return setError('Enter a customer name or company.');
     if (form.email.trim() && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(form.email.trim())) return setError('Enter a valid customer email address.');
     if (!validItems.length) return setError('Add at least one product or solution to the quote.');
@@ -7792,6 +7807,9 @@ function Quotes({ quotes = [], products = [], quoteItems = [], deals = [], dealP
       subtotal,
       discount,
       tax,
+      vat_amount: vat,
+      vat_rate: moneyNumber(form.vat_rate ?? 7.5),
+      manual_tax: manualTax,
       total,
       payment_terms: form.payment_terms.trim() || null,
       delivery_terms: form.delivery_terms.trim() || null,
@@ -7801,6 +7819,8 @@ function Quotes({ quotes = [], products = [], quoteItems = [], deals = [], dealP
       deal_id: form.deal_id || null,
       customer_id: form.customer_id || selectedDeal?.customer_id || null,
       sales_rep_id: form.sales_rep_id || selectedDeal?.created_by || currentUserId,
+      currency_code: form.currency_code === 'OTHER' ? (form.custom_currency_code || 'OTHER') : (form.currency_code || 'NGN'),
+      exchange_rate: moneyNumber(form.exchange_rate) || 1,
       ...(editing && editing.approval_status === 'REJECTED' ? { approval_status: approvalRequirement(total).band === 'SALES' ? 'SALES_PENDING' : 'HOS_PENDING', approval_stage: approvalRequirement(total).band === 'HOS_MD' ? 'HOS' : approvalRequirement(total).band } : {})
     };
 
@@ -7810,8 +7830,9 @@ function Quotes({ quotes = [], products = [], quoteItems = [], deals = [], dealP
       description: item.description?.trim() || null,
       quantity: moneyNumber(item.quantity),
       unit_price: moneyNumber(item.unit_price),
-      discount: moneyNumber(item.discount),
-      tax: moneyNumber(item.tax),
+      discount: lineDiscountAmount(item),
+      discount_percent: Math.min(100, Math.max(0, moneyNumber(item.discount_percent ?? item.discount))),
+      tax: 0,
       total: lineTotal(item)
     }));
 
@@ -7862,10 +7883,11 @@ function Quotes({ quotes = [], products = [], quoteItems = [], deals = [], dealP
                 <td>{q.valid_until ? formatDate(q.valid_until) : '—'}</td>
                 <td>{q.created_at ? formatDate(q.created_at) : '—'}</td>
                 <td><div className="toolbar-actions">
+                  <button type="button" className="secondary-btn" onClick={async () => { try { const loaded = onLoadQuoteItems ? await onLoadQuoteItems(q) : quoteItems.filter(item => item.quote_id === q.id); setPreview({ ...q, __items: loaded || [] }); } catch (err) { alert(err.message || 'Unable to load quote items.'); } }}>View</button>
                   {(isCommercialEditor(role) || q.created_by === currentUserId) && <button className="secondary-btn" onClick={() => openEdit(q)}>Edit</button>}
                   {isCommercialDeleter(role) && <button type="button" className="icon-btn" title="Delete quote" onClick={async () => { if (!window.confirm('Delete this quote?')) return; try { await onDelete(q.id); } catch (err) { alert(err.message || 'Unable to delete quote.'); } }}><X size={16} /></button>}
                   {q.created_by === currentUserId && ['HOS_PENDING', 'APPROVED', 'MD_PENDING'].indexOf(q.approval_status) === -1 && <button type="button" className="primary-btn approval-btn" onClick={async () => { try { await onSendToHOS(q.id); } catch (err) { alert(err.message); } }}>{q.approval_status === 'REJECTED' ? 'Resubmit to HOS' : 'Send to HOS'}</button>}
-                  {q.approval_status === 'APPROVED' && q.deal_id && <button type="button" className="secondary-btn" onClick={() => onCreateInvoice(q)}>Create Invoice</button>}
+                  {q.approval_status === 'APPROVED' && <button type="button" className="secondary-btn" onClick={() => onCreateInvoice(q)}>Create Invoice</button>}
                 </div></td>
               </tr>
             ))}
@@ -7873,6 +7895,8 @@ function Quotes({ quotes = [], products = [], quoteItems = [], deals = [], dealP
         </table>
       </div>
     </div>
+
+    {preview && <div className="commercial-preview-backdrop" onClick={() => setPreview(null)}><div className="commercial-preview-shell" onClick={e => e.stopPropagation()}><div className="commercial-preview-toolbar"><div><strong>Quote preview</strong><span>Commercial document</span></div><div className="toolbar-actions"><button type="button" className="secondary-btn" onClick={() => window.print()}>Print / Save PDF</button><button type="button" className="icon-btn" onClick={() => setPreview(null)}><X size={18} /></button></div></div><div className="commercial-print-sheet"><header className="commercial-document-header"><div><img src="/storhet-logo.png" alt="Storhet Solutions" className="invoice-company-logo" /><h2>STORHET SOLUTIONS</h2><p>Technology Solutions & Services</p></div><div className="commercial-document-title-block"><div className="commercial-document-title">QUOTATION</div><span>{preview.status || 'Draft'}</span></div></header><div className="commercial-rule" /><section className="commercial-meta-grid"><div><span className="invoice-label">BILL TO</span><strong>{preview.customer_name || preview.company || 'Customer'}</strong><span>{preview.company || ''}</span><span>{preview.email || ''}</span><span>{preview.billing_address || ''}</span></div><div className="commercial-details-box"><div><span>Quote #</span><strong>{preview.quote_number}</strong></div><div><span>Quote Date</span><strong>{formatDate(preview.quote_date)}</strong></div><div><span>Valid Until</span><strong>{preview.valid_until ? formatDate(preview.valid_until) : '—'}</strong></div><div><span>Currency</span><strong>{preview.currency_code || 'NGN'} · Rate {preview.exchange_rate || 1}</strong></div></div></section><table className="commercial-document-table"><thead><tr><th>#</th><th>ITEM &amp; DESCRIPTION</th><th>QTY</th><th>PRICE</th><th>DISCOUNT</th><th>AMOUNT</th></tr></thead><tbody>{(preview.__items || []).map((item, idx) => <tr key={item.id || idx}><td>{idx + 1}</td><td><strong>{item.product_name || 'Solution'}</strong><span>{item.description || ''}</span></td><td>{item.quantity || 1}</td><td>{formatCommercialAmount(item.unit_price, preview.currency_code)}</td><td>{Number(item.discount_percent || 0).toFixed(2)}%</td><td>{formatCommercialAmount(Number(item.total || 0), preview.currency_code)}</td></tr>)}</tbody></table><section className="commercial-bottom-grid"><div><span className="invoice-label">NOTES</span><p>{preview.notes || 'Thank you for your business.'}</p><span className="invoice-label">TERMS</span><p>{preview.terms || '—'}</p></div><div className="commercial-totals-block"><div><span>Subtotal</span><strong>{formatCommercialAmount(preview.subtotal, preview.currency_code)}</strong></div><div><span>Discount</span><strong>- {formatCommercialAmount(preview.discount, preview.currency_code)}</strong></div><div><span>VAT ({preview.vat_rate ?? 7.5}%)</span><strong>{formatCommercialAmount(preview.vat_amount || 0, preview.currency_code)}</strong></div><div><span>Manual tax</span><strong>{formatCommercialAmount(preview.manual_tax || 0, preview.currency_code)}</strong></div><div className="commercial-grand-total"><span>TOTAL</span><strong>{formatCommercialAmount(preview.total, preview.currency_code)}</strong></div></div></section><footer className="commercial-document-footer"><div><strong>Payment terms</strong><p>{preview.payment_terms || 'Due on receipt.'}</p><strong>Delivery terms</strong><p>{preview.delivery_terms || '—'}</p></div><div>Thank you for doing business with<br /><strong>STORHET SOLUTIONS</strong>.</div></footer></div></div></div>}
 
     {show && <div className="modal-backdrop" onClick={() => !saving && setShow(false)}>
       <form className="modal modal-wide" noValidate onSubmit={save} onClick={e => e.stopPropagation()}>
@@ -7897,6 +7921,10 @@ function Quotes({ quotes = [], products = [], quoteItems = [], deals = [], dealP
           <label>Company<input placeholder="Company name" value={form.company} onChange={e => setForm({ ...form, company: e.target.value })} /></label>
           <label>Email<input type="email" placeholder="customer@company.com" value={form.email} onChange={e => setForm({ ...form, email: e.target.value })} /></label>
           <label>Phone<input value={form.phone} onChange={e => setForm({ ...form, phone: e.target.value })} /></label>
+          <label>Deal (optional)<select value={form.deal_id || ''} onChange={e => selectDeal(e.target.value)}><option value="">Manual quote — no Deal</option>{selectableWonDeals.map(d => <option key={d.id} value={d.id}>{d.title}{d.company ? ` · ${d.company}` : ''}</option>)}</select></label>
+          <label>Currency<select value={form.currency_code || 'NGN'} onChange={e => setForm({ ...form, currency_code: e.target.value })}>{COMMERCIAL_CURRENCIES.map(([code,label]) => <option key={code} value={code}>{code} — {label}</option>)}</select></label>
+          {form.currency_code === 'OTHER' && <label>Currency code<input maxLength={6} placeholder="e.g. AED" value={form.custom_currency_code || ''} onChange={e => setForm({ ...form, custom_currency_code: e.target.value.toUpperCase() })} /></label>}
+          <label>Exchange rate<span className="field-help">1 selected currency = NGN equivalent</span><input type="number" min="0" step="0.000001" value={form.exchange_rate} onChange={e => setForm({ ...form, exchange_rate: e.target.value })} /></label>
         </div>
 
         <label>Billing address<textarea rows="2" value={form.billing_address} onChange={e => setForm({ ...form, billing_address: e.target.value })} /></label>
@@ -7936,19 +7964,25 @@ function Quotes({ quotes = [], products = [], quoteItems = [], deals = [], dealP
               <label>Selected product<input value={item.product_name} readOnly placeholder="Choose a product above" /></label>
               <label>Description<input value={item.description} onChange={e => updateItem(index, { description: e.target.value })} /></label>
               <label>Quantity<input type="number" min="1" step="1" value={item.quantity} onChange={e => updateItem(index, { quantity: e.target.value })} /></label>
-              <label>Unit price<input type="number" min="0" step="0.01" value={item.unit_price} onChange={e => updateItem(index, { unit_price: e.target.value })} /></label>
-              <label>Discount<input type="number" min="0" step="0.01" value={item.discount} onChange={e => updateItem(index, { discount: e.target.value })} /></label>
-              <label>Tax<input type="number" min="0" step="0.01" value={item.tax} onChange={e => updateItem(index, { tax: e.target.value })} /></label>
+              <label>Price for this quote<input type="number" min="0" step="0.01" value={item.unit_price} onChange={e => updateItem(index, { unit_price: e.target.value })} /></label>
+              <label>Discount (%)<input type="number" min="0" max="100" step="0.01" value={item.discount_percent ?? 0} onChange={e => updateItem(index, { discount_percent: e.target.value })} /></label>
+              <div className="line-field-note">VAT and manual tax are applied below the item list.</div>
             </div>
-            <div className="quote-line-total"><span>Line total</span><strong>{formatAmount(lineTotal(item))}</strong></div>
+            <div className="quote-line-total"><span>Line total</span><strong>{formatCommercialAmount(lineTotal(item), form.currency_code)}</strong></div>
           </div>)}
         </div>
 
         <div className="quote-total-card">
-          <div><span>Subtotal</span><strong>{formatAmount(subtotal)}</strong></div>
-          <div><span>Discount</span><strong>- {formatAmount(discount)}</strong></div>
-          <div><span>Tax</span><strong>{formatAmount(tax)}</strong></div>
-          <div className="grand-total"><span>Total</span><strong>{formatAmount(total)}</strong></div>
+          <div><span>Subtotal</span><strong>{formatCommercialAmount(subtotal, form.currency_code)}</strong></div>
+          <div><span>Discount</span><strong>- {formatCommercialAmount(discount, form.currency_code)}</strong></div>
+          <div><span>VAT ({moneyNumber(form.vat_rate ?? 7.5)}%)</span><strong>{formatCommercialAmount(vat, form.currency_code)}</strong></div>
+          <div><span>Manual tax</span><strong>{formatCommercialAmount(manualTax, form.currency_code)}</strong></div>
+          <div className="grand-total"><span>Total</span><strong>{formatCommercialAmount(total, form.currency_code)}</strong></div>
+        </div>
+
+        <div className="form-grid-2 commercial-tax-fields">
+          <label>VAT rate (%)<input type="number" min="0" max="100" step="0.01" value={form.vat_rate ?? 7.5} onChange={e => setForm({ ...form, vat_rate: e.target.value })} /></label>
+          <label>Manual tax amount<input type="number" min="0" step="0.01" value={form.manual_tax ?? 0} onChange={e => setForm({ ...form, manual_tax: e.target.value })} /></label>
         </div>
 
         <div className="form-grid-2">
@@ -7996,21 +8030,25 @@ function Invoices({ invoices, payments, customers, products, deals = [], dealPro
   const [loadingItems, setLoadingItems] = useState(false);
   const [error, setError] = useState('');
   const [form, setForm] = useState({
-    invoice_number: `INV-${Date.now().toString().slice(-6)}`, title: '', customer_id: '', deal_id: '', quote_id: '', sales_rep_id: '',
+    invoice_number: `INV-${Date.now().toString().slice(-6)}`, title: '', customer_id: '', deal_id: '', quote_id: '', sales_rep_id: '', currency_code: 'NGN', exchange_rate: 1, vat_rate: 7.5, manual_tax: 0,
     due_date: '', payment_terms: 'Due on receipt', status: 'Draft', notes: '', resubmission_note: '', approval_status: null, approval_stage: null
   });
   const emptyItem = () => ({ product_id: '', product_name: '', description: '', quantity: 1, unit_price: 0, discount: 0, tax: 0 });
   const [items, setItems] = useState([emptyItem()]);
   const visibleInvoices = invoices.filter(i => (role !== 'sales' || i.created_by === currentUserId) && (!dealFilterId || i.deal_id === dealFilterId));
   const wonDeals = deals.filter(d => d.stage === 'Won' && (role !== 'sales' || d.created_by === currentUserId));
-  const selectableQuotes = quotes.filter(q => q.deal_id && (!form.deal_id || q.deal_id === form.deal_id) && (role !== 'sales' || q.created_by === currentUserId));
+  const selectableQuotes = quotes.filter(q => q.approval_status === 'APPROVED' && (!form.deal_id || !q.deal_id || q.deal_id === form.deal_id) && (role !== 'sales' || q.created_by === currentUserId));
   const money = v => Number(v) || 0;
   const lineSubtotal = item => Math.max(0, money(item.quantity)) * Math.max(0, money(item.unit_price));
-  const lineTotal = item => Math.max(0, lineSubtotal(item) - money(item.discount) + money(item.tax));
+  const lineDiscountAmount = item => lineSubtotal(item) * Math.min(100, Math.max(0, money(item.discount_percent ?? item.discount))) / 100;
+  const lineTotal = item => Math.max(0, lineSubtotal(item) - lineDiscountAmount(item));
   const subtotal = items.reduce((s, item) => s + lineSubtotal(item), 0);
-  const discount = items.reduce((s, item) => s + money(item.discount), 0);
-  const tax = items.reduce((s, item) => s + money(item.tax), 0);
-  const total = Math.max(0, subtotal - discount + tax);
+  const discount = items.reduce((s, item) => s + lineDiscountAmount(item), 0);
+  const taxable = Math.max(0, subtotal - discount);
+  const vat = taxable * Math.max(0, money(form.vat_rate ?? 7.5)) / 100;
+  const manualTax = Math.max(0, money(form.manual_tax));
+  const tax = vat + manualTax;
+  const total = Math.max(0, taxable + vat + manualTax);
 
   const applyDeal = dealId => {
     const deal = deals.find(d => d.id === dealId);
@@ -8019,7 +8057,7 @@ function Invoices({ invoices, payments, customers, products, deals = [], dealPro
     const inheritedProductIds = dealProducts.filter(row => row.deal_id === deal.id).map(row => row.product_id);
     const ids = inheritedProductIds.map(id => products.find(product => product.id === id)).filter(Boolean);
     setForm(prev => ({ ...prev, deal_id: deal.id, quote_id: '', customer_id: deal.customer_id || '', sales_rep_id: deal.created_by || currentUserId, title: prev.title || `${deal.title} Invoice` }));
-    if (ids.length) setItems(ids.map(product => ({ product_id: product.id, product_name: product.name, description: product.description || '', quantity: 1, unit_price: money(product.unit_price), discount: 0, tax: 0 })));
+    if (ids.length) setItems(ids.map(product => ({ product_id: product.id, product_name: product.name, description: product.description || '', quantity: 1, unit_price: 0, discount: 0, discount_percent: 0, tax: 0 })));
     else setItems([emptyItem()]);
     if (customer && !form.title) setForm(prev => ({ ...prev, customer_id: customer.id }));
   };
@@ -8031,7 +8069,7 @@ function Invoices({ invoices, payments, customers, products, deals = [], dealPro
     try {
       setLoadingItems(true);
       const loaded = onLoadQuoteItems ? await onLoadQuoteItems(quote) : [];
-      const mapped = (loaded || []).map(item => ({ product_id: item.product_id || '', product_name: item.product_name || '', description: item.description || '', quantity: money(item.quantity) || 1, unit_price: money(item.unit_price), discount: money(item.discount), tax: money(item.tax) }));
+      const mapped = (loaded || []).map(item => ({ product_id: item.product_id || '', product_name: item.product_name || '', description: item.description || '', quantity: money(item.quantity) || 1, unit_price: money(item.unit_price), discount: money(item.discount), discount_percent: money(item.discount_percent), tax: 0 }));
       if (mapped.length) setItems(mapped);
     } catch (err) { setError(err.message || 'Unable to load quote items.'); }
     finally { setLoadingItems(false); }
@@ -8039,7 +8077,7 @@ function Invoices({ invoices, payments, customers, products, deals = [], dealPro
 
   const openNew = async (dealId = '', quoteId = '') => {
     setError('');
-    setForm({ invoice_number: `INV-${Date.now().toString().slice(-6)}`, title: '', customer_id: '', deal_id: '', quote_id: '', sales_rep_id: currentUserId, due_date: '', payment_terms: 'Due on receipt', status: 'Draft', notes: '', resubmission_note: '', approval_status: null, approval_stage: null });
+    setForm({ invoice_number: `INV-${Date.now().toString().slice(-6)}`, title: '', customer_id: '', deal_id: '', quote_id: '', sales_rep_id: currentUserId, currency_code: 'NGN', exchange_rate: 1, vat_rate: 7.5, manual_tax: 0, due_date: '', payment_terms: 'Due on receipt', status: 'Draft', notes: '', resubmission_note: '', approval_status: null, approval_stage: null });
     setItems([emptyItem()]);
     setShow(true);
     if (dealId) window.setTimeout(() => applyDeal(dealId), 0);
@@ -8051,11 +8089,11 @@ function Invoices({ invoices, payments, customers, products, deals = [], dealPro
   }, [initialDealId, initialQuoteId]);
 
   const openEdit = async invoice => {
-    setError(''); setForm({ ...form, ...invoice, invoice_number: invoice.invoice_number || form.invoice_number, resubmission_note: '' }); setShow(true);
+    setError(''); setForm({ ...form, ...invoice, currency_code: invoice.currency_code || 'NGN', exchange_rate: invoice.exchange_rate || 1, vat_rate: invoice.vat_rate ?? 7.5, manual_tax: invoice.manual_tax ?? 0, invoice_number: invoice.invoice_number || form.invoice_number, resubmission_note: '' }); setShow(true);
     try {
       setLoadingItems(true);
       const loaded = onLoadInvoiceItems ? await onLoadInvoiceItems(invoice) : [];
-      const mapped = (loaded || []).map(item => ({ product_id: item.product_id || '', product_name: item.product_name || '', description: item.description || '', quantity: money(item.quantity) || 1, unit_price: money(item.unit_price), discount: money(item.discount), tax: money(item.tax) }));
+      const mapped = (loaded || []).map(item => ({ product_id: item.product_id || '', product_name: item.product_name || '', description: item.description || '', quantity: money(item.quantity) || 1, unit_price: money(item.unit_price), discount: money(item.discount), discount_percent: money(item.discount_percent), tax: 0 }));
       setItems(mapped.length ? mapped : [{ product_id: invoice.product_id || '', product_name: invoice.title || '', description: '', quantity: money(invoice.quantity) || 1, unit_price: money(invoice.unit_price), discount: money(invoice.discount), tax: money(invoice.tax) }]);
     } catch (err) { setError(err.message || 'Unable to load invoice items.'); }
     finally { setLoadingItems(false); }
@@ -8064,21 +8102,18 @@ function Invoices({ invoices, payments, customers, products, deals = [], dealPro
   const save = async e => {
     e.preventDefault(); setError('');
     try {
-      const deal = deals.find(d => d.id === form.deal_id);
-      if (!deal || deal.stage !== 'Won') throw new Error('Select a Won Deal for this invoice.');
-      if (form.quote_id) {
-        const quote = quotes.find(q => q.id === form.quote_id);
-        if (!quote || quote.deal_id !== form.deal_id) throw new Error('The selected Quote must belong to the selected Won Deal.');
-      }
+      const deal = form.deal_id ? deals.find(d => d.id === form.deal_id) : null;
+      if (form.deal_id && (!deal || deal.stage !== 'Won')) throw new Error('If a Deal is selected, it must be a Won Deal.');
+      if (form.quote_id) { const quote = quotes.find(q => q.id === form.quote_id); if (!quote) throw new Error('Select a valid source Quote.'); if (form.deal_id && quote.deal_id !== form.deal_id) throw new Error('The selected Quote must belong to the selected Won Deal.'); }
       const validItems = items.filter(item => item.product_name || item.product_id);
       if (!validItems.length) throw new Error('Add at least one invoice solution.');
       if (validItems.some(item => money(item.quantity) <= 0)) throw new Error('Each invoice item must have a quantity greater than 0.');
-      const calculatedItems = validItems.map(item => ({ ...item, quantity: money(item.quantity), unit_price: money(item.unit_price), discount: money(item.discount), tax: money(item.tax), total: lineTotal(item) }));
+      const calculatedItems = validItems.map(item => ({ ...item, quantity: money(item.quantity), unit_price: money(item.unit_price), discount: lineDiscountAmount(item), discount_percent: Math.min(100, Math.max(0, money(item.discount_percent ?? item.discount))), tax: 0, total: lineTotal(item) }));
       const payload = {
-        invoice_number: form.invoice_number, title: form.title || calculatedItems[0]?.product_name || 'Invoice', customer_id: form.customer_id || deal.customer_id || null,
-        deal_id: form.deal_id, quote_id: form.quote_id || null, sales_rep_id: form.sales_rep_id || deal.created_by || currentUserId,
+        invoice_number: form.invoice_number, title: form.title || calculatedItems[0]?.product_name || 'Invoice', customer_id: form.customer_id || deal?.customer_id || null,
+        deal_id: form.deal_id || null, quote_id: form.quote_id || null, sales_rep_id: form.sales_rep_id || deal.created_by || currentUserId,
         product_id: calculatedItems[0]?.product_id || null, item_type: 'Product', quantity: calculatedItems[0]?.quantity || 1, unit_price: calculatedItems[0]?.unit_price || 0,
-        amount: total, discount, tax, due_date: form.due_date || null, payment_terms: form.payment_terms || 'Due on receipt', status: form.status || 'Draft', notes: form.notes || ''
+        amount: total, discount, tax, vat_amount: vat, vat_rate: money(form.vat_rate ?? 7.5), manual_tax: manualTax, currency_code: form.currency_code === 'OTHER' ? (form.custom_currency_code || 'OTHER') : (form.currency_code || 'NGN'), exchange_rate: money(form.exchange_rate) || 1, due_date: form.due_date || null, payment_terms: form.payment_terms || 'Due on receipt', status: form.status || 'Draft', notes: form.notes || ''
       };
       const approvalPatch = form.approval_status === 'REJECTED' ? { approval_status: null, approval_stage: null, resubmission_note: form.resubmission_note?.trim() || null } : {};
       if (form.id) await onUpdate(form.id, { ...payload, ...approvalPatch }, calculatedItems);
@@ -8101,29 +8136,29 @@ function Invoices({ invoices, payments, customers, products, deals = [], dealPro
     <div className="panel"><div className="table-wrap"><table><thead><tr><th>Invoice</th><th>Customer</th><th>Deal</th><th>Source Quote</th><th>Amount</th><th>Status</th><th>Due</th><th>Actions</th></tr></thead><tbody>
       {visibleInvoices.length === 0 ? <tr><td colSpan="8">No invoices yet.</td></tr> : visibleInvoices.map(i => <tr key={i.id}>
         <td><strong>{i.invoice_number}</strong><div className="deal-customer">{i.title}</div></td><td>{i.customers?.name || customerFor(i)?.name || '—'}</td><td>{deals.find(d => d.id === i.deal_id)?.title || '—'}</td><td>{quotes.find(q => q.id === i.quote_id)?.quote_number || '—'}</td><td>{formatAmount(i.amount)}</td><td><div>{i.status}</div><small className="approval-range-hint">{approvalRequirement(i.amount).label} approval</small></td><td>{i.due_date ? formatDate(i.due_date) : '—'}</td>
-        <td><div className="toolbar-actions"><button type="button" className="secondary-btn" onClick={() => setPreview(i)}><FileText size={15} /> View</button>{(isCommercialEditor(role) || i.created_by === currentUserId) && <button type="button" className="secondary-btn" onClick={() => openEdit(i)}>Edit</button>}{i.created_by === currentUserId && ['HOS_PENDING','APPROVED','MD_PENDING'].indexOf(i.approval_status) === -1 && <button type="button" className="primary-btn approval-btn" onClick={async () => { try { await onSendToHOS(i.id); } catch (err) { alert(err.message); } }}>{i.approval_status === 'REJECTED' ? 'Resubmit to HOS' : 'Send to HOS'}</button>}{isCommercialDeleter(role) && <button type="button" className="icon-btn" title="Delete invoice" onClick={async () => { if (!window.confirm('Delete this invoice?')) return; try { await onDelete(i.id); } catch (err) { alert(err.message); } }}><X size={16} /></button>}{i.status !== 'Paid' && i.approval_status === 'APPROVED' && <button className="secondary-btn" onClick={() => setPay({ invoice_id: i.id, amount: i.amount, paid_at: new Date().toISOString().slice(0,16), payment_method: 'Bank transfer' })}>Record payment</button>}{(isCommercialEditor(role) || i.created_by === currentUserId) && i.status !== 'Paid' && i.approval_status === 'APPROVED' && <button className="secondary-btn" onClick={() => onUpdate(i.id, { status: 'Paid' })}>Mark paid</button>}</div></td>
+        <td><div className="toolbar-actions"><button type="button" className="secondary-btn" onClick={async () => { try { const loaded = onLoadInvoiceItems ? await onLoadInvoiceItems(i) : []; setPreview({ ...i, __items: loaded || [] }); } catch (err) { alert(err.message || 'Unable to load invoice items.'); } }}><FileText size={15} /> View</button>{(isCommercialEditor(role) || i.created_by === currentUserId) && <button type="button" className="secondary-btn" onClick={() => openEdit(i)}>Edit</button>}{i.created_by === currentUserId && ['HOS_PENDING','APPROVED','MD_PENDING'].indexOf(i.approval_status) === -1 && <button type="button" className="primary-btn approval-btn" onClick={async () => { try { await onSendToHOS(i.id); } catch (err) { alert(err.message); } }}>{i.approval_status === 'REJECTED' ? 'Resubmit to HOS' : 'Send to HOS'}</button>}{isCommercialDeleter(role) && <button type="button" className="icon-btn" title="Delete invoice" onClick={async () => { if (!window.confirm('Delete this invoice?')) return; try { await onDelete(i.id); } catch (err) { alert(err.message); } }}><X size={16} /></button>}{i.status !== 'Paid' && i.approval_status === 'APPROVED' && <button className="secondary-btn" onClick={() => setPay({ invoice_id: i.id, amount: i.amount, paid_at: new Date().toISOString().slice(0,16), payment_method: 'Bank transfer' })}>Record payment</button>}{(isCommercialEditor(role) || i.created_by === currentUserId) && i.status !== 'Paid' && i.approval_status === 'APPROVED' && <button className="secondary-btn" onClick={() => onUpdate(i.id, { status: 'Paid' })}>Mark paid</button>}</div></td>
       </tr>)}
     </tbody></table></div></div>
 
-    {show && <div className="modal-backdrop" onClick={() => setShow(false)}><form className="modal modal-wide invoice-form-modal" onSubmit={save} onClick={e => e.stopPropagation()}><div className="modal-heading"><div><h2>{form.id ? 'Edit invoice' : 'New invoice'}</h2><p>Attach this invoice to a Won Deal and optionally inherit an approved Quote.</p></div><button type="button" className="icon-btn" onClick={() => setShow(false)}><X size={18} /></button></div>{error && <div className="form-error">{error}</div>}
+    {show && <div className="modal-backdrop" onClick={() => setShow(false)}><form className="modal modal-wide invoice-form-modal" onSubmit={save} onClick={e => e.stopPropagation()}><div className="modal-heading"><div><h2>{form.id ? 'Edit invoice' : 'New invoice'}</h2><p>Invoice manually or optionally tie it to a Won Deal and/or approved Quote.</p></div><button type="button" className="icon-btn" onClick={() => setShow(false)}><X size={18} /></button></div>{error && <div className="form-error">{error}</div>}
       <div className="form-grid-2"><label>Invoice number<input required value={form.invoice_number} readOnly={!!form.id} onChange={e => setForm({ ...form, invoice_number: e.target.value })} /></label><label>Invoice title<input required value={form.title} onChange={e => setForm({ ...form, title: e.target.value })} /></label>
-        <label>Won Deal<select required value={form.deal_id} onChange={e => applyDeal(e.target.value)}><option value="">Select Won Deal</option>{wonDeals.map(d => <option key={d.id} value={d.id}>{d.title}{d.company ? ` · ${d.company}` : ''}</option>)}</select></label>
+        <label>Deal (optional)<select value={form.deal_id} onChange={e => applyDeal(e.target.value)}><option value="">Manual invoice — no Deal</option>{wonDeals.map(d => <option key={d.id} value={d.id}>{d.title}{d.company ? ` · ${d.company}` : ''}</option>)}</select></label>
         <label>Source Quote<select value={form.quote_id} onChange={e => applyQuote(e.target.value)}><option value="">No source quote</option>{selectableQuotes.map(q => <option key={q.id} value={q.id}>{q.quote_number} · {q.title}</option>)}</select></label>
         <label>Customer<select value={form.customer_id} onChange={e => setForm({ ...form, customer_id: e.target.value })}><option value="">Select customer</option>{customers.map(c => <option key={c.id} value={c.id}>{c.name}{c.company ? ` · ${c.company}` : ''}</option>)}</select></label>
-        <label>Due date<input type="date" value={form.due_date || ''} onChange={e => setForm({ ...form, due_date: e.target.value })} /></label>
+        <label>Currency<select value={form.currency_code || 'NGN'} onChange={e => setForm({ ...form, currency_code: e.target.value })}>{COMMERCIAL_CURRENCIES.map(([code,label]) => <option key={code} value={code}>{code} — {label}</option>)}</select></label>{form.currency_code === 'OTHER' && <label>Currency code<input maxLength={6} placeholder="e.g. AED" value={form.custom_currency_code || ''} onChange={e => setForm({ ...form, custom_currency_code: e.target.value.toUpperCase() })} /></label>}<label>Exchange rate<span className="field-help">1 selected currency = NGN equivalent</span><input type="number" min="0" step="0.000001" value={form.exchange_rate} onChange={e => setForm({ ...form, exchange_rate: e.target.value })} /></label><label>Due date<input type="date" value={form.due_date || ''} onChange={e => setForm({ ...form, due_date: e.target.value })} /></label>
         <label>Status<select value={form.status} onChange={e => setForm({ ...form, status: e.target.value })}>{['Draft','Sent','Partially Paid','Paid','Overdue','Cancelled'].map(x => <option key={x}>{x}</option>)}</select></label>
       </div>
       {form.approval_status === 'REJECTED' && <label>Resubmission note<textarea required rows="3" value={form.resubmission_note || ''} onChange={e => setForm({ ...form, resubmission_note: e.target.value })} /></label>}
       <div className="quote-items-section"><div className="section-heading-row"><div><h3>Invoice items</h3><p>Items are inherited from the Deal or Quote, but the Sales Rep can adjust them.</p></div><button type="button" className="secondary-btn" onClick={() => setItems(prev => [...prev, emptyItem()])}><Plus size={15} /> Add solution</button></div>
         {loadingItems && <div className="invoice-item-empty">Loading commercial items…</div>}
-        {items.map((item, index) => <div className="quote-line-item" key={index}><div className="quote-line-header"><strong>Item {index + 1}</strong>{items.length > 1 && <button type="button" className="icon-btn" onClick={() => setItems(prev => prev.filter((_, i) => i !== index))}><X size={15} /></button>}</div><div className="form-grid-2"><label>Solution<select value={item.product_id || ''} onChange={e => { const product = products.find(p => p.id === e.target.value); setItems(prev => prev.map((x,i) => i===index ? { ...x, product_id: product?.id || '', product_name: product?.name || '', description: x.description || product?.description || '', unit_price: product?.unit_price ?? x.unit_price } : x)); }}><option value="">Select solution</option>{products.filter(p => (p.status || 'Active') === 'Active').map(p => <option key={p.id} value={p.id}>{p.name}{p.vendor ? ` · ${p.vendor}` : ''}</option>)}</select></label><label>Description<input value={item.description || ''} onChange={e => setItems(prev => prev.map((x,i) => i===index ? { ...x, description: e.target.value } : x))} /></label><label>Quantity<input type="number" min="1" value={item.quantity} onChange={e => setItems(prev => prev.map((x,i) => i===index ? { ...x, quantity: e.target.value } : x))} /></label><label>Unit price<input type="number" min="0" step="0.01" value={item.unit_price} onChange={e => setItems(prev => prev.map((x,i) => i===index ? { ...x, unit_price: e.target.value } : x))} /></label><label>Discount<input type="number" min="0" step="0.01" value={item.discount} onChange={e => setItems(prev => prev.map((x,i) => i===index ? { ...x, discount: e.target.value } : x))} /></label><label>Tax / VAT<input type="number" min="0" step="0.01" value={item.tax} onChange={e => setItems(prev => prev.map((x,i) => i===index ? { ...x, tax: e.target.value } : x))} /></label></div><div className="quote-line-total"><span>Line total</span><strong>{formatAmount(lineTotal(item))}</strong></div></div>)}
-      </div><div className="quote-total-card"><div><span>Subtotal</span><strong>{formatAmount(subtotal)}</strong></div><div><span>Discount</span><strong>- {formatAmount(discount)}</strong></div><div><span>Tax</span><strong>{formatAmount(tax)}</strong></div><div className="grand-total"><span>Total</span><strong>{formatAmount(total)}</strong></div></div>
+        {items.map((item, index) => <div className="quote-line-item" key={index}><div className="quote-line-header"><strong>Item {index + 1}</strong>{items.length > 1 && <button type="button" className="icon-btn" onClick={() => setItems(prev => prev.filter((_, i) => i !== index))}><X size={15} /></button>}</div><div className="form-grid-2"><label>Solution<select value={item.product_id || ''} onChange={e => { const product = products.find(p => p.id === e.target.value); setItems(prev => prev.map((x,i) => i===index ? { ...x, product_id: product?.id || '', product_name: product?.name || '', description: x.description || product?.description || '' } : x)); }}><option value="">Select solution</option>{products.filter(p => (p.status || 'Active') === 'Active').map(p => <option key={p.id} value={p.id}>{p.name}{p.vendor ? ` · ${p.vendor}` : ''}</option>)}</select></label><label>Description<input value={item.description || ''} onChange={e => setItems(prev => prev.map((x,i) => i===index ? { ...x, description: e.target.value } : x))} /></label><label>Quantity<input type="number" min="1" value={item.quantity} onChange={e => setItems(prev => prev.map((x,i) => i===index ? { ...x, quantity: e.target.value } : x))} /></label><label>Price for this invoice<input type="number" min="0" step="0.01" value={item.unit_price} onChange={e => setItems(prev => prev.map((x,i) => i===index ? { ...x, unit_price: e.target.value } : x))} /></label><label>Discount (%)<input type="number" min="0" max="100" step="0.01" value={item.discount_percent ?? 0} onChange={e => setItems(prev => prev.map((x,i) => i===index ? { ...x, discount_percent: e.target.value } : x))} /></label><div className="line-field-note">VAT and manual tax are applied below the item list.</div></div><div className="quote-line-total"><span>Line total</span><strong>{formatAmount(lineTotal(item))}</strong></div></div>)}
+      </div><div className="form-grid-2 commercial-tax-fields"><label>VAT rate (%)<input type="number" min="0" max="100" step="0.01" value={form.vat_rate ?? 7.5} onChange={e => setForm({ ...form, vat_rate: e.target.value })} /></label><label>Manual tax amount<input type="number" min="0" step="0.01" value={form.manual_tax ?? 0} onChange={e => setForm({ ...form, manual_tax: e.target.value })} /></label></div><div className="quote-total-card"><div><span>Subtotal</span><strong>{formatCommercialAmount(subtotal, form.currency_code)}</strong></div><div><span>Discount</span><strong>- {formatCommercialAmount(discount, form.currency_code)}</strong></div><div><span>VAT ({money(form.vat_rate ?? 7.5)}%)</span><strong>{formatCommercialAmount(vat, form.currency_code)}</strong></div><div><span>Manual tax</span><strong>{formatCommercialAmount(manualTax, form.currency_code)}</strong></div><div className="grand-total"><span>Total</span><strong>{formatCommercialAmount(total, form.currency_code)}</strong></div></div>
       <label>Notes<textarea rows="3" value={form.notes || ''} onChange={e => setForm({ ...form, notes: e.target.value })} /></label><div className="modal-actions"><button type="button" className="secondary-btn" onClick={() => setShow(false)}>Cancel</button><button className="primary-btn" disabled={loadingItems}>{form.id ? 'Save changes' : 'Create invoice'}</button></div>
     </form></div>}
 
     {pay && <div className="modal-backdrop" onClick={() => setPay(null)}><form className="modal" onSubmit={paymentSave} onClick={e => e.stopPropagation()}><div className="modal-heading"><h2>Record payment</h2><button type="button" className="icon-btn" onClick={() => setPay(null)}><X size={18} /></button></div><label>Amount<input type="number" min="0" value={pay.amount} onChange={e => setPay({ ...pay, amount: Number(e.target.value) })} /></label><label>Method<select value={pay.payment_method} onChange={e => setPay({ ...pay, payment_method: e.target.value })}>{['Bank transfer','Card','Cash','Online','Other'].map(x => <option key={x}>{x}</option>)}</select></label><label>Date<input type="datetime-local" value={pay.paid_at} onChange={e => setPay({ ...pay, paid_at: e.target.value })} /></label><div className="modal-actions"><button type="button" className="secondary-btn" onClick={() => setPay(null)}>Cancel</button><button className="primary-btn">Save payment</button></div></form></div>}
 
-    {preview && <div className="invoice-preview-backdrop" onClick={() => setPreview(null)}><div className="invoice-preview-shell" onClick={e => e.stopPropagation()}><div className="invoice-preview-toolbar"><div><strong>Invoice preview</strong><span>Commercial document</span></div><div className="invoice-preview-actions"><button type="button" className="secondary-btn" onClick={() => window.print()}><Download size={15} /> Print / Save PDF</button><button type="button" className="icon-btn" onClick={() => setPreview(null)}><X size={18} /></button></div></div><div className="invoice-print-sheet"><header className="invoice-document-header"><div className="invoice-company-block"><img src="/storhet-logo.png" alt="Storhet Solutions" className="invoice-company-logo" /><div><h2>STORHET SOLUTIONS</h2><p>Technology Solutions & Services</p></div></div><div className="invoice-title-block"><div className="invoice-document-title">INVOICE</div><div className="invoice-status-pill">{preview.status || 'Draft'}</div></div></header><div className="invoice-document-rule" /><section className="invoice-meta-grid"><div><span className="invoice-label">BILL TO</span><strong>{customerFor(preview)?.name || 'Customer'}</strong><span>{customerFor(preview)?.company || ''}</span><span>{customerFor(preview)?.email || ''}</span></div><div className="invoice-details-box"><div><span>Invoice #</span><strong>{preview.invoice_number}</strong></div><div><span>Invoice Date</span><strong>{formatDate(preview.created_at || new Date().toISOString())}</strong></div><div><span>Due Date</span><strong>{preview.due_date ? formatDate(preview.due_date) : '—'}</strong></div></div></section><table className="invoice-document-table"><thead><tr><th>#</th><th>ITEM &amp; DESCRIPTION</th><th>QTY</th><th>RATE</th><th>AMOUNT</th></tr></thead><tbody><tr><td>1</td><td><strong>{preview.title || 'Professional services'}</strong><span>Storhet Solutions delivery</span></td><td>{preview.quantity || 1}</td><td>{formatAmount(preview.unit_price ?? preview.amount)}</td><td>{formatAmount(preview.amount)}</td></tr></tbody></table><section className="invoice-bottom-grid"><div className="invoice-notes-block"><span className="invoice-label">NOTES</span><p>{preview.notes || 'Thank you for your business.'}</p></div><div className="invoice-totals-block"><div><span>Subtotal</span><strong>{formatAmount(preview.amount)}</strong></div><div className="invoice-total-row"><span>TOTAL</span><strong>{formatAmount(preview.amount)}</strong></div><div className="invoice-balance-row"><span>BALANCE DUE</span><strong>{formatAmount(preview.amount)}</strong></div></div></section><footer className="invoice-document-footer"><div><strong>Payment / Terms</strong><p>Please make payment by the stated due date.</p></div><div className="invoice-thank-you">Thank you for doing business with<br /><strong>STORHET SOLUTIONS</strong>.</div></footer></div></div></div>}
+    {preview && <div className="commercial-preview-backdrop" onClick={() => setPreview(null)}><div className="commercial-preview-shell" onClick={e => e.stopPropagation()}><div className="commercial-preview-toolbar"><div><strong>Invoice preview</strong><span>Commercial document</span></div><div className="toolbar-actions"><button type="button" className="secondary-btn" onClick={() => window.print()}>Print / Save PDF</button><button type="button" className="icon-btn" onClick={() => setPreview(null)}><X size={18} /></button></div></div><div className="commercial-print-sheet"><header className="commercial-document-header"><div><img src="/storhet-logo.png" alt="Storhet Solutions" className="invoice-company-logo" /><h2>STORHET SOLUTIONS</h2><p>Technology Solutions & Services</p></div><div className="commercial-document-title-block"><div className="commercial-document-title">INVOICE</div><span>{preview.status || 'Draft'}</span></div></header><div className="commercial-rule" /><section className="commercial-meta-grid"><div><span className="invoice-label">BILL TO</span><strong>{customerFor(preview)?.name || preview.title || 'Customer'}</strong><span>{customerFor(preview)?.company || ''}</span><span>{customerFor(preview)?.email || ''}</span></div><div className="commercial-details-box"><div><span>Invoice #</span><strong>{preview.invoice_number}</strong></div><div><span>Invoice Date</span><strong>{formatDate(preview.created_at || new Date().toISOString())}</strong></div><div><span>Due Date</span><strong>{preview.due_date ? formatDate(preview.due_date) : '—'}</strong></div><div><span>Currency</span><strong>{preview.currency_code || 'NGN'} · Rate {preview.exchange_rate || 1}</strong></div></div></section><table className="commercial-document-table"><thead><tr><th>#</th><th>ITEM &amp; DESCRIPTION</th><th>QTY</th><th>PRICE</th><th>DISCOUNT</th><th>AMOUNT</th></tr></thead><tbody>{(preview.__items || []).map((item, idx) => <tr key={item.id || idx}><td>{idx + 1}</td><td><strong>{item.product_name || 'Solution'}</strong><span>{item.description || ''}</span></td><td>{item.quantity || 1}</td><td>{formatCommercialAmount(item.unit_price, preview.currency_code)}</td><td>{Number(item.discount_percent || 0).toFixed(2)}%</td><td>{formatCommercialAmount(Number(item.total || 0), preview.currency_code)}</td></tr>)}</tbody></table><section className="commercial-bottom-grid"><div><span className="invoice-label">NOTES</span><p>{preview.notes || 'Thank you for your business.'}</p><span className="invoice-label">PAYMENT TERMS</span><p>{preview.payment_terms || 'Due on receipt.'}</p></div><div className="commercial-totals-block"><div><span>Subtotal</span><strong>{formatCommercialAmount(preview.subtotal ?? preview.amount, preview.currency_code)}</strong></div><div><span>Discount</span><strong>- {formatCommercialAmount(preview.discount || 0, preview.currency_code)}</strong></div><div><span>VAT ({preview.vat_rate ?? 7.5}%)</span><strong>{formatCommercialAmount(preview.vat_amount || 0, preview.currency_code)}</strong></div><div><span>Manual tax</span><strong>{formatCommercialAmount(preview.manual_tax || 0, preview.currency_code)}</strong></div><div className="commercial-grand-total"><span>TOTAL</span><strong>{formatCommercialAmount(preview.amount, preview.currency_code)}</strong></div></div></section><footer className="commercial-document-footer"><div><strong>Payment / Terms</strong><p>{preview.payment_terms || 'Please make payment by the stated due date.'}</p></div><div>Thank you for doing business with<br /><strong>STORHET SOLUTIONS</strong>.</div></footer></div></div></div>}
   </>;
 }
 function Documents({ documents, customers, onUpload, onDownload, onDelete }) { const [customerId, setCustomerId] = useState(''); const upload = e => { const f = e.target.files?.[0]; if (!f) return; onUpload(f, customerId).catch(err => alert(err.message)); e.target.value = '' }; return <><PageHeading eyebrow="FILES" title="Documents" description="Store customer and CRM files in Supabase Storage." /><div className="panel"><div className="toolbar"><select value={customerId} onChange={e => setCustomerId(e.target.value)}><option value="">No customer link</option>{customers.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}</select><label className="secondary-btn" style={{ display: 'inline-flex', alignItems: 'center', gap: 8, cursor: 'pointer' }}><Upload size={15} /> Upload file<input type="file" hidden onChange={upload} /></label></div><div className="table-wrap"><table><thead><tr><th>File</th><th>Customer</th><th>Type</th><th>Size</th><th>Created</th><th>Actions</th></tr></thead><tbody>{documents.length === 0 ? <tr><td colSpan="6">No documents yet.</td></tr> : documents.map(d => <tr key={d.id}><td><strong>{d.name}</strong></td><td>{d.customers?.name || '—'}</td><td>{d.mime_type}</td><td>{Math.max(1, Math.round(Number(d.size_bytes || 0) / 1024))} KB</td><td>{formatDate(d.created_at)}</td><td><div className="toolbar-actions"><button className="secondary-btn" onClick={() => onDownload(d)}><Download size={14} /> Download</button><button className="icon-btn" onClick={() => onDelete(d)}><X size={16} /></button></div></td></tr>)}</tbody></table></div></div></> }
