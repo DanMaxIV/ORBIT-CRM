@@ -12805,10 +12805,6 @@ select {
     box-shadow: none;
   }
 }
-
-/* =====================================================================
-   Page loading: blue progress bar + skeleton placeholders
-   ===================================================================== */
 .page-loading-bar {
   position: fixed;
   top: 0;
