@@ -7913,26 +7913,23 @@ function Quotes({ quotes = [], products = [], quoteItems = [], deals = [], dealP
               <th>Total</th>
               <th>Status</th>
               <th>Valid until</th>
-              <th>Created</th>
               <th>Actions</th>
             </tr>
           </thead>
           <tbody>
-            {visibleQuotes.length === 0 ? <tr><td colSpan="8">No quotes yet.</td></tr> : visibleQuotes.map(q => (
+            {visibleQuotes.length === 0 ? <tr><td colSpan="6">No quotes yet.</td></tr> : visibleQuotes.map(q => (
               <tr key={q.id}>
                 <td><strong>{q.quote_number}</strong><div className="deal-customer">{q.title}</div></td>
                 <td>{q.customer_name || q.company || '—'}{q.company && q.customer_name ? <div className="deal-customer">{q.company}</div> : null}</td>
-                <td>{deals.find(d => d.id === q.deal_id)?.title || '—'}</td>
                 <td>{formatAmount(q.total)}</td>
-                <td><div>{q.status}</div><small className="approval-range-hint">{approvalRequirement(q.total).label} approval</small></td>
+                <td><div>{q.status || '—'}</div><small className="approval-range-hint">{approvalRequirement(q.total).label} approval</small></td>
                 <td>{q.valid_until ? formatDate(q.valid_until) : '—'}</td>
-                <td>{q.created_at ? formatDate(q.created_at) : '—'}</td>
-                <td><div className="toolbar-actions">
+                <td><div className="quote-actions">
                   <button type="button" className="secondary-btn" onClick={async () => { try { const loaded = onLoadQuoteItems ? await onLoadQuoteItems(q) : quoteItems.filter(item => item.quote_id === q.id); setPreview({ ...q, __items: loaded || [] }); } catch (err) { alert(err.message || 'Unable to load quote items.'); } }}>View</button>
                   {(isCommercialEditor(role) || q.created_by === currentUserId) && <button className="secondary-btn" onClick={() => openEdit(q)}>Edit</button>}
-                  {isCommercialDeleter(role) && <button type="button" className="icon-btn" title="Delete quote" onClick={async () => { if (!window.confirm('Delete this quote?')) return; try { await onDelete(q.id); } catch (err) { alert(err.message || 'Unable to delete quote.'); } }}><X size={16} /></button>}
                   {q.created_by === currentUserId && ['HOS_PENDING', 'APPROVED', 'MD_PENDING'].indexOf(q.approval_status) === -1 && <button type="button" className="primary-btn approval-btn" onClick={async () => { try { await onSendToHOS(q.id); } catch (err) { alert(err.message); } }}>{q.approval_status === 'REJECTED' ? 'Resubmit to HOS' : 'Send to HOS'}</button>}
                   {q.approval_status === 'APPROVED' && <button type="button" className="secondary-btn" onClick={() => onCreateInvoice(q)}>Create Invoice</button>}
+                  {isCommercialDeleter(role) && <button type="button" className="quote-delete-btn icon-btn" title="Delete quote" aria-label="Delete quote" onClick={async () => { if (!window.confirm('Delete this quote?')) return; try { await onDelete(q.id); } catch (err) { alert(err.message || 'Unable to delete quote.'); } }}><X size={16} /></button>}
                 </div></td>
               </tr>
             ))}

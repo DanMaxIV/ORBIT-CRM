@@ -2462,6 +2462,27 @@ tbody tr:last-child td {
   gap: 8px;
 }
 
+/* Quote table actions stay together in one predictable row. */
+.quote-actions {
+  display: flex;
+  flex-wrap: nowrap;
+  align-items: center;
+  gap: 8px;
+  white-space: nowrap;
+}
+
+.quote-actions .quote-delete-btn {
+  width: 36px;
+  height: 36px;
+  flex: 0 0 36px;
+  border: 1px solid #e5e7eb;
+  background: #fff;
+}
+
+.quote-actions .quote-delete-btn:hover {
+  background: #f8fafc;
+}
+
 .toolbar-summary {
   margin-left: auto;
   font-size: 12px;
