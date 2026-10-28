@@ -97,6 +97,56 @@ function distanceInMeters(lat1, lon1, lat2, lon2) {
   return 2 * R * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
 }
 
+// Accuracy (metres) above which a GPS fix is flagged LOW_ACCURACY instead of trusted.
+const LOW_ACCURACY_METERS = 150;
+
+// Waits for a good GPS fix instead of trusting the first (often coarse) one.
+// Listens up to maxWaitMs, stops early once accuracy <= targetAccuracy metres,
+// otherwise resolves with the most accurate fix seen. Resolves a plain
+// { latitude, longitude, accuracy } object.
+function captureCurrentLocation(onSuccess, onFailure, { targetAccuracy = 50, maxWaitMs = 20000 } = {}) {
+  if (!navigator.geolocation) {
+    onFailure?.(new Error('Location is not supported by this browser.'));
+    return;
+  }
+  let best = null;
+  let done = false;
+  let watchId = null;
+  let timer = null;
+
+  const stop = () => {
+    done = true;
+    if (watchId != null) navigator.geolocation.clearWatch(watchId);
+    clearTimeout(timer);
+  };
+  const finish = () => {
+    if (done) return;
+    stop();
+    if (best) onSuccess?.(best);
+    else onFailure?.(new Error('Unable to get your current location.'));
+  };
+
+  watchId = navigator.geolocation.watchPosition(
+    position => {
+      const c = position.coords;
+      if (!best || c.accuracy < best.accuracy) {
+        best = { latitude: c.latitude, longitude: c.longitude, accuracy: c.accuracy };
+      }
+      if (c.accuracy <= targetAccuracy) finish();
+    },
+    error => {
+      if (done) return;
+      if (error.code === 1) {
+        stop();
+        onFailure?.(new Error('Location permission was denied.'));
+      }
+      // Other errors (timeout, position unavailable): keep waiting until the timer ends.
+    },
+    { enableHighAccuracy: true, timeout: maxWaitMs, maximumAge: 0 }
+  );
+  timer = setTimeout(finish, maxWaitMs);
+}
+
 function AuthScreen({ onGoogleSignIn, onMicrosoftSignIn, onEmailSignIn, onEmailSignUp, onPortalSignUp, authMode, setAuthMode, email, setEmail, password, setPassword,
   error,
   notice,
@@ -3567,127 +3617,115 @@ function App() {
       setEditDealSaving(false);
     }
   }
-  function captureCurrentLocation(onSuccess, onFailure) {
-    if (!navigator.geolocation) {
-      onFailure?.(new Error('Location is not supported by this browser.'));
-      return;
+
+  async function reverseGeocodeLocation(latitude, longitude) {
+    try {
+      const response = await fetch(`https://nominatim.openstreetmap.org/reverse?format=jsonv2&lat=${encodeURIComponent(latitude)}&lon=${encodeURIComponent(longitude)}&zoom=18&addressdetails=1`);
+      if (!response.ok) return { address: '', street: '', city: '', state: '', country: '' };
+      const result = await response.json();
+      const a = result.address || {};
+      const street = [a.house_number, a.road || a.pedestrian || a.footway].filter(Boolean).join(' ');
+      return {
+        address: result.display_name || '',
+        street,
+        city: a.city || a.town || a.village || a.suburb || a.county || '',
+        state: a.state || a.region || '',
+        country: a.country || ''
+      };
+    } catch (error) {
+      console.warn('Reverse geocoding failed:', error);
+      return { address: '', street: '', city: '', state: '', country: '' };
     }
-    navigator.geolocation.getCurrentPosition(
-      position => onSuccess?.(position.coords),
-      error => onFailure?.(new Error(error.code === 1 ? 'Location permission was denied.' : 'Unable to get your current location.')),
-      { enableHighAccuracy: true, timeout: 15000, maximumAge: 0 }
-    );
   }
 
   async function startFieldVisit(visitForm = {}) {
     setFieldVisitError('');
     const {
-      targetType = 'customer',
-      customerId = '',
-      targetName = '',
-      targetOrganization = '',
-      targetAddress = '',
-      visitType = 'Customer visit',
-      contactPerson = '',
-      objective = '',
-      notes = ''
+      targetType = 'customer', customerId = '', targetName = '', targetOrganization = '',
+      targetAddress = '', visitType = 'Customer visit', contactPerson = '', objective = '', notes = ''
     } = visitForm;
 
-    if (targetType === 'customer' && !customerId) throw new Error('Select a customer before starting a field visit.');
+    if (targetType === 'customer' && !customerId) throw new Error('Select a customer before scheduling a field visit.');
     if (targetType === 'other' && !targetName.trim()) throw new Error('Enter the person or organization you are visiting.');
-    if (!objective.trim()) throw new Error('Enter the visit objective before starting.');
+    if (!objective.trim()) throw new Error('Enter the visit objective before scheduling.');
 
     const customer = targetType === 'customer' ? customers.find(item => item.id === customerId) : null;
     if (targetType === 'customer' && !customer) throw new Error('Customer could not be found.');
 
+    const activityId = crypto.randomUUID();
+    const now = new Date().toISOString();
+    const resolvedName = targetType === 'customer' ? customer.name : targetName.trim();
+    const resolvedOrganization = targetType === 'customer' ? (customer.company || '') : targetOrganization.trim();
+    const resolvedAddress = targetType === 'customer' ? (customer.location_address?.trim() || '') : targetAddress.trim();
+    const title = `${visitType} — ${resolvedName}`;
+    const visitNotes = [
+      contactPerson ? `Contact: ${contactPerson}` : '',
+      resolvedOrganization ? `Organization: ${resolvedOrganization}` : '',
+      objective ? `Objective: ${objective}` : '',
+      notes ? `Notes: ${notes}` : '',
+      resolvedAddress ? `Visit address: ${resolvedAddress}` : '',
+      'Field visit scheduled. GPS will be captured when Check In is pressed.'
+    ].filter(Boolean).join('\n');
+
+    const { error: activityError } = await supabase.from('activities').insert({
+      id: activityId, title, type: 'Field Visit', activity_date: now, customer_id: customer?.id || null,
+      notes: visitNotes, status: 'Scheduled', priority: 'Medium', assigned_to: session.user.id, created_by: session.user.id
+    });
+    if (activityError) throw activityError;
+
+    const customerLat = customer && customer.latitude !== '' && customer.latitude != null ? Number(customer.latitude) : NaN;
+    const customerLng = customer && customer.longitude !== '' && customer.longitude != null ? Number(customer.longitude) : NaN;
+    const hasCustomerLocation = targetType === 'customer' && Number.isFinite(customerLat) && Number.isFinite(customerLng);
+    const { data, error } = await supabase.from('field_visits').insert({
+      activity_id: activityId, sales_rep_id: session.user.id, customer_id: customer?.id || null,
+      target_type: targetType, target_name: resolvedName, target_organization: resolvedOrganization || null,
+      target_address: resolvedAddress || null, purpose: visitType, contact_person: contactPerson.trim() || null,
+      objective: objective.trim(), notes: notes.trim() || null,
+      check_in_at: null, check_in_latitude: null, check_in_longitude: null, check_in_accuracy: null,
+      check_in_location_url: null, check_out_at: null, check_out_latitude: null, check_out_longitude: null,
+      check_out_accuracy: null, check_out_location_url: null,
+      customer_latitude: hasCustomerLocation ? customerLat : null,
+      customer_longitude: hasCustomerLocation ? customerLng : null,
+      distance_from_customer: null, verification_status: 'PENDING'
+    }).select().single();
+    if (error) {
+      await supabase.from('activities').delete().eq('id', activityId);
+      throw error;
+    }
+
+    setActivities(prev => [{
+      id: activityId, title, type: 'Field Visit', activity_date: now, customer_id: customer?.id || null,
+      notes: visitNotes, status: 'Scheduled', priority: 'Medium', assigned_to: session.user.id, created_by: session.user.id
+    }, ...prev]);
+    setFieldVisits(prev => [data, ...prev]);
+    return data;
+  }
+
+  async function checkInFieldVisit(visit) {
     return new Promise((resolve, reject) => {
-      // The browser requests location permission only after the visit form is submitted.
       captureCurrentLocation(async coords => {
         try {
-          const activityId = crypto.randomUUID();
+          const location = await reverseGeocodeLocation(coords.latitude, coords.longitude);
           const now = new Date().toISOString();
-          const customerLat = customer ? Number(customer.latitude) : NaN;
-          const customerLng = customer ? Number(customer.longitude) : NaN;
-          const hasCustomerLocation = targetType === 'customer' && Number.isFinite(customerLat) && Number.isFinite(customerLng);
+          const customerLat = Number(visit.customer_latitude);
+          const customerLng = Number(visit.customer_longitude);
+          const hasCustomerLocation = visit.customer_latitude != null && visit.customer_longitude != null && Number.isFinite(customerLat) && Number.isFinite(customerLng);
           const distance = hasCustomerLocation ? distanceInMeters(coords.latitude, coords.longitude, customerLat, customerLng) : null;
-          const verification = targetType === 'other'
-            ? 'LOCATION_CAPTURED'
-            : !hasCustomerLocation
-              ? 'NOT_CONFIGURED'
-              : distance <= 300
-                ? 'VERIFIED'
-                : distance <= 1000
-                  ? 'NEARBY'
-                  : 'MISMATCH';
-
-          const resolvedName = targetType === 'customer' ? customer.name : targetName.trim();
-          const resolvedOrganization = targetType === 'customer' ? (customer.company || '') : targetOrganization.trim();
-          const resolvedAddress = targetType === 'customer' ? (customer.location_address?.trim() || '') : targetAddress.trim();
-          const visitNotes = [
-            contactPerson ? `Contact: ${contactPerson}` : '',
-            resolvedOrganization ? `Organization: ${resolvedOrganization}` : '',
-            objective ? `Objective: ${objective}` : '',
-            notes ? `Notes: ${notes}` : '',
-            resolvedAddress ? `Visit address: ${resolvedAddress}` : '',
-            `Field visit started. GPS accuracy: ${Math.round(coords.accuracy || 0)}m.`
-          ].filter(Boolean).join('\n');
-          const title = `${visitType} — ${resolvedName}`;
-
-          const { error: activityError } = await supabase.from('activities').insert({
-            id: activityId,
-            title,
-            type: 'Field Visit',
-            activity_date: now,
-            customer_id: customer?.id || null,
-            notes: visitNotes,
-            status: 'In Progress',
-            priority: 'Medium',
-            assigned_to: session.user.id,
-            created_by: session.user.id
-          });
-          if (activityError) throw activityError;
-
-          const { data, error } = await supabase.from('field_visits').insert({
-            activity_id: activityId,
-            sales_rep_id: session.user.id,
-            customer_id: customer?.id || null,
-            target_type: targetType,
-            target_name: resolvedName,
-            target_organization: resolvedOrganization || null,
-            target_address: resolvedAddress || null,
-            purpose: visitType,
-            contact_person: contactPerson.trim() || null,
-            objective: objective.trim(),
-            notes: notes.trim() || null,
-            check_in_at: now,
-            check_in_latitude: coords.latitude,
-            check_in_longitude: coords.longitude,
+          const verification = coords.accuracy > LOW_ACCURACY_METERS ? 'LOW_ACCURACY' : visit.target_type === 'other' ? 'LOCATION_CAPTURED' : !hasCustomerLocation ? 'NOT_CONFIGURED' : distance <= 300 ? 'VERIFIED' : distance <= 1000 ? 'NEARBY' : 'MISMATCH';
+          const { data, error } = await supabase.from('field_visits').update({
+            check_in_at: now, check_in_latitude: coords.latitude, check_in_longitude: coords.longitude,
             check_in_accuracy: coords.accuracy || null,
-            check_in_location_url: googleMapsLocationUrl(coords.latitude, coords.longitude),
-            customer_latitude: hasCustomerLocation ? customerLat : null,
-            customer_longitude: hasCustomerLocation ? customerLng : null,
-            customer_location_address: targetType === 'customer' ? (customer.location_address?.trim() || null) : null,
-            distance_from_customer: distance,
-            verification_status: verification
-          }).select().single();
-          if (error) {
-            await supabase.from('activities').delete().eq('id', activityId);
-            throw error;
-          }
-
-          setActivities(prev => [{
-            id: activityId,
-            title,
-            type: 'Field Visit',
-            activity_date: now,
-            customer_id: customer?.id || null,
-            notes: visitNotes,
-            status: 'In Progress',
-            priority: 'Medium',
-            assigned_to: session.user.id,
-            created_by: session.user.id
-          }, ...prev]);
-          setFieldVisits(prev => [data, ...prev]);
+            check_in_location_url: googleMapsLocationUrl(coords.latitude, coords.longitude, location.address),
+            check_in_location_address: location.address || null, check_in_street: location.street || null,
+            check_in_city: location.city || null, check_in_state: location.state || null, check_in_country: location.country || null,
+            distance_from_customer: distance, verification_status: verification
+          }).eq('id', visit.id).is('check_in_at', null).select().single();
+          if (error) throw error;
+          const activityNotes = `Field visit checked in at ${now}. Address: ${location.address || 'Address unavailable'}. GPS accuracy: ${Math.round(coords.accuracy || 0)}m.`;
+          const { error: activityError } = await supabase.from('activities').update({ status: 'In Progress', notes: activityNotes }).eq('id', visit.activity_id);
+          if (activityError) console.warn('Could not update related activity status:', activityError.message);
+          setFieldVisits(prev => prev.map(item => item.id === data.id ? data : item));
+          setActivities(prev => prev.map(item => item.id === visit.activity_id ? { ...item, status: 'In Progress', notes: activityNotes } : item));
           resolve(data);
         } catch (error) { reject(error); }
       }, reject);
@@ -3695,28 +3733,30 @@ function App() {
   }
 
   async function endFieldVisit(visit) {
+    if (!visit.check_in_at) throw new Error('Check in to this visit before checking out.');
     return new Promise((resolve, reject) => {
       captureCurrentLocation(async coords => {
         try {
+          const location = await reverseGeocodeLocation(coords.latitude, coords.longitude);
           const now = new Date().toISOString();
           const customerLat = Number(visit.customer_latitude);
           const customerLng = Number(visit.customer_longitude);
-          const hasCustomerLocation = Number.isFinite(customerLat) && Number.isFinite(customerLng);
+          const hasCustomerLocation = visit.customer_latitude != null && visit.customer_longitude != null && Number.isFinite(customerLat) && Number.isFinite(customerLng);
           const distance = hasCustomerLocation ? distanceInMeters(coords.latitude, coords.longitude, customerLat, customerLng) : null;
-          const verification = !hasCustomerLocation ? 'NOT_CONFIGURED' : distance <= 300 ? 'VERIFIED' : distance <= 1000 ? 'NEARBY' : 'MISMATCH';
+          const verification = coords.accuracy > LOW_ACCURACY_METERS ? 'LOW_ACCURACY' : visit.target_type === 'other' ? 'LOCATION_CAPTURED' : !hasCustomerLocation ? 'NOT_CONFIGURED' : distance <= 300 ? 'VERIFIED' : distance <= 1000 ? 'NEARBY' : 'MISMATCH';
           const { data, error } = await supabase.from('field_visits').update({
-            check_out_at: now,
-            check_out_latitude: coords.latitude,
-            check_out_longitude: coords.longitude,
+            check_out_at: now, check_out_latitude: coords.latitude, check_out_longitude: coords.longitude,
             check_out_accuracy: coords.accuracy || null,
-            check_out_location_url: googleMapsLocationUrl(coords.latitude, coords.longitude),
-            distance_from_customer: distance ?? visit.distance_from_customer,
-            verification_status: verification
-          }).eq('id', visit.id).select().single();
+            check_out_location_url: googleMapsLocationUrl(coords.latitude, coords.longitude, location.address),
+            check_out_location_address: location.address || null, check_out_street: location.street || null,
+            check_out_city: location.city || null, check_out_state: location.state || null, check_out_country: location.country || null,
+            distance_from_customer: distance ?? visit.distance_from_customer, verification_status: verification
+          }).eq('id', visit.id).is('check_out_at', null).select().single();
           if (error) throw error;
-          await supabase.from('activities').update({ status: 'Completed', notes: `Field visit completed. Check-out GPS accuracy: ${Math.round(coords.accuracy || 0)}m.` }).eq('id', visit.activity_id);
+          const activityNotes = `Field visit completed. Check-out address: ${location.address || 'Address unavailable'}. GPS accuracy: ${Math.round(coords.accuracy || 0)}m.`;
+          await supabase.from('activities').update({ status: 'Completed', notes: activityNotes }).eq('id', visit.activity_id);
           setFieldVisits(prev => prev.map(item => item.id === data.id ? data : item));
-          setActivities(prev => prev.map(item => item.id === visit.activity_id ? { ...item, status: 'Completed', notes: `Field visit completed. Check-out GPS accuracy: ${Math.round(coords.accuracy || 0)}m.` } : item));
+          setActivities(prev => prev.map(item => item.id === visit.activity_id ? { ...item, status: 'Completed', notes: activityNotes } : item));
           resolve(data);
         } catch (error) { reject(error); }
       }, reject);
@@ -4189,7 +4229,7 @@ function App() {
             <Activities activities={activities} customers={customers} ownerProfiles={ownerProfiles} currentUserEmail={session.user.email} onAdd={() => { setActivityError(''); setNewActivity(a => ({ ...a, customer_id: '' })); setShowActivityForm(true); }} onStatusChange={updateActivityStatus} onDelete={deleteActivity} onEdit={activity => { setEditActivityError(''); setEditingActivity({ ...activity, activity_date: formatDateTimeLocal(activity.activity_date) }); }} onView={setSelectedActivity} currentUserId={session.user.id} isAdmin={isSystemAdminOrMD(authorizationProfile?.role)} />
           )}
           {page === 'Field Visits' && ['sales', 'head_of_sales', 'manager', 'admin'].includes(authorizationProfile?.role) && (
-            <FieldVisits customers={customers} fieldVisits={fieldVisits} currentUserId={session.user.id} role={authorizationProfile?.role} onStart={startFieldVisit} onEnd={endFieldVisit} error={fieldVisitError} />
+            <FieldVisits customers={customers} fieldVisits={fieldVisits} currentUserId={session.user.id} role={authorizationProfile?.role} onStart={startFieldVisit} onCheckIn={checkInFieldVisit} onEnd={endFieldVisit} error={fieldVisitError} />
           )}
           {page === 'Tickets' && authorizationProfile?.role !== 'technical_support' && (
             <Tickets
@@ -5357,20 +5397,22 @@ function normalizeBirthdayValue(value) {
 function LocationCaptureFields({ latitude, longitude, onCapture }) {
   const [capturing, setCapturing] = useState(false);
   const [error, setError] = useState('');
+  const [accuracy, setAccuracy] = useState(null);
   const capture = () => {
     setError('');
-    if (!navigator.geolocation) { setError('Location is not supported by this browser.'); return; }
+    setAccuracy(null);
     setCapturing(true);
-    navigator.geolocation.getCurrentPosition(
-      position => { setCapturing(false); onCapture(position.coords); },
-      error => { setCapturing(false); setError(error.code === 1 ? 'Location permission was denied.' : 'Could not capture location.'); },
-      { enableHighAccuracy: true, timeout: 15000, maximumAge: 0 }
+    captureCurrentLocation(
+      coords => { setCapturing(false); setAccuracy(coords.accuracy); onCapture(coords); },
+      err => { setCapturing(false); setError(err.message || 'Could not capture location.'); },
+      { targetAccuracy: 30, maxWaitMs: 25000 }
     );
   };
   const mapUrl = googleMapsLocationUrl(latitude, longitude);
   return <div className="location-capture-fields">
-    <div className="location-capture-heading"><div><strong>Customer branch location</strong><span>Used to verify field visits and retained for audit.</span></div><button type="button" className="secondary-btn" onClick={capture} disabled={capturing}>{capturing ? 'Capturing…' : 'Capture branch GPS'}</button></div>
+    <div className="location-capture-heading"><div><strong>Customer branch location</strong><span>Used to verify field visits and retained for audit.</span></div><button type="button" className="secondary-btn" onClick={capture} disabled={capturing}>{capturing ? 'Getting GPS fix…' : 'Capture branch GPS'}</button></div>
     {(latitude && longitude) && <div className="location-capture-meta"><small className="location-coordinates">{Number(latitude).toFixed(6)}, {Number(longitude).toFixed(6)}</small>{mapUrl && <a href={mapUrl} target="_blank" rel="noreferrer" className="field-visit-map-link">Open in Google Maps</a>}</div>}
+    {accuracy != null && <small className={accuracy > 100 ? 'form-error' : undefined}>Accuracy ±{Math.round(accuracy)} m{accuracy > 100 ? ' — low accuracy. Move outdoors (ideally use a phone) and capture again.' : ''}</small>}
     {error && <small className="form-error">{error}</small>}
   </div>;
 }
@@ -6266,7 +6308,7 @@ function googleMapsLocationUrl(latitude, longitude, address = '') {
   return `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(`${lat},${lng}`)}`;
 }
 
-function FieldVisits({ customers = [], fieldVisits = [], currentUserId, role, onStart, onEnd, error }) {
+function FieldVisits({ customers = [], fieldVisits = [], currentUserId, role, onStart, onCheckIn, onEnd, error }) {
   const [targetType, setTargetType] = useState('customer');
   const [customerId, setCustomerId] = useState('');
   const [targetName, setTargetName] = useState('');
@@ -6309,6 +6351,7 @@ function FieldVisits({ customers = [], fieldVisits = [], currentUserId, role, on
   };
 
   const statusLabel = visit => ({
+    PENDING: 'Pending check-in',
     VERIFIED: 'Verified',
     NEARBY: 'Nearby — review',
     MISMATCH: 'Location mismatch',
@@ -6326,14 +6369,14 @@ function FieldVisits({ customers = [], fieldVisits = [], currentUserId, role, on
     <PageHeading
       eyebrow="WORK & SUPPORT"
       title="Field Visits"
-      description="Record customer or external field visits with GPS check-in and check-out. Location is captured only when a visit is started or ended."
+      description="Schedule a field visit first, then capture arrival and departure locations with Check In and Check Out."
     />
 
     <div className="panel">
       <div className="panel-heading">
         <div>
           <h3>Start a field visit</h3>
-          <p>Complete the visit details first. Your browser will request location permission only when you start the visit.</p>
+          <p>Complete the visit details and schedule it. GPS is not requested until you press Check In on arrival.</p>
         </div>
       </div>
       {error && <div className="form-error">{error}</div>}
@@ -6395,37 +6438,39 @@ function FieldVisits({ customers = [], fieldVisits = [], currentUserId, role, on
 
         <div className="field-visit-location-notice field-visit-full">
           <span className="field-visit-location-dot">●</span>
-          <div><strong>Location verification</strong><p>When you click Start Visit, the browser will ask for permission to use your current location. The CRM captures your live location once, saves a Google Maps link with the exact GPS point, and keeps the timestamp and accuracy for audit. No continuous location tracking is used.</p></div>
+          <div><strong>Location verification</strong><p>Scheduling does not capture GPS. Check In records your arrival coordinates and street address; Check Out records your departure coordinates and street address. No continuous location tracking is used.</p></div>
         </div>
 
         <div className="field-visit-form-actions field-visit-full">
           <button type="button" className="primary-btn" onClick={start} disabled={(targetType === 'customer' ? !customerId : !targetName.trim()) || !objective.trim() || busy}>
-            {busy ? 'Requesting location…' : 'Start Visit & Capture Location'}
+            {busy ? 'Scheduling visit…' : 'Schedule Field Visit'}
           </button>
         </div>
       </div>
     </div>
 
     {activeVisits.length > 0 && <div className="panel">
-      <div className="panel-heading"><div><h3>Visits in progress</h3><p>End the visit when you leave the location.</p></div></div>
+      <div className="panel-heading"><div><h3>Scheduled &amp; active visits</h3><p>Scheduled visits need Check In on arrival. After checking in, use Check Out when you leave.</p></div></div>
       <div className="field-visit-cards">
         {activeVisits.map(visit => {
           const customer = customers.find(c => c.id === visit.customer_id);
           const checkInMapUrl = visit.check_in_location_url || googleMapsLocationUrl(visit.check_in_latitude, visit.check_in_longitude);
-          const targetMapUrl = googleMapsLocationUrl(visit.customer_latitude, visit.customer_longitude, visit.customer_location_address || visit.target_address || customer?.location_address);
+          const targetMapUrl = googleMapsLocationUrl(visit.customer_latitude, visit.customer_longitude, visit.check_in_location_address || visit.target_address || customer?.location_address);
           return <div className="field-visit-card" key={visit.id}>
             <div>
               <strong>{targetLabel(visit)}</strong>
               <span>{visit.target_organization || customer?.company || visit.purpose || 'Field visit'}</span>
               <small>{visit.contact_person ? `Contact: ${visit.contact_person}` : 'No contact person recorded'}</small>
-              <small>Started {formatDateTime(visit.check_in_at)}</small>
+              <small>{visit.check_in_at ? `Checked in ${formatDateTime(visit.check_in_at)}` : 'Scheduled — not checked in yet'}</small>
+              {visit.check_in_location_address && <small className="field-visit-address">Arrival: {visit.check_in_location_address}</small>}
+              {visit.check_out_location_address && <small className="field-visit-address">Departure: {visit.check_out_location_address}</small>}
               {visit.target_address && <small className="field-visit-address">{visit.target_address}</small>}
               <div className="field-visit-links">
                 {checkInMapUrl && <a href={checkInMapUrl} target="_blank" rel="noreferrer" className="field-visit-map-link">Open live location</a>}
                 {targetMapUrl && <a href={targetMapUrl} target="_blank" rel="noreferrer" className="field-visit-map-link">Open target location</a>}
               </div>
             </div>
-            <div><span className={`status ${String(visit.verification_status || '').toLowerCase()}`}>{statusLabel(visit)}</span><button type="button" className="secondary-btn" onClick={async () => { try { await onEnd(visit); } catch (e) { alert(e.message || 'Unable to end visit.'); } }}>End Visit</button></div>
+            <div><span className={`status ${String(visit.verification_status || '').toLowerCase()}`}>{statusLabel(visit)}</span>{!visit.check_in_at ? <button type="button" className="primary-btn" disabled={busy} onClick={async () => { setBusy(true); try { await onCheckIn(visit); } catch (e) { alert(e.message || 'Unable to check in.'); } finally { setBusy(false); } }}>Check In</button> : <button type="button" className="secondary-btn" disabled={busy} onClick={async () => { setBusy(true); try { await onEnd(visit); } catch (e) { alert(e.message || 'Unable to check out.'); } finally { setBusy(false); } }}>Check Out</button>}</div>
           </div>;
         })}
       </div>
@@ -6433,18 +6478,18 @@ function FieldVisits({ customers = [], fieldVisits = [], currentUserId, role, on
 
     <div className="panel">
       <div className="panel-heading"><div><h3>Visit history</h3><p>{visibleVisits.length} visit{visibleVisits.length === 1 ? '' : 's'} recorded. Location links are retained for audit.</p></div></div>
-      {visibleVisits.length === 0 ? <div className="empty-state"><p>No field visits yet.</p></div> : <div className="table-wrap"><table><thead><tr><th>Visit target</th><th>Started</th><th>Ended</th><th>Distance</th><th>Verification</th><th>Location</th></tr></thead><tbody>{visibleVisits.map(visit => {
+      {visibleVisits.length === 0 ? <div className="empty-state"><p>No field visits yet.</p></div> : <div className="table-wrap"><table><thead><tr><th>Visit target</th><th>Check In</th><th>Check Out</th><th>Distance</th><th>Verification</th><th>Location</th></tr></thead><tbody>{visibleVisits.map(visit => {
         const customer = customers.find(c => c.id === visit.customer_id);
         const checkInMapUrl = visit.check_in_location_url || googleMapsLocationUrl(visit.check_in_latitude, visit.check_in_longitude);
         const checkOutMapUrl = visit.check_out_location_url || googleMapsLocationUrl(visit.check_out_latitude, visit.check_out_longitude);
-        const targetMapUrl = googleMapsLocationUrl(visit.customer_latitude, visit.customer_longitude, visit.customer_location_address || visit.target_address || customer?.location_address);
+        const targetMapUrl = googleMapsLocationUrl(visit.customer_latitude, visit.customer_longitude, visit.check_in_location_address || visit.target_address || customer?.location_address);
         return <tr key={visit.id}>
           <td><strong>{targetLabel(visit)}</strong><div className="deal-customer">{visit.target_organization || customer?.company || visit.purpose || 'Field visit'}</div>{visit.target_address && <div className="field-visit-address">{visit.target_address}</div>}</td>
-          <td>{formatDateTime(visit.check_in_at)}</td>
-          <td>{visit.check_out_at ? formatDateTime(visit.check_out_at) : 'In progress'}</td>
+          <td>{visit.check_in_at ? formatDateTime(visit.check_in_at) : 'Not checked in'}</td>
+          <td>{visit.check_out_at ? formatDateTime(visit.check_out_at) : visit.check_in_at ? 'In progress' : 'Scheduled'}</td>
           <td>{visit.distance_from_customer == null ? '—' : `${Math.round(Number(visit.distance_from_customer))}m`}</td>
           <td><span className={`status ${String(visit.verification_status || '').toLowerCase()}`}>{statusLabel(visit)}</span></td>
-          <td><div className="field-visit-links field-visit-links-table">{checkInMapUrl && <a href={checkInMapUrl} target="_blank" rel="noreferrer" className="field-visit-map-link">Live location</a>}{checkOutMapUrl && <a href={checkOutMapUrl} target="_blank" rel="noreferrer" className="field-visit-map-link">Check-out location</a>}{targetMapUrl && <a href={targetMapUrl} target="_blank" rel="noreferrer" className="field-visit-map-link">Target location</a>}</div></td>
+          <td><div className="field-visit-links field-visit-links-table">{checkInMapUrl && <a href={checkInMapUrl} target="_blank" rel="noreferrer" className="field-visit-map-link">Check-in location</a>}{checkOutMapUrl && <a href={checkOutMapUrl} target="_blank" rel="noreferrer" className="field-visit-map-link">Check-out location</a>}{targetMapUrl && <a href={targetMapUrl} target="_blank" rel="noreferrer" className="field-visit-map-link">Target location</a>}</div></td>
         </tr>;
       })}</tbody></table></div>}
     </div>
