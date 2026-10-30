@@ -1,0 +1,9 @@
+{
+  "appId": "com.storhet.crm",
+  "appName": "Storhet CRM",
+  "webDir": "dist",
+  "server": {
+    "url": "https://storhet-crm-sand.vercel.app",
+    "cleartext": false
+  }
+}

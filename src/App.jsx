@@ -1,5 +1,8 @@
 import { createContext, useContext, useEffect, useMemo, useState, useRef } from 'react';
 import { supabase } from './lib/supabase';
+import { Capacitor } from '@capacitor/core';
+import { Browser } from '@capacitor/browser';
+import { App as CapApp } from '@capacitor/app';
 import FullCalendar from '@fullcalendar/react';
 import dayGridPlugin from '@fullcalendar/react/daygrid';
 import timeGridPlugin from '@fullcalendar/react/timegrid';
@@ -8,6 +11,9 @@ import interactionPlugin from '@fullcalendar/react/interaction';
 import '@fullcalendar/react/skeleton.css';
 import { LayoutDashboard, Users, Kanban, CalendarCheck, BarChart3, Settings, Bell, Search, Plus, ArrowUpRight, MoreHorizontal, Menu, X, UserRound, Pencil, Receipt, LogOut, UserCog, MessageCircle, UserPlus, Mail, CalendarDays, FileText, Workflow, TrendingUp, Tags, DollarSign, CreditCard, Upload, Download, Play, Target, CheckCircle2, ArrowLeft, ChevronRight, Building2, RefreshCw, GripVertical, MapPin } from 'lucide-react';
 
+
+const IS_NATIVE = Capacitor.isNativePlatform();
+const NATIVE_REDIRECT = 'com.storhet.crm://auth';
 // Lets every page heading refresh the latest workspace data without prop-drilling.
 const RefreshContext = createContext(null);
 
@@ -1163,6 +1169,27 @@ function App() {
     if (emailError) { setEmailIntegrationError(emailError); setPage('Email'); window.history.replaceState({}, document.title, window.location.pathname); }
   }, [session]);
 
+  useEffect(() => {
+  if (!IS_NATIVE) return;
+  const handle = CapApp.addListener('appUrlOpen', async ({ url }) => {
+    if (!url.startsWith(NATIVE_REDIRECT)) return;
+    await Browser.close();
+    const parsed = new URL(url);
+    const code = parsed.searchParams.get('code');
+    if (code) {
+      await supabase.auth.exchangeCodeForSession(code);
+      return;
+    }
+    const hash = new URLSearchParams(parsed.hash.replace(/^#/, ''));
+    const access_token = hash.get('access_token');
+    const refresh_token = hash.get('refresh_token');
+    if (access_token && refresh_token) {
+      await supabase.auth.setSession({ access_token, refresh_token });
+    }
+  });
+  return () => { handle.then(h => h.remove()); };
+}, []);
+
   const showToast = (message) => {
     setToast(message);
     window.clearTimeout(toastTimer.current);
@@ -1255,40 +1282,60 @@ function App() {
     .reduce((sum, d) => sum + (Number(d.amount) || 0), 0);
 
   // Fetching From supabase
-  async function signInWithGoogle() {
-    setAuthError('');
+  // async function signInWithGoogle() {
+  //   setAuthError('');
 
-    const { error } = await supabase.auth.signInWithOAuth({
-      provider: 'google',
+  //   const { error } = await supabase.auth.signInWithOAuth({
+  //     provider: 'google',
+  //     options: {
+  //       redirectTo: window.location.origin,
+  //       queryParams: {
+  //         prompt: 'select_account'
+  //       }
+  //     }
+  //   });
+
+  //   if (error) {
+  //     console.error('Google sign-in error:', error);
+  //     setAuthError(error.message);
+  //   }
+  // }
+  // async function signInWithMicrosoft() {
+  //   setAuthError('');
+
+  //   const { error } = await supabase.auth.signInWithOAuth({
+  //     provider: 'azure',
+  //     options: {
+  //       redirectTo: window.location.origin,
+  //       scopes: 'email'
+  //     }
+  //   });
+
+  //   if (error) {
+  //     console.error('Microsoft sign-in error:', error);
+  //     setAuthError(error.message);
+  //   }
+  // }
+  async function oauthSignIn(provider, extraOptions = {}) {
+    setAuthError('');
+    const { data, error } = await supabase.auth.signInWithOAuth({
+      provider,
       options: {
-        redirectTo: window.location.origin,
-        queryParams: {
-          prompt: 'select_account'
-        }
+        redirectTo: IS_NATIVE ? NATIVE_REDIRECT : window.location.origin,
+        skipBrowserRedirect: IS_NATIVE,
+        ...extraOptions
       }
     });
-
     if (error) {
-      console.error('Google sign-in error:', error);
+      console.error(`${provider} sign-in error:`, error);
       setAuthError(error.message);
+      return;
     }
+    if (IS_NATIVE && data?.url) await Browser.open({ url: data.url });
   }
-  async function signInWithMicrosoft() {
-    setAuthError('');
+  const signInWithGoogle = () => oauthSignIn('google', { queryParams: { prompt: 'select_account' } });
+  const signInWithMicrosoft = () => oauthSignIn('azure', { scopes: 'email' });
 
-    const { error } = await supabase.auth.signInWithOAuth({
-      provider: 'azure',
-      options: {
-        redirectTo: window.location.origin,
-        scopes: 'email'
-      }
-    });
-
-    if (error) {
-      console.error('Microsoft sign-in error:', error);
-      setAuthError(error.message);
-    }
-  }
   async function signInWithEmail(event) {
     event.preventDefault();
     justSignedUp.current = false;
@@ -1754,21 +1801,21 @@ function App() {
     }
     setDealProducts(data || []);
   }
-  async function fetchEmailLogs() { 
+  async function fetchEmailLogs() {
     if (!session?.user?.id) return;
-    
+
     const { data, error } = await fetchAllRows(() => supabase
       .from('email_logs')
       .select('*, customers(name,company)')
       .eq('created_by', session.user.id) // <--- Adds privacy filter
       .order('sent_at', { ascending: false }));
-      
-    if (error) { 
-      console.error('Error fetching email logs:', error); 
-      return; 
-    } 
-    
-    setEmailLogs(data || []); 
+
+    if (error) {
+      console.error('Error fetching email logs:', error);
+      return;
+    }
+
+    setEmailLogs(data || []);
   }
   async function createDueCalendarNotifications(calendarRows = []) {
     if (!session?.user?.id || !calendarRows.length) return;
@@ -2062,7 +2109,7 @@ function App() {
     ]);
   }
   async function deleteLead(id) { if (!window.confirm('Delete this lead?')) return; const { error } = await supabase.from('leads').delete().eq('id', id); if (error) { alert(error.message); return; } setLeads(prev => prev.filter(x => x.id !== id)); }
-  
+
   function datasetLoaders(key) {
     switch (key) {
       case 'customers': return [fetchCustomers()];
@@ -4273,105 +4320,105 @@ function App() {
       <RefreshContext.Provider value={{ refreshAll, refreshing }}>
         <section className="page-content">
           {!pageDataReady ? <PageSkeleton /> : <>
-          {page === 'Dashboard' && (
-            <Dashboard revenue={revenue} customers={customers} leads={leads} deals={deals} activities={activities} tickets={tickets} setPage={setPage} formatAmount={formatAmount} onSelectCustomer={setSelectedCustomer} onEditCustomer={setEditingCustomer} onDeleteCustomer={deleteCustomer} currentUserId={session.user.id} role={authorizationProfile?.role} />
-          )}
-          {page === 'MD Panel' && ['manager', 'admin'].includes(authorizationProfile?.role) && <MDPanel deals={deals} quotes={quotes} invoices={invoices} customers={customers} formatAmount={formatAmount} onApprove={approveCommercialRecord} onReject={rejectCommercialRecord} />}
-          {page === 'HOS Panel' && authorizationProfile?.role === 'head_of_sales' && <HOSPanel deals={deals} quotes={quotes} invoices={invoices} quoteItems={quoteItems} tickets={tickets} ownerProfiles={ownerProfiles} formatAmount={formatAmount} currentUserId={session.user.id} role={authorizationProfile?.role} setPage={setPage} onApprove={approveCommercialRecord} onReject={rejectCommercialRecord} />}
-          {page === 'HR Panel' && authorizationProfile?.role === 'hr' && <HRPanel activities={activities} authorizedUsers={authorizedUsers} ownerProfiles={ownerProfiles} customers={customers} leads={leads} />}
-          {page === 'Technical Support Panel' && authorizationProfile?.role === 'technical_support' && <TechnicalSupportPanel tickets={tickets} customers={customers} formatAmount={formatAmount} currentUserId={session.user.id} ticketError={ticketError} onAddTicket={() => { setTicketError(''); setNewTicket(t => ({ ...t, customer_id: '' })); setShowTicketForm(true); }} onStatusChange={updateTicketStatus} onDeleteTicket={deleteTicket} onEditTicket={ticket => { setEditTicketError(''); setEditingTicket(ticket); }} onViewTicket={setSelectedTicket} isAdmin={isAdminRole(authorizationProfile?.role)} role={authorizationProfile?.role} canManage={canManageTicket} staffName={staffName} staffOptions={getStaffOptions()} onAssign={assignTicket} setPage={setPage} />}
-          {page === 'Customers' && (
-            <Customers customers={filteredCustomers}
-              allCustomers={customers}
-              search={search}
-              setSearch={setSearch}
-              statusFilter={statusFilter}
-              setStatusFilter={setStatusFilter}
-              deals={deals}
-              onImport={importCustomers}
-              onAdd={() => { setCustomerError(''); setShowCustomerForm(true); }}
-              formatAmount={formatAmount}
-              onSelectCustomer={setSelectedCustomer}
-              onDeleteCustomer={deleteCustomer}
-              onEditCustomer={setEditingCustomer}
-              currentUserId={session.user.id}
-              role={authorizationProfile?.role}
-            />
-          )}
-          {page === 'Products' && <Products products={products} supportEngineers={supportEngineers} solutionSupport={solutionSupport} onAdd={addProduct} onUpdate={updateProduct} onDelete={deleteProduct} onUpdateFamilySupport={syncSolutionSupport} currentUserId={session.user.id} isAdmin={isSystemAdminOrMD(authorizationProfile?.role)} />}
-          {page === 'Technical Support' && <SupportEngineers supportEngineers={supportEngineers} solutionSupport={solutionSupport} onAdd={addSupportEngineer} onUpdate={updateSupportEngineer} onDeactivate={deactivateSupportEngineer} isAdmin={isSystemAdminOrMD(authorizationProfile?.role)} />}
-          {page === 'Leads' && <Leads leads={leads} customers={customers} products={products} leadProducts={leadProducts} onAdd={addLead} onUpdate={updateLead} onSyncProducts={syncLeadProducts} onDelete={deleteLead} currentUserId={session.user.id} isAdmin={['admin', 'manager', 'head_of_sales'].includes(authorizationProfile?.role)} />}
-          {page === 'Email' && <EmailPage emailLogs={emailLogs} customers={customers} integrations={emailIntegrations} loading={emailIntegrationLoading} error={emailIntegrationError} onConnect={connectEmailProvider} onDisconnect={disconnectEmailProvider} onCompose={() => openCompose()} onAdd={async payload => { try { await addEmailLog(payload); showToast('Email logged.'); } catch (e) { alert(e.message); } }} />}
-          {page === 'Calendar' && <CalendarPage events={calendarEvents} customers={customers} onAdd={addCalendarEvent} onUpdate={updateCalendarEvent} onDelete={deleteCalendarEvent} onRefresh={fetchCalendarEvents} />}
-          {page === 'Quotes' && <Quotes quotes={quotes} products={products} deals={deals} dealProducts={dealProducts} customers={customers} quoteItems={quoteItems} onLoadQuoteItems={loadQuoteItems} onAdd={addQuote} onUpdate={updateQuote} onDelete={deleteQuote} formatAmount={formatAmount} currentUserId={session.user.id} isAdmin={isAdminRole(authorizationProfile?.role)} role={authorizationProfile?.role} onSendToHOS={sendQuoteToHOS} initialDealId={commercialLaunch?.type === 'quote' ? commercialLaunch.dealId : ''} dealFilterId={commercialView?.type === 'quotes' ? commercialView.dealId : ''} onLaunchConsumed={() => setCommercialLaunch(null)} onCreateInvoice={launchInvoiceFromQuote} />}
-          {page === 'Invoices' && <Invoices invoices={invoices} payments={payments} customers={customers} products={products} deals={deals} dealProducts={dealProducts} quotes={quotes} onAdd={addInvoice} onUpdate={updateInvoice} onDelete={deleteInvoice} onAddPayment={addPayment} formatAmount={formatAmount} currentUserId={session.user.id} isAdmin={isAdminRole(authorizationProfile?.role)} role={authorizationProfile?.role} onSendToHOS={sendInvoiceToHOS} onLoadInvoiceItems={loadInvoiceItems} onLoadQuoteItems={loadQuoteItems} initialDealId={commercialLaunch?.type === 'invoice' ? commercialLaunch.dealId : ''} initialQuoteId={commercialLaunch?.type === 'invoice' ? commercialLaunch.quoteId : ''} dealFilterId={commercialView?.type === 'invoices' ? commercialView.dealId : ''} onLaunchConsumed={() => setCommercialLaunch(null)} />}
-          {page === 'Documents' && <Documents documents={documents} customers={customers} onUpload={uploadDocument} onDownload={downloadDocument} onDelete={deleteDocument} />}
-          {page === 'Automation' && <Automation workflows={workflows} onAdd={addWorkflow} onUpdate={updateWorkflow} />}
-          {page === 'Segments' && <Segments segments={segments} customers={customers} onAdd={addSegment} onUpdate={updateSegment} />}
-          {page === 'Forecast' && <Forecast deals={deals} formatAmount={formatAmount} />}
-          {page === 'Pipeline' && (
-            <Pipeline
-              deals={deals}
-              customers={customers}
-              dealSupport={dealSupport}
-              supportEngineers={supportEngineers}
-              moveDeal={moveDeal}
-              deleteDeal={deleteDeal}
-              formatAmount={formatAmount}
-              currentUserId={session.user.id}
-              ownerProfiles={ownerProfiles}
-              isAdmin={isAdminRole(authorizationProfile?.role)}
-              role={authorizationProfile?.role}
-              onCreateQuoteFromDeal={launchQuoteFromDeal}
-              onViewDealCommercials={viewDealCommercials}
-              onEdit={deal => {
-                setEditDealError('');
-                setEditingDeal({
-                  ...deal,
-                  amount: String(deal.amount ?? ''),
-                  product_ids: dealProducts.filter(row => row.deal_id === deal.id).map(row => row.product_id),
-                  support_engineer_ids: dealSupport.filter(row => row.deal_id === deal.id).map(row => row.support_engineer_id)
-                });
-              }}
-              onAdd={() => {
-                setDealError('');
-                setNewDeal({ title: '', company: '', amount: '', stage: 'New Lead', customer_id: '', contact_name: '', contact_email: '', contact_phone: '', new_customer_name: '', new_customer_email: '', new_customer_phone: '', new_customer_company: '', new_customer_job_title: '', new_customer_birthday: '', closure_start_at: '', closure_end_at: '', support_engineer_ids: [] });
-                setSelectedDealProductIds([]);
-                setExpandedDealVendor(null);
-                setShowDealForm(true);
-              }}
-            />
-          )}
-          {page === 'Activities' && (
-            <Activities activities={activities} customers={customers} ownerProfiles={ownerProfiles} currentUserEmail={session.user.email} onAdd={() => { setActivityError(''); setNewActivity(a => ({ ...a, customer_id: '' })); setShowActivityForm(true); }} onStatusChange={updateActivityStatus} onDelete={deleteActivity} onEdit={activity => { setEditActivityError(''); setEditingActivity({ ...activity, activity_date: formatDateTimeLocal(activity.activity_date) }); }} onView={setSelectedActivity} currentUserId={session.user.id} isAdmin={isSystemAdminOrMD(authorizationProfile?.role)} />
-          )}
-          {page === 'Field Visits' && ['sales', 'head_of_sales', 'manager', 'admin'].includes(authorizationProfile?.role) && (
-            <FieldVisits customers={customers} fieldVisits={fieldVisits} currentUserId={session.user.id} role={authorizationProfile?.role} onStart={startFieldVisit} onCheckIn={checkInFieldVisit} onEnd={endFieldVisit} error={fieldVisitError} />
-          )}
-          {page === 'Tickets' && authorizationProfile?.role !== 'technical_support' && (
-            <Tickets
-              tickets={tickets}
-              error={ticketError}
-              onAdd={() => { setTicketError(''); setNewTicket(t => ({ ...t, customer_id: '' })); setShowTicketForm(true); }}
-              onStatusChange={updateTicketStatus}
-              onDelete={deleteTicket}
-              onEdit={ticket => { setEditTicketError(''); setEditingTicket(ticket); }}
-              onView={setSelectedTicket}
-              currentUserId={session.user.id}
-              isAdmin={isAdminRole(authorizationProfile?.role)}
-              role={authorizationProfile?.role}
-              canCreate={['admin', 'manager', 'head_of_sales'].includes(authorizationProfile?.role)}
-              canManage={canManageTicket}
-              staffName={staffName}
-              staffOptions={getStaffOptions()}
-              onAssign={assignTicket}
-            />
-          )}
-          {page === 'Chat' && <Chat />}
-          {page === 'Reports' && <AdvancedReports customers={customers} deals={deals} activities={activities} tickets={tickets} leads={leads} quotes={quotes} invoices={invoices} payments={payments} formatAmount={formatAmount} />}
-          {page === 'Email Logs' && <EmailLogs emailLogs={emailLogs} customers={customers} onAdd={addEmailLog} />}
-          {page === 'UserManagement' && isAdminRole(authorizationProfile?.role) && <UserManagement users={authorizedUsers} loading={usersLoading} error={usersError} onRefresh={fetchAuthorizedUsers} onUpdateUser={updateAuthorizedUser} currentUserId={session?.user?.id} pendingPortalAccounts={pendingPortalAccounts} portalRequestsLoading={portalRequestsLoading} portalRequestsError={portalRequestsError} portalRequestsNotice={portalRequestsNotice} onRefreshPortalRequests={fetchPendingPortalAccounts} onReviewPortalRequest={reviewPortalRequest} portalRequestActionId={portalRequestActionId} onInviteStaff={inviteStaffWorker} onOpenInviteEmail={openCompose} staffInvitations={staffInvitations} onRevokeStaffInvitation={revokeStaffInvitation} staffInvitationActionId={staffInvitationActionId} />}
-          {page === 'Settings' && <SettingsPage currency={currency} setCurrency={setCurrency} theme={theme} setTheme={setTheme} />}
+            {page === 'Dashboard' && (
+              <Dashboard revenue={revenue} customers={customers} leads={leads} deals={deals} activities={activities} tickets={tickets} setPage={setPage} formatAmount={formatAmount} onSelectCustomer={setSelectedCustomer} onEditCustomer={setEditingCustomer} onDeleteCustomer={deleteCustomer} currentUserId={session.user.id} role={authorizationProfile?.role} />
+            )}
+            {page === 'MD Panel' && ['manager', 'admin'].includes(authorizationProfile?.role) && <MDPanel deals={deals} quotes={quotes} invoices={invoices} customers={customers} formatAmount={formatAmount} onApprove={approveCommercialRecord} onReject={rejectCommercialRecord} />}
+            {page === 'HOS Panel' && authorizationProfile?.role === 'head_of_sales' && <HOSPanel deals={deals} quotes={quotes} invoices={invoices} quoteItems={quoteItems} tickets={tickets} ownerProfiles={ownerProfiles} formatAmount={formatAmount} currentUserId={session.user.id} role={authorizationProfile?.role} setPage={setPage} onApprove={approveCommercialRecord} onReject={rejectCommercialRecord} />}
+            {page === 'HR Panel' && authorizationProfile?.role === 'hr' && <HRPanel activities={activities} authorizedUsers={authorizedUsers} ownerProfiles={ownerProfiles} customers={customers} leads={leads} />}
+            {page === 'Technical Support Panel' && authorizationProfile?.role === 'technical_support' && <TechnicalSupportPanel tickets={tickets} customers={customers} formatAmount={formatAmount} currentUserId={session.user.id} ticketError={ticketError} onAddTicket={() => { setTicketError(''); setNewTicket(t => ({ ...t, customer_id: '' })); setShowTicketForm(true); }} onStatusChange={updateTicketStatus} onDeleteTicket={deleteTicket} onEditTicket={ticket => { setEditTicketError(''); setEditingTicket(ticket); }} onViewTicket={setSelectedTicket} isAdmin={isAdminRole(authorizationProfile?.role)} role={authorizationProfile?.role} canManage={canManageTicket} staffName={staffName} staffOptions={getStaffOptions()} onAssign={assignTicket} setPage={setPage} />}
+            {page === 'Customers' && (
+              <Customers customers={filteredCustomers}
+                allCustomers={customers}
+                search={search}
+                setSearch={setSearch}
+                statusFilter={statusFilter}
+                setStatusFilter={setStatusFilter}
+                deals={deals}
+                onImport={importCustomers}
+                onAdd={() => { setCustomerError(''); setShowCustomerForm(true); }}
+                formatAmount={formatAmount}
+                onSelectCustomer={setSelectedCustomer}
+                onDeleteCustomer={deleteCustomer}
+                onEditCustomer={setEditingCustomer}
+                currentUserId={session.user.id}
+                role={authorizationProfile?.role}
+              />
+            )}
+            {page === 'Products' && <Products products={products} supportEngineers={supportEngineers} solutionSupport={solutionSupport} onAdd={addProduct} onUpdate={updateProduct} onDelete={deleteProduct} onUpdateFamilySupport={syncSolutionSupport} currentUserId={session.user.id} isAdmin={isSystemAdminOrMD(authorizationProfile?.role)} />}
+            {page === 'Technical Support' && <SupportEngineers supportEngineers={supportEngineers} solutionSupport={solutionSupport} onAdd={addSupportEngineer} onUpdate={updateSupportEngineer} onDeactivate={deactivateSupportEngineer} isAdmin={isSystemAdminOrMD(authorizationProfile?.role)} />}
+            {page === 'Leads' && <Leads leads={leads} customers={customers} products={products} leadProducts={leadProducts} onAdd={addLead} onUpdate={updateLead} onSyncProducts={syncLeadProducts} onDelete={deleteLead} currentUserId={session.user.id} isAdmin={['admin', 'manager', 'head_of_sales'].includes(authorizationProfile?.role)} />}
+            {page === 'Email' && <EmailPage emailLogs={emailLogs} customers={customers} integrations={emailIntegrations} loading={emailIntegrationLoading} error={emailIntegrationError} onConnect={connectEmailProvider} onDisconnect={disconnectEmailProvider} onCompose={() => openCompose()} onAdd={async payload => { try { await addEmailLog(payload); showToast('Email logged.'); } catch (e) { alert(e.message); } }} />}
+            {page === 'Calendar' && <CalendarPage events={calendarEvents} customers={customers} onAdd={addCalendarEvent} onUpdate={updateCalendarEvent} onDelete={deleteCalendarEvent} onRefresh={fetchCalendarEvents} />}
+            {page === 'Quotes' && <Quotes quotes={quotes} products={products} deals={deals} dealProducts={dealProducts} customers={customers} quoteItems={quoteItems} onLoadQuoteItems={loadQuoteItems} onAdd={addQuote} onUpdate={updateQuote} onDelete={deleteQuote} formatAmount={formatAmount} currentUserId={session.user.id} isAdmin={isAdminRole(authorizationProfile?.role)} role={authorizationProfile?.role} onSendToHOS={sendQuoteToHOS} initialDealId={commercialLaunch?.type === 'quote' ? commercialLaunch.dealId : ''} dealFilterId={commercialView?.type === 'quotes' ? commercialView.dealId : ''} onLaunchConsumed={() => setCommercialLaunch(null)} onCreateInvoice={launchInvoiceFromQuote} />}
+            {page === 'Invoices' && <Invoices invoices={invoices} payments={payments} customers={customers} products={products} deals={deals} dealProducts={dealProducts} quotes={quotes} onAdd={addInvoice} onUpdate={updateInvoice} onDelete={deleteInvoice} onAddPayment={addPayment} formatAmount={formatAmount} currentUserId={session.user.id} isAdmin={isAdminRole(authorizationProfile?.role)} role={authorizationProfile?.role} onSendToHOS={sendInvoiceToHOS} onLoadInvoiceItems={loadInvoiceItems} onLoadQuoteItems={loadQuoteItems} initialDealId={commercialLaunch?.type === 'invoice' ? commercialLaunch.dealId : ''} initialQuoteId={commercialLaunch?.type === 'invoice' ? commercialLaunch.quoteId : ''} dealFilterId={commercialView?.type === 'invoices' ? commercialView.dealId : ''} onLaunchConsumed={() => setCommercialLaunch(null)} />}
+            {page === 'Documents' && <Documents documents={documents} customers={customers} onUpload={uploadDocument} onDownload={downloadDocument} onDelete={deleteDocument} />}
+            {page === 'Automation' && <Automation workflows={workflows} onAdd={addWorkflow} onUpdate={updateWorkflow} />}
+            {page === 'Segments' && <Segments segments={segments} customers={customers} onAdd={addSegment} onUpdate={updateSegment} />}
+            {page === 'Forecast' && <Forecast deals={deals} formatAmount={formatAmount} />}
+            {page === 'Pipeline' && (
+              <Pipeline
+                deals={deals}
+                customers={customers}
+                dealSupport={dealSupport}
+                supportEngineers={supportEngineers}
+                moveDeal={moveDeal}
+                deleteDeal={deleteDeal}
+                formatAmount={formatAmount}
+                currentUserId={session.user.id}
+                ownerProfiles={ownerProfiles}
+                isAdmin={isAdminRole(authorizationProfile?.role)}
+                role={authorizationProfile?.role}
+                onCreateQuoteFromDeal={launchQuoteFromDeal}
+                onViewDealCommercials={viewDealCommercials}
+                onEdit={deal => {
+                  setEditDealError('');
+                  setEditingDeal({
+                    ...deal,
+                    amount: String(deal.amount ?? ''),
+                    product_ids: dealProducts.filter(row => row.deal_id === deal.id).map(row => row.product_id),
+                    support_engineer_ids: dealSupport.filter(row => row.deal_id === deal.id).map(row => row.support_engineer_id)
+                  });
+                }}
+                onAdd={() => {
+                  setDealError('');
+                  setNewDeal({ title: '', company: '', amount: '', stage: 'New Lead', customer_id: '', contact_name: '', contact_email: '', contact_phone: '', new_customer_name: '', new_customer_email: '', new_customer_phone: '', new_customer_company: '', new_customer_job_title: '', new_customer_birthday: '', closure_start_at: '', closure_end_at: '', support_engineer_ids: [] });
+                  setSelectedDealProductIds([]);
+                  setExpandedDealVendor(null);
+                  setShowDealForm(true);
+                }}
+              />
+            )}
+            {page === 'Activities' && (
+              <Activities activities={activities} customers={customers} ownerProfiles={ownerProfiles} currentUserEmail={session.user.email} onAdd={() => { setActivityError(''); setNewActivity(a => ({ ...a, customer_id: '' })); setShowActivityForm(true); }} onStatusChange={updateActivityStatus} onDelete={deleteActivity} onEdit={activity => { setEditActivityError(''); setEditingActivity({ ...activity, activity_date: formatDateTimeLocal(activity.activity_date) }); }} onView={setSelectedActivity} currentUserId={session.user.id} isAdmin={isSystemAdminOrMD(authorizationProfile?.role)} />
+            )}
+            {page === 'Field Visits' && ['sales', 'head_of_sales', 'manager', 'admin'].includes(authorizationProfile?.role) && (
+              <FieldVisits customers={customers} fieldVisits={fieldVisits} currentUserId={session.user.id} role={authorizationProfile?.role} onStart={startFieldVisit} onCheckIn={checkInFieldVisit} onEnd={endFieldVisit} error={fieldVisitError} />
+            )}
+            {page === 'Tickets' && authorizationProfile?.role !== 'technical_support' && (
+              <Tickets
+                tickets={tickets}
+                error={ticketError}
+                onAdd={() => { setTicketError(''); setNewTicket(t => ({ ...t, customer_id: '' })); setShowTicketForm(true); }}
+                onStatusChange={updateTicketStatus}
+                onDelete={deleteTicket}
+                onEdit={ticket => { setEditTicketError(''); setEditingTicket(ticket); }}
+                onView={setSelectedTicket}
+                currentUserId={session.user.id}
+                isAdmin={isAdminRole(authorizationProfile?.role)}
+                role={authorizationProfile?.role}
+                canCreate={['admin', 'manager', 'head_of_sales'].includes(authorizationProfile?.role)}
+                canManage={canManageTicket}
+                staffName={staffName}
+                staffOptions={getStaffOptions()}
+                onAssign={assignTicket}
+              />
+            )}
+            {page === 'Chat' && <Chat />}
+            {page === 'Reports' && <AdvancedReports customers={customers} deals={deals} activities={activities} tickets={tickets} leads={leads} quotes={quotes} invoices={invoices} payments={payments} formatAmount={formatAmount} />}
+            {page === 'Email Logs' && <EmailLogs emailLogs={emailLogs} customers={customers} onAdd={addEmailLog} />}
+            {page === 'UserManagement' && isAdminRole(authorizationProfile?.role) && <UserManagement users={authorizedUsers} loading={usersLoading} error={usersError} onRefresh={fetchAuthorizedUsers} onUpdateUser={updateAuthorizedUser} currentUserId={session?.user?.id} pendingPortalAccounts={pendingPortalAccounts} portalRequestsLoading={portalRequestsLoading} portalRequestsError={portalRequestsError} portalRequestsNotice={portalRequestsNotice} onRefreshPortalRequests={fetchPendingPortalAccounts} onReviewPortalRequest={reviewPortalRequest} portalRequestActionId={portalRequestActionId} onInviteStaff={inviteStaffWorker} onOpenInviteEmail={openCompose} staffInvitations={staffInvitations} onRevokeStaffInvitation={revokeStaffInvitation} staffInvitationActionId={staffInvitationActionId} />}
+            {page === 'Settings' && <SettingsPage currency={currency} setCurrency={setCurrency} theme={theme} setTheme={setTheme} />}
           </>}
         </section>
       </RefreshContext.Provider>
@@ -8109,7 +8156,7 @@ function Quotes({ quotes = [], products = [], quoteItems = [], deals = [], dealP
           <label>Email<input type="email" placeholder="customer@company.com" value={form.email} onChange={e => setForm({ ...form, email: e.target.value })} /></label>
           <label>Phone<input value={form.phone} onChange={e => setForm({ ...form, phone: e.target.value })} /></label>
           <label>Deal (optional)<select value={form.deal_id || ''} onChange={e => selectDeal(e.target.value)}><option value="">Manual quote — no Deal</option>{selectableWonDeals.map(d => <option key={d.id} value={d.id}>{d.title}{d.company ? ` · ${d.company}` : ''}</option>)}</select></label>
-          <label>Currency<select value={form.currency_code || 'USD'} onChange={e => setForm({ ...form, currency_code: e.target.value, exchange_rate: suggestedUsdRate(e.target.value) })}>{COMMERCIAL_CURRENCIES.map(([code,label]) => <option key={code} value={code}>{code} — {label}</option>)}</select></label>
+          <label>Currency<select value={form.currency_code || 'USD'} onChange={e => setForm({ ...form, currency_code: e.target.value, exchange_rate: suggestedUsdRate(e.target.value) })}>{COMMERCIAL_CURRENCIES.map(([code, label]) => <option key={code} value={code}>{code} — {label}</option>)}</select></label>
           {form.currency_code === 'OTHER' && <label>Currency code<input maxLength={6} placeholder="e.g. AED" value={form.custom_currency_code || ''} onChange={e => setForm({ ...form, custom_currency_code: e.target.value.toUpperCase() })} /></label>}
           <label>Exchange rate<span className="field-help">USD value of 1 unit of the selected currency (USD = 1)</span><input type="number" min="0" step="0.000001" value={form.exchange_rate} onChange={e => setForm({ ...form, exchange_rate: e.target.value })} /></label>
         </div>
@@ -8323,7 +8370,7 @@ function Invoices({ invoices, payments, customers, products, deals = [], dealPro
     <div className="panel"><div className="table-wrap"><table><thead><tr><th>Invoice</th><th>Customer</th><th>Deal</th><th>Source Quote</th><th>Amount</th><th>Status</th><th>Due</th><th>Actions</th></tr></thead><tbody>
       {visibleInvoices.length === 0 ? <tr><td colSpan="8">No invoices yet.</td></tr> : visibleInvoices.map(i => <tr key={i.id}>
         <td><strong>{i.invoice_number}</strong><div className="deal-customer">{i.title}</div></td><td>{i.customers?.name || customerFor(i)?.name || '—'}</td><td>{deals.find(d => d.id === i.deal_id)?.title || '—'}</td><td>{quotes.find(q => q.id === i.quote_id)?.quote_number || '—'}</td><td>{formatAmount(docAmountUsd(i, 'amount'))}</td><td><div>{i.status}</div><small className="approval-range-hint">{approvalRequirement(i.amount).label} approval</small></td><td>{i.due_date ? formatDate(i.due_date) : '—'}</td>
-        <td><div className="toolbar-actions"><button type="button" className="secondary-btn" onClick={async () => { try { const loaded = onLoadInvoiceItems ? await onLoadInvoiceItems(i) : []; setPreview({ ...i, __items: loaded || [] }); } catch (err) { alert(err.message || 'Unable to load invoice items.'); } }}><FileText size={15} /> View</button>{(isCommercialEditor(role) || i.created_by === currentUserId) && <button type="button" className="secondary-btn" onClick={() => openEdit(i)}>Edit</button>}{i.created_by === currentUserId && ['HOS_PENDING','APPROVED','MD_PENDING'].indexOf(i.approval_status) === -1 && <button type="button" className="primary-btn approval-btn" onClick={async () => { try { await onSendToHOS(i.id); } catch (err) { alert(err.message); } }}>{i.approval_status === 'REJECTED' ? 'Resubmit to HOS' : 'Send to HOS'}</button>}{isCommercialDeleter(role) && <button type="button" className="icon-btn" title="Delete invoice" onClick={async () => { if (!window.confirm('Delete this invoice?')) return; try { await onDelete(i.id); } catch (err) { alert(err.message); } }}><X size={16} /></button>}{i.status !== 'Paid' && i.approval_status === 'APPROVED' && <button className="secondary-btn" onClick={() => setPay({ invoice_id: i.id, amount: i.amount, paid_at: new Date().toISOString().slice(0,16), payment_method: 'Bank transfer' })}>Record payment</button>}{(isCommercialEditor(role) || i.created_by === currentUserId) && i.status !== 'Paid' && i.approval_status === 'APPROVED' && <button className="secondary-btn" onClick={() => onUpdate(i.id, { status: 'Paid' })}>Mark paid</button>}</div></td>
+        <td><div className="toolbar-actions"><button type="button" className="secondary-btn" onClick={async () => { try { const loaded = onLoadInvoiceItems ? await onLoadInvoiceItems(i) : []; setPreview({ ...i, __items: loaded || [] }); } catch (err) { alert(err.message || 'Unable to load invoice items.'); } }}><FileText size={15} /> View</button>{(isCommercialEditor(role) || i.created_by === currentUserId) && <button type="button" className="secondary-btn" onClick={() => openEdit(i)}>Edit</button>}{i.created_by === currentUserId && ['HOS_PENDING', 'APPROVED', 'MD_PENDING'].indexOf(i.approval_status) === -1 && <button type="button" className="primary-btn approval-btn" onClick={async () => { try { await onSendToHOS(i.id); } catch (err) { alert(err.message); } }}>{i.approval_status === 'REJECTED' ? 'Resubmit to HOS' : 'Send to HOS'}</button>}{isCommercialDeleter(role) && <button type="button" className="icon-btn" title="Delete invoice" onClick={async () => { if (!window.confirm('Delete this invoice?')) return; try { await onDelete(i.id); } catch (err) { alert(err.message); } }}><X size={16} /></button>}{i.status !== 'Paid' && i.approval_status === 'APPROVED' && <button className="secondary-btn" onClick={() => setPay({ invoice_id: i.id, amount: i.amount, paid_at: new Date().toISOString().slice(0, 16), payment_method: 'Bank transfer' })}>Record payment</button>}{(isCommercialEditor(role) || i.created_by === currentUserId) && i.status !== 'Paid' && i.approval_status === 'APPROVED' && <button className="secondary-btn" onClick={() => onUpdate(i.id, { status: 'Paid' })}>Mark paid</button>}</div></td>
       </tr>)}
     </tbody></table></div></div>
 
@@ -8332,18 +8379,18 @@ function Invoices({ invoices, payments, customers, products, deals = [], dealPro
         <label>Deal (optional)<select value={form.deal_id} onChange={e => applyDeal(e.target.value)}><option value="">Manual invoice — no Deal</option>{wonDeals.map(d => <option key={d.id} value={d.id}>{d.title}{d.company ? ` · ${d.company}` : ''}</option>)}</select></label>
         <label>Source Quote<select value={form.quote_id} onChange={e => applyQuote(e.target.value)}><option value="">No source quote</option>{selectableQuotes.map(q => <option key={q.id} value={q.id}>{q.quote_number} · {q.title}</option>)}</select></label>
         <label>Customer<select value={form.customer_id} onChange={e => setForm({ ...form, customer_id: e.target.value })}><option value="">Select customer</option>{customers.map(c => <option key={c.id} value={c.id}>{c.name}{c.company ? ` · ${c.company}` : ''}</option>)}</select></label>
-        <label>Currency<select value={form.currency_code || 'USD'} onChange={e => setForm({ ...form, currency_code: e.target.value, exchange_rate: suggestedUsdRate(e.target.value) })}>{COMMERCIAL_CURRENCIES.map(([code,label]) => <option key={code} value={code}>{code} — {label}</option>)}</select></label>{form.currency_code === 'OTHER' && <label>Currency code<input maxLength={6} placeholder="e.g. AED" value={form.custom_currency_code || ''} onChange={e => setForm({ ...form, custom_currency_code: e.target.value.toUpperCase() })} /></label>}<label>Exchange rate<span className="field-help">USD value of 1 unit of the selected currency (USD = 1)</span><input type="number" min="0" step="0.000001" value={form.exchange_rate} onChange={e => setForm({ ...form, exchange_rate: e.target.value })} /></label><label>Due date<input type="date" value={form.due_date || ''} onChange={e => setForm({ ...form, due_date: e.target.value })} /></label>
-        <label>Status<select value={form.status} onChange={e => setForm({ ...form, status: e.target.value })}>{['Draft','Sent','Partially Paid','Paid','Overdue','Cancelled'].map(x => <option key={x}>{x}</option>)}</select></label>
+        <label>Currency<select value={form.currency_code || 'USD'} onChange={e => setForm({ ...form, currency_code: e.target.value, exchange_rate: suggestedUsdRate(e.target.value) })}>{COMMERCIAL_CURRENCIES.map(([code, label]) => <option key={code} value={code}>{code} — {label}</option>)}</select></label>{form.currency_code === 'OTHER' && <label>Currency code<input maxLength={6} placeholder="e.g. AED" value={form.custom_currency_code || ''} onChange={e => setForm({ ...form, custom_currency_code: e.target.value.toUpperCase() })} /></label>}<label>Exchange rate<span className="field-help">USD value of 1 unit of the selected currency (USD = 1)</span><input type="number" min="0" step="0.000001" value={form.exchange_rate} onChange={e => setForm({ ...form, exchange_rate: e.target.value })} /></label><label>Due date<input type="date" value={form.due_date || ''} onChange={e => setForm({ ...form, due_date: e.target.value })} /></label>
+        <label>Status<select value={form.status} onChange={e => setForm({ ...form, status: e.target.value })}>{['Draft', 'Sent', 'Partially Paid', 'Paid', 'Overdue', 'Cancelled'].map(x => <option key={x}>{x}</option>)}</select></label>
       </div>
       {form.approval_status === 'REJECTED' && <label>Resubmission note<textarea required rows="3" value={form.resubmission_note || ''} onChange={e => setForm({ ...form, resubmission_note: e.target.value })} /></label>}
       <div className="quote-items-section"><div className="section-heading-row"><div><h3>Invoice items</h3><p>Items are inherited from the Deal or Quote, but the Sales Rep can adjust them.</p></div><button type="button" className="secondary-btn" onClick={() => setItems(prev => [...prev, emptyItem()])}><Plus size={15} /> Add solution</button></div>
         {loadingItems && <div className="invoice-item-empty">Loading commercial items…</div>}
-        {items.map((item, index) => <div className="quote-line-item" key={index}><div className="quote-line-header"><strong>Item {index + 1}</strong>{items.length > 1 && <button type="button" className="icon-btn" onClick={() => setItems(prev => prev.filter((_, i) => i !== index))}><X size={15} /></button>}</div><div className="form-grid-2"><label>Solution<select value={item.product_id || ''} onChange={e => { const product = products.find(p => p.id === e.target.value); setItems(prev => prev.map((x,i) => i===index ? { ...x, product_id: product?.id || '', product_name: product?.name || '', description: x.description || product?.description || '' } : x)); }}><option value="">Select solution</option>{products.filter(p => (p.status || 'Active') === 'Active').map(p => <option key={p.id} value={p.id}>{p.name}{p.vendor ? ` · ${p.vendor}` : ''}</option>)}</select></label><label>Description<input value={item.description || ''} onChange={e => setItems(prev => prev.map((x,i) => i===index ? { ...x, description: e.target.value } : x))} /></label><label>Quantity<input type="number" min="1" value={item.quantity} onChange={e => setItems(prev => prev.map((x,i) => i===index ? { ...x, quantity: e.target.value } : x))} /></label><label>Price for this invoice<input type="number" min="0" step="0.01" value={item.unit_price} onChange={e => setItems(prev => prev.map((x,i) => i===index ? { ...x, unit_price: e.target.value } : x))} /></label><label>Discount (%)<input type="number" min="0" max="100" step="0.01" value={item.discount_percent ?? 0} onChange={e => setItems(prev => prev.map((x,i) => i===index ? { ...x, discount_percent: e.target.value } : x))} /></label><div className="line-field-note">VAT and manual tax are applied below the item list.</div></div><div className="quote-line-total"><span>Line total</span><strong>{formatAmount(lineTotal(item))}</strong></div></div>)}
+        {items.map((item, index) => <div className="quote-line-item" key={index}><div className="quote-line-header"><strong>Item {index + 1}</strong>{items.length > 1 && <button type="button" className="icon-btn" onClick={() => setItems(prev => prev.filter((_, i) => i !== index))}><X size={15} /></button>}</div><div className="form-grid-2"><label>Solution<select value={item.product_id || ''} onChange={e => { const product = products.find(p => p.id === e.target.value); setItems(prev => prev.map((x, i) => i === index ? { ...x, product_id: product?.id || '', product_name: product?.name || '', description: x.description || product?.description || '' } : x)); }}><option value="">Select solution</option>{products.filter(p => (p.status || 'Active') === 'Active').map(p => <option key={p.id} value={p.id}>{p.name}{p.vendor ? ` · ${p.vendor}` : ''}</option>)}</select></label><label>Description<input value={item.description || ''} onChange={e => setItems(prev => prev.map((x, i) => i === index ? { ...x, description: e.target.value } : x))} /></label><label>Quantity<input type="number" min="1" value={item.quantity} onChange={e => setItems(prev => prev.map((x, i) => i === index ? { ...x, quantity: e.target.value } : x))} /></label><label>Price for this invoice<input type="number" min="0" step="0.01" value={item.unit_price} onChange={e => setItems(prev => prev.map((x, i) => i === index ? { ...x, unit_price: e.target.value } : x))} /></label><label>Discount (%)<input type="number" min="0" max="100" step="0.01" value={item.discount_percent ?? 0} onChange={e => setItems(prev => prev.map((x, i) => i === index ? { ...x, discount_percent: e.target.value } : x))} /></label><div className="line-field-note">VAT and manual tax are applied below the item list.</div></div><div className="quote-line-total"><span>Line total</span><strong>{formatAmount(lineTotal(item))}</strong></div></div>)}
       </div><div className="form-grid-2 commercial-tax-fields"><label>VAT rate (%)<input type="number" min="0" max="100" step="0.01" value={form.vat_rate ?? 7.5} onChange={e => setForm({ ...form, vat_rate: e.target.value })} /></label><label>Manual tax amount<input type="number" min="0" step="0.01" value={form.manual_tax ?? 0} onChange={e => setForm({ ...form, manual_tax: e.target.value })} /></label></div><div className="quote-total-card"><div><span>Subtotal</span><strong>{formatCommercialAmount(subtotal, form.currency_code)}</strong></div><div><span>Discount</span><strong>- {formatCommercialAmount(discount, form.currency_code)}</strong></div><div><span>VAT ({money(form.vat_rate ?? 7.5)}%)</span><strong>{formatCommercialAmount(vat, form.currency_code)}</strong></div><div><span>Manual tax</span><strong>{formatCommercialAmount(manualTax, form.currency_code)}</strong></div><div className="grand-total"><span>Total</span><strong>{formatCommercialAmount(total, form.currency_code)}</strong></div></div>
       <label>Notes<textarea rows="3" value={form.notes || ''} onChange={e => setForm({ ...form, notes: e.target.value })} /></label><div className="modal-actions"><button type="button" className="secondary-btn" onClick={() => setShow(false)}>Cancel</button><button className="primary-btn" disabled={loadingItems}>{form.id ? 'Save changes' : 'Create invoice'}</button></div>
     </form></div>}
 
-    {pay && <div className="modal-backdrop" onClick={() => setPay(null)}><form className="modal" onSubmit={paymentSave} onClick={e => e.stopPropagation()}><div className="modal-heading"><h2>Record payment</h2><button type="button" className="icon-btn" onClick={() => setPay(null)}><X size={18} /></button></div><label>Amount<input type="number" min="0" value={pay.amount} onChange={e => setPay({ ...pay, amount: Number(e.target.value) })} /></label><label>Method<select value={pay.payment_method} onChange={e => setPay({ ...pay, payment_method: e.target.value })}>{['Bank transfer','Card','Cash','Online','Other'].map(x => <option key={x}>{x}</option>)}</select></label><label>Date<input type="datetime-local" value={pay.paid_at} onChange={e => setPay({ ...pay, paid_at: e.target.value })} /></label><div className="modal-actions"><button type="button" className="secondary-btn" onClick={() => setPay(null)}>Cancel</button><button className="primary-btn">Save payment</button></div></form></div>}
+    {pay && <div className="modal-backdrop" onClick={() => setPay(null)}><form className="modal" onSubmit={paymentSave} onClick={e => e.stopPropagation()}><div className="modal-heading"><h2>Record payment</h2><button type="button" className="icon-btn" onClick={() => setPay(null)}><X size={18} /></button></div><label>Amount<input type="number" min="0" value={pay.amount} onChange={e => setPay({ ...pay, amount: Number(e.target.value) })} /></label><label>Method<select value={pay.payment_method} onChange={e => setPay({ ...pay, payment_method: e.target.value })}>{['Bank transfer', 'Card', 'Cash', 'Online', 'Other'].map(x => <option key={x}>{x}</option>)}</select></label><label>Date<input type="datetime-local" value={pay.paid_at} onChange={e => setPay({ ...pay, paid_at: e.target.value })} /></label><div className="modal-actions"><button type="button" className="secondary-btn" onClick={() => setPay(null)}>Cancel</button><button className="primary-btn">Save payment</button></div></form></div>}
 
     {preview && <div className="commercial-preview-backdrop" onClick={() => setPreview(null)}><div className="commercial-preview-shell" onClick={e => e.stopPropagation()}><div className="commercial-preview-toolbar"><div><strong>Invoice preview</strong><span>Commercial document</span></div><div className="toolbar-actions"><button type="button" className="secondary-btn" onClick={() => window.print()}>Print / Save PDF</button><button type="button" className="icon-btn" onClick={() => setPreview(null)}><X size={18} /></button></div></div><div className="commercial-print-sheet"><header className="commercial-document-header"><div><img src="/storhet-logo.png" alt="Storhet Solutions" className="invoice-company-logo" /><h2>STORHET SOLUTIONS</h2><p>Technology Solutions & Services</p></div><div className="commercial-document-title-block"><div className="commercial-document-title">INVOICE</div><span>{preview.status || 'Draft'}</span></div></header><div className="commercial-rule" /><section className="commercial-meta-grid"><div><span className="invoice-label">BILL TO</span><strong>{customerFor(preview)?.name || preview.title || 'Customer'}</strong><span>{customerFor(preview)?.company || ''}</span><span>{customerFor(preview)?.email || ''}</span></div><div className="commercial-details-box"><div><span>Invoice #</span><strong>{preview.invoice_number}</strong></div><div><span>Invoice Date</span><strong>{formatDate(preview.created_at || new Date().toISOString())}</strong></div><div><span>Due Date</span><strong>{preview.due_date ? formatDate(preview.due_date) : '—'}</strong></div><div><span>Currency</span><strong>{preview.currency_code || 'USD'}{preview.currency_code && preview.currency_code !== 'USD' ? ` · 1 ${preview.currency_code} = ${preview.exchange_rate || 1} USD` : ''}</strong></div></div></section><table className="commercial-document-table"><thead><tr><th>#</th><th>ITEM &amp; DESCRIPTION</th><th>QTY</th><th>PRICE</th><th>DISCOUNT</th><th>AMOUNT</th></tr></thead><tbody>{(preview.__items || []).map((item, idx) => <tr key={item.id || idx}><td>{idx + 1}</td><td><strong>{item.product_name || 'Solution'}</strong><span>{item.description || ''}</span></td><td>{item.quantity || 1}</td><td>{formatCommercialAmount(item.unit_price, preview.currency_code)}</td><td>{Number(item.discount_percent || 0).toFixed(2)}%</td><td>{formatCommercialAmount(Number(item.total || 0), preview.currency_code)}</td></tr>)}</tbody></table><section className="commercial-bottom-grid"><div><span className="invoice-label">NOTES</span><p>{preview.notes || 'Thank you for your business.'}</p><span className="invoice-label">PAYMENT TERMS</span><p>{preview.payment_terms || 'Due on receipt.'}</p></div><div className="commercial-totals-block"><div><span>Subtotal</span><strong>{formatCommercialAmount(preview.subtotal ?? preview.amount, preview.currency_code)}</strong></div><div><span>Discount</span><strong>- {formatCommercialAmount(preview.discount || 0, preview.currency_code)}</strong></div><div><span>VAT ({preview.vat_rate ?? 7.5}%)</span><strong>{formatCommercialAmount(preview.vat_amount || 0, preview.currency_code)}</strong></div><div><span>Manual tax</span><strong>{formatCommercialAmount(preview.manual_tax || 0, preview.currency_code)}</strong></div><div className="commercial-grand-total"><span>TOTAL</span><strong>{formatCommercialAmount(preview.amount, preview.currency_code)}</strong></div></div></section><footer className="commercial-document-footer"><div><strong>Payment / Terms</strong><p>{preview.payment_terms || 'Please make payment by the stated due date.'}</p></div><div>Thank you for doing business with<br /><strong>STORHET SOLUTIONS</strong>.</div></footer></div></div></div>}
   </>;
@@ -9293,8 +9340,8 @@ function MDPanel({ deals = [], quotes = [], invoices = [], customers = [], forma
   const approvals = [...quotes.map(x => ({ ...x, _type: 'quote' })), ...invoices.map(x => ({ ...x, _type: 'invoice' }))].filter(item => item.approval_status === 'MD_PENDING');
   const pending = [...quotes, ...invoices].filter(item => ['SALES_PENDING', 'HOS_PENDING', 'MD_PENDING'].includes(item.approval_status)).length;
   return <><PageHeading eyebrow="EXECUTIVE" title="MD Panel" description="Executive overview and final approval queue." action="Invite a worker" onAction={() => setShowStaffInvite(true)} />
-  {showStaffInvite && <StaffInviteModal onInvite={onInviteStaff} onOpenEmail={onOpenInviteEmail} onClose={() => setShowStaffInvite(false)} />}
-  <StaffInvitationsPanel invitations={staffInvitations} onRevoke={onRevokeStaffInvitation} actionId={staffInvitationActionId} /><div className="stats-grid"><StatCard label="Customers" value={customers.length} hint="Active customer records" tone="blue" icon="C" onClick={() => document.getElementById('md-customers')?.scrollIntoView({ behavior: 'smooth' })} /><StatCard label="Won revenue" value={formatAmount(deals.filter(d => d.stage === 'Won').reduce((s, d) => s + Number(d.amount || 0), 0))} hint="Pipeline revenue" tone="green" icon="$" onClick={() => document.getElementById('md-revenue')?.scrollIntoView({ behavior: 'smooth' })} /><StatCard label="Pending approvals" value={pending} hint="Commercial approval queue" tone="orange" icon="!" onClick={() => document.getElementById('md-approval-queue')?.scrollIntoView({ behavior: 'smooth' })} /><StatCard label="Open invoices" value={invoices.filter(i => !['Paid', 'Cancelled'].includes(i.status)).length} hint="Outstanding billing" tone="purple" icon="I" onClick={() => setPage?.('Invoices')} /></div><div className="panel" id="md-revenue"><div className="panel-heading"><div><h3>MD executive revenue</h3><p>Company-wide revenue visibility.</p></div></div><div className="panel-subsection" id="md-customers"><p>Customers: <strong>{customers.length}</strong> · Won revenue: <strong>{formatAmount(deals.filter(d => d.stage === 'Won').reduce((s, d) => s + Number(d.amount || 0), 0))}</strong> · Open invoices: <strong>{invoices.filter(i => !['Paid', 'Cancelled'].includes(i.status)).length}</strong></p></div></div><div className="panel" id="md-approval-queue"><div className="panel-heading"><div><h3>MD final approval queue</h3><p>Only $50,000+ records reach this queue after HOS approval.</p></div></div><div className="table-wrap"><table><thead><tr><th>Type</th><th>Record</th><th>Amount</th><th>Action</th></tr></thead><tbody>{approvals.length === 0 ? <tr><td colSpan="4">No MD approvals pending.</td></tr> : approvals.map(item => <tr key={`${item._type}-${item.id}`}><td>{item._type}</td><td>{item.title || item.quote_number || item.invoice_number || 'Record'}</td><td>{formatAmount(item.total ?? item.amount)}</td><td><div className="toolbar-actions"><button className="primary-btn" onClick={async () => { try { await onApprove(item._type, item.id) } catch (e) { alert(e.message) } }}>Approve</button><button className="secondary-btn" onClick={async () => { const note = window.prompt('Rejection reason / note:'); if (note) try { await onReject(item._type, item.id, note) } catch (e) { alert(e.message) } }}>Reject</button></div></td></tr>)}</tbody></table></div></div></>;
+    {showStaffInvite && <StaffInviteModal onInvite={onInviteStaff} onOpenEmail={onOpenInviteEmail} onClose={() => setShowStaffInvite(false)} />}
+    <StaffInvitationsPanel invitations={staffInvitations} onRevoke={onRevokeStaffInvitation} actionId={staffInvitationActionId} /><div className="stats-grid"><StatCard label="Customers" value={customers.length} hint="Active customer records" tone="blue" icon="C" onClick={() => document.getElementById('md-customers')?.scrollIntoView({ behavior: 'smooth' })} /><StatCard label="Won revenue" value={formatAmount(deals.filter(d => d.stage === 'Won').reduce((s, d) => s + Number(d.amount || 0), 0))} hint="Pipeline revenue" tone="green" icon="$" onClick={() => document.getElementById('md-revenue')?.scrollIntoView({ behavior: 'smooth' })} /><StatCard label="Pending approvals" value={pending} hint="Commercial approval queue" tone="orange" icon="!" onClick={() => document.getElementById('md-approval-queue')?.scrollIntoView({ behavior: 'smooth' })} /><StatCard label="Open invoices" value={invoices.filter(i => !['Paid', 'Cancelled'].includes(i.status)).length} hint="Outstanding billing" tone="purple" icon="I" onClick={() => setPage?.('Invoices')} /></div><div className="panel" id="md-revenue"><div className="panel-heading"><div><h3>MD executive revenue</h3><p>Company-wide revenue visibility.</p></div></div><div className="panel-subsection" id="md-customers"><p>Customers: <strong>{customers.length}</strong> · Won revenue: <strong>{formatAmount(deals.filter(d => d.stage === 'Won').reduce((s, d) => s + Number(d.amount || 0), 0))}</strong> · Open invoices: <strong>{invoices.filter(i => !['Paid', 'Cancelled'].includes(i.status)).length}</strong></p></div></div><div className="panel" id="md-approval-queue"><div className="panel-heading"><div><h3>MD final approval queue</h3><p>Only $50,000+ records reach this queue after HOS approval.</p></div></div><div className="table-wrap"><table><thead><tr><th>Type</th><th>Record</th><th>Amount</th><th>Action</th></tr></thead><tbody>{approvals.length === 0 ? <tr><td colSpan="4">No MD approvals pending.</td></tr> : approvals.map(item => <tr key={`${item._type}-${item.id}`}><td>{item._type}</td><td>{item.title || item.quote_number || item.invoice_number || 'Record'}</td><td>{formatAmount(item.total ?? item.amount)}</td><td><div className="toolbar-actions"><button className="primary-btn" onClick={async () => { try { await onApprove(item._type, item.id) } catch (e) { alert(e.message) } }}>Approve</button><button className="secondary-btn" onClick={async () => { const note = window.prompt('Rejection reason / note:'); if (note) try { await onReject(item._type, item.id, note) } catch (e) { alert(e.message) } }}>Reject</button></div></td></tr>)}</tbody></table></div></div></>;
 }
 
 function HOSPanel({
@@ -9343,18 +9390,18 @@ function HOSPanel({
   const filteredRecords = approvalFilter === 'All'
     ? hosRecords
     : hosRecords.filter(record => {
-        if (approvalFilter === 'Pending') return record.approval_status === 'HOS_PENDING';
-        if (approvalFilter === 'Approved') return ['APPROVED', 'MD_PENDING'].includes(record.approval_status);
-        if (approvalFilter === 'Rejected') return record.approval_status === 'REJECTED';
-        return true;
-      });
+      if (approvalFilter === 'Pending') return record.approval_status === 'HOS_PENDING';
+      if (approvalFilter === 'Approved') return ['APPROVED', 'MD_PENDING'].includes(record.approval_status);
+      if (approvalFilter === 'Rejected') return record.approval_status === 'REJECTED';
+      return true;
+    });
 
   const pendingCount = hosRecords.filter(r => r.approval_status === 'HOS_PENDING').length;
 
   const saveRevenueTarget = value => {
     const numeric = Math.max(0, Number(value) || 0);
     setRevenueTargetNgn(numeric);
-    try { localStorage.setItem('storhet_hos_revenue_target_ngn', String(numeric)); } catch {}
+    try { localStorage.setItem('storhet_hos_revenue_target_ngn', String(numeric)); } catch { }
   };
 
   const recordSolution = record => {
@@ -10182,16 +10229,18 @@ function StaffInvitationsPanel({ invitations = [], onRevoke, actionId, onInvite 
       {invitations.length === 0 ? <p>No invitations sent yet.</p> : (
         <div className="table-wrapper"><table className="data-table">
           <thead><tr><th>Email</th><th>Role</th><th>Sent</th><th>Expires</th><th>Status</th><th>Actions</th></tr></thead>
-          <tbody>{invitations.map(invite => { const s = status(invite); return <tr key={invite.id}>
-            <td>{invite.email}</td>
-            <td>{ROLE_OPTIONS.find(r => r.value === invite.role)?.label || invite.role}</td>
-            <td>{invite.created_at ? new Date(invite.created_at).toLocaleDateString() : '—'}</td>
-            <td>{invite.expires_at ? new Date(invite.expires_at).toLocaleDateString() : '—'}</td>
-            <td><span className={`portal-request-status invite-status-${s.toLowerCase()}`}>{s}</span></td>
-            <td className="portal-request-actions">
-              {s === 'Pending' && onRevoke && <button type="button" className="secondary-btn" disabled={actionId === invite.id} onClick={() => onRevoke(invite.id)}>{actionId === invite.id ? 'Revoking...' : 'Revoke'}</button>}
-            </td>
-          </tr>; })}</tbody>
+          <tbody>{invitations.map(invite => {
+            const s = status(invite); return <tr key={invite.id}>
+              <td>{invite.email}</td>
+              <td>{ROLE_OPTIONS.find(r => r.value === invite.role)?.label || invite.role}</td>
+              <td>{invite.created_at ? new Date(invite.created_at).toLocaleDateString() : '—'}</td>
+              <td>{invite.expires_at ? new Date(invite.expires_at).toLocaleDateString() : '—'}</td>
+              <td><span className={`portal-request-status invite-status-${s.toLowerCase()}`}>{s}</span></td>
+              <td className="portal-request-actions">
+                {s === 'Pending' && onRevoke && <button type="button" className="secondary-btn" disabled={actionId === invite.id} onClick={() => onRevoke(invite.id)}>{actionId === invite.id ? 'Revoking...' : 'Revoke'}</button>}
+              </td>
+            </tr>;
+          })}</tbody>
         </table></div>
       )}
     </div>
