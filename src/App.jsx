@@ -6026,7 +6026,9 @@ function CustomerTable({ customers, deals = [], formatAmount, onSelectCustomer, 
             <th>Customer</th>
             <th>Company</th>
             <th>Status</th>
-            <th>Mail / Contact</th>
+            <th>Mail</th>
+            <th>Contact</th>
+            <th>Job Title</th>
             <th>Open deals</th>
             <th>Value</th>
             <th>Start date</th>
@@ -6042,8 +6044,8 @@ function CustomerTable({ customers, deals = [], formatAmount, onSelectCustomer, 
             const allStarts = customerDeals.map(d => d.closure_start_at).filter(Boolean).sort((a, b) => new Date(a) - new Date(b));
             const allEnds = customerDeals.map(d => d.closure_end_at).filter(Boolean).sort((a, b) => new Date(b) - new Date(a));
             return (
-              <tr key={c.id}>
-                <td onClick={() => onSelectCustomer?.(c)} style={{ cursor: onSelectCustomer ? 'pointer' : 'default' }}>
+              <tr key={c.id} onClick={() => onSelectCustomer?.(c)} style={{ cursor: onSelectCustomer ? 'pointer' : 'default' }}>
+                <td>
                   <div className="customer-cell">
                     <div className="avatar small">{(c.name || '?').split(' ').map(x => x[0]).join('').slice(0, 2).toUpperCase()}</div>
                     <div>
@@ -6055,11 +6057,20 @@ function CustomerTable({ customers, deals = [], formatAmount, onSelectCustomer, 
                 <td><span className={`status ${status.toLowerCase()}`}>{status}</span></td>
                 <td>
                   <div className="customer-contact-cell">
-                    <span>{c.email || '—'}</span>
-                    <span>{c.phone || '—'}</span>
-                    {c.job_title && <small>{c.job_title}</small>}
+                    <strong>{c.email || '—'}</strong>
                   </div>
                 </td>
+                <td> 
+                  <div> 
+                    <span>{c.phone || '—'}</span>
+                  </div>
+                </td>
+                <td> 
+                  <div> 
+                    <span>{c.job_title && <small>{c.job_title}</small>}</span>
+                  </div>
+                </td>
+
                 <td>{openDeals.length}</td>
                 <td>{formatAmount(sumAmount(customerDeals))}</td>
                 <td>{allStarts.length ? formatDate(allStarts[0]) : '—'}</td>

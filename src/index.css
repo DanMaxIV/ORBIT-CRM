@@ -4522,9 +4522,7 @@ tbody tr:last-child td {
 
 .modal.modal-wide label {
   display: flex;
-  flex-direction: column;
-  align-items: stretch;
-  gap: 7px;
+  flex-direction: row;
   margin: 0 0 16px;
   color: #596174;
   font-size: 11px;
@@ -5990,7 +5988,7 @@ select {
   display: grid;
   grid-template-columns: auto 1fr auto;
   align-items: center;
-  gap: 10px;
+  gap: 15px;
   padding: 9px 10px;
   margin: 0 0 6px;
   border: 1px solid #eceef4;
