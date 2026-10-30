@@ -901,10 +901,63 @@ tbody tr:last-child td {
 
 .modal {
   width: min(100%, 420px);
+  max-height: calc(100vh - 40px);
+  overflow-y: auto;
+  overflow-x: hidden;
+  overscroll-behavior: contain;
+  box-sizing: border-box;
   background: white;
   border-radius: 14px;
   padding: 25px;
   box-shadow: 0 15px 50px #20212b20
+}
+
+/* Keep every customer form usable on shorter screens. The form itself scrolls
+   instead of pushing the page/modal beyond the viewport. */
+.customer-modal {
+  width: min(760px, calc(100vw - 40px));
+  max-height: calc(100vh - 40px);
+  overflow-y: auto;
+  overflow-x: hidden;
+  overscroll-behavior: contain;
+}
+
+.customer-modal input,
+.customer-modal select,
+.customer-modal textarea {
+  width: 100%;
+  max-width: 100%;
+  box-sizing: border-box;
+}
+
+.customer-modal .modal-heading {
+  position: sticky;
+  top: -25px;
+  z-index: 2;
+  margin: -25px -25px 4px;
+  padding: 25px 25px 12px;
+  background: #fff;
+}
+
+@media (max-width: 620px) {
+  .modal-backdrop {
+    padding: 10px;
+    align-items: start;
+  }
+
+  .modal,
+  .customer-modal {
+    width: 100%;
+    max-width: 100%;
+    max-height: calc(100vh - 20px);
+    padding: 20px;
+  }
+
+  .customer-modal .modal-heading {
+    top: -20px;
+    margin: -20px -20px 4px;
+    padding: 20px 20px 12px;
+  }
 }
 
 .modal-heading {
@@ -7519,7 +7572,7 @@ select {
 }
 
 .birthday-panel {
-  margin: 20px 0;
+  margin-top: 20px;
 }
 
 .birthday-empty {
@@ -11047,7 +11100,6 @@ select {
 
 .role-panel-summary {
   max-width: 900px;
-  margin: 0 0 20px;
 }
 
 .role-panel-summary p {
