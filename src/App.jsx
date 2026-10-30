@@ -1170,25 +1170,25 @@ function App() {
   }, [session]);
 
   useEffect(() => {
-  if (!IS_NATIVE) return;
-  const handle = CapApp.addListener('appUrlOpen', async ({ url }) => {
-    if (!url.startsWith(NATIVE_REDIRECT)) return;
-    await Browser.close();
-    const parsed = new URL(url);
-    const code = parsed.searchParams.get('code');
-    if (code) {
-      await supabase.auth.exchangeCodeForSession(code);
-      return;
-    }
-    const hash = new URLSearchParams(parsed.hash.replace(/^#/, ''));
-    const access_token = hash.get('access_token');
-    const refresh_token = hash.get('refresh_token');
-    if (access_token && refresh_token) {
-      await supabase.auth.setSession({ access_token, refresh_token });
-    }
-  });
-  return () => { handle.then(h => h.remove()); };
-}, []);
+    if (!IS_NATIVE) return;
+    const handle = CapApp.addListener('appUrlOpen', async ({ url }) => {
+      if (!url.startsWith(NATIVE_REDIRECT)) return;
+      await Browser.close();
+      const parsed = new URL(url);
+      const code = parsed.searchParams.get('code');
+      if (code) {
+        await supabase.auth.exchangeCodeForSession(code);
+        return;
+      }
+      const hash = new URLSearchParams(parsed.hash.replace(/^#/, ''));
+      const access_token = hash.get('access_token');
+      const refresh_token = hash.get('refresh_token');
+      if (access_token && refresh_token) {
+        await supabase.auth.setSession({ access_token, refresh_token });
+      }
+    });
+    return () => { handle.then(h => h.remove()); };
+  }, []);
 
   const showToast = (message) => {
     setToast(message);
@@ -1721,8 +1721,10 @@ function App() {
       .select('*')
       .order('check_in_at', { ascending: false });
     if (error) {
-      if (!['42P01', 'PGRST205'].includes(error.code)) console.error('Error fetching field visits:', error);
-      setFieldVisitError(error.code === '42P01' || error.code === 'PGRST205' ? 'Field visits are not set up yet. Run the Phase 1 field-visit SQL migration.' : error.message);
+      const notSetUp = ['42P01', 'PGRST205'].includes(error.code);
+      if (!notSetUp) console.error('Error fetching field visits:', error);
+      setFieldVisitError(notSetUp ? 'Field visits are not set up yet. Run the Phase 1 field-visit SQL migration.' : error.message);
+      if (!notSetUp) throw error;
       return;
     }
     setFieldVisitError('');
@@ -2144,6 +2146,7 @@ function App() {
         await Promise.all(datasetLoaders(key));
       } catch (error) {
         console.error(`Failed to load ${key}:`, error);
+        loadedDataRef.current.delete(key); // allow a retry on the next visit
       } finally {
         setReadyDatasets(prev => new Set(prev).add(key));
       }
@@ -4196,7 +4199,7 @@ function App() {
         {navSections.map(section => (
           <div className="nav-section" key={section.title} style={{ marginBottom: 10 }}>
             <div className="nav-section-title" style={{ fontSize: 11, fontWeight: 700, letterSpacing: ".08em", opacity: .55, padding: "10px 14px 6px", textTransform: "uppercase" }}>{section.title}</div>
-            {section.items.filter(([label]) => !(authorizationProfile?.role === 'technical_support' && label === 'Tickets')).map(([label, Icon]) => (
+            {section.items.filter(([label]) => !(authorizationProfile?.role === 'technical_support' && label === 'Tickets') && !(label === 'Field Visits' && !['sales', 'head_of_sales', 'manager', 'admin'].includes(authorizationProfile?.role))).map(([label, Icon]) => (
               <button key={label} className={`nav-item ${page === label ? 'active' : ''}`} onClick={() => { setPage(label); setSidebarOpen(false); }}>
                 <Icon size={18} /><span>{label}</span>
               </button>
@@ -4394,6 +4397,9 @@ function App() {
             )}
             {page === 'Field Visits' && ['sales', 'head_of_sales', 'manager', 'admin'].includes(authorizationProfile?.role) && (
               <FieldVisits customers={customers} fieldVisits={fieldVisits} currentUserId={session.user.id} role={authorizationProfile?.role} onStart={startFieldVisit} onCheckIn={checkInFieldVisit} onEnd={endFieldVisit} error={fieldVisitError} />
+            )}
+            {page === 'Field Visits' && !['sales', 'head_of_sales', 'manager', 'admin'].includes(authorizationProfile?.role) && (
+              <div className="panel"><div className="empty-state"><p>Field Visits aren't available for your role.</p></div></div>
             )}
             {page === 'Tickets' && authorizationProfile?.role !== 'technical_support' && (
               <Tickets
@@ -6752,7 +6758,7 @@ function ActivityDetail({ activity, customer, ownerProfiles = {}, currentUserEma
   );
 }
 
-function Tickets({ tickets, error, onAdd, onStatusChange, onDelete, onEdit, onView, currentUserId, isAdmin, canManage, canCreate = true, role, staffName, staffOptions, onAssign }) {
+function Tickets({ tickets, error, onAdd, onStatusChange, onDelete, onEdit, onView, currentUserId, isAdmin, canManage, canCreate = true, showHeading = true, role, staffName, staffOptions, onAssign }) {
   const [query, setQuery] = useState('');
   const [status, setStatus] = useState('All');
   const [priority, setPriority] = useState('All');
@@ -6766,7 +6772,7 @@ function Tickets({ tickets, error, onAdd, onStatusChange, onDelete, onEdit, onVi
   const count = s => tickets.filter(t => t.status === s).length;
   const portalOpen = tickets.filter(t => t.source === 'portal' && (t.status === 'Open' || t.status === 'In Progress')).length;
   return <>
-    <PageHeading eyebrow="SUPPORT" title="Tickets" description="Manage customer issues and support requests, including tickets raised from the customer portal." action="Create Ticket" onAction={onAdd} />
+    {showHeading && <PageHeading eyebrow="SUPPORT" title="Tickets" description="Manage customer issues and support requests, including tickets raised from the customer portal." action="Create Ticket" onAction={onAdd} />}
     <div className="stats-grid">
       <StatCard label="Open" value={count('Open')} hint="Waiting for a response" tone="orange" icon="!" />
       <StatCard label="In progress" value={count('In Progress')} hint="Being worked on" tone="blue" icon="◷" />
@@ -9671,7 +9677,7 @@ function TechnicalSupportPanel({ tickets = [], customers = [], formatAmount, cur
     <div className="panel role-panel-summary"><h3>Customer context</h3><p>Technical Support can view customer commercial information and prices when supporting a customer.</p></div>
     <div className="panel technical-ticket-panel" id="technical-support-tickets">
       <div className="panel-heading"><div><h3>Support Tickets</h3><p>Ticket management lives here for Technical Support, so it is not duplicated in the main navigation.</p></div></div>
-      <Tickets tickets={tickets} error={ticketError} onAdd={onAddTicket} onStatusChange={onStatusChange} onDelete={onDeleteTicket} onEdit={onEditTicket} onView={onViewTicket} currentUserId={currentUserId} isAdmin={isAdmin} role={role} canCreate={false} canManage={canManage} staffName={staffName} staffOptions={staffOptions} onAssign={onAssign} />
+      <Tickets tickets={tickets} error={ticketError} onAdd={onAddTicket} onStatusChange={onStatusChange} onDelete={onDeleteTicket} onEdit={onEditTicket} onView={onViewTicket} currentUserId={currentUserId} isAdmin={isAdmin} role={role} canCreate={false} showHeading={false} canManage={canManage} staffName={staffName} staffOptions={staffOptions} onAssign={onAssign} />
     </div>
   </>;
 }

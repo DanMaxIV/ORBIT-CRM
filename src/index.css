@@ -7519,7 +7519,7 @@ select {
 }
 
 .birthday-panel {
-  margin-top: 20px;
+  margin: 20px 0;
 }
 
 .birthday-empty {
@@ -11047,6 +11047,7 @@ select {
 
 .role-panel-summary {
   max-width: 900px;
+  margin: 0 0 20px;
 }
 
 .role-panel-summary p {
