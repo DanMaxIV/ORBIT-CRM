@@ -1170,25 +1170,25 @@ function App() {
   }, [session]);
 
   useEffect(() => {
-    if (!IS_NATIVE) return;
-    const handle = CapApp.addListener('appUrlOpen', async ({ url }) => {
-      if (!url.startsWith(NATIVE_REDIRECT)) return;
-      await Browser.close();
-      const parsed = new URL(url);
-      const code = parsed.searchParams.get('code');
-      if (code) {
-        await supabase.auth.exchangeCodeForSession(code);
-        return;
-      }
-      const hash = new URLSearchParams(parsed.hash.replace(/^#/, ''));
-      const access_token = hash.get('access_token');
-      const refresh_token = hash.get('refresh_token');
-      if (access_token && refresh_token) {
-        await supabase.auth.setSession({ access_token, refresh_token });
-      }
-    });
-    return () => { handle.then(h => h.remove()); };
-  }, []);
+  if (!IS_NATIVE) return;
+  const handle = CapApp.addListener('appUrlOpen', async ({ url }) => {
+    if (!url.startsWith(NATIVE_REDIRECT)) return;
+    await Browser.close();
+    const parsed = new URL(url);
+    const code = parsed.searchParams.get('code');
+    if (code) {
+      await supabase.auth.exchangeCodeForSession(code);
+      return;
+    }
+    const hash = new URLSearchParams(parsed.hash.replace(/^#/, ''));
+    const access_token = hash.get('access_token');
+    const refresh_token = hash.get('refresh_token');
+    if (access_token && refresh_token) {
+      await supabase.auth.setSession({ access_token, refresh_token });
+    }
+  });
+  return () => { handle.then(h => h.remove()); };
+}, []);
 
   const showToast = (message) => {
     setToast(message);
@@ -1721,10 +1721,8 @@ function App() {
       .select('*')
       .order('check_in_at', { ascending: false });
     if (error) {
-      const notSetUp = ['42P01', 'PGRST205'].includes(error.code);
-      if (!notSetUp) console.error('Error fetching field visits:', error);
-      setFieldVisitError(notSetUp ? 'Field visits are not set up yet. Run the Phase 1 field-visit SQL migration.' : error.message);
-      if (!notSetUp) throw error;
+      if (!['42P01', 'PGRST205'].includes(error.code)) console.error('Error fetching field visits:', error);
+      setFieldVisitError(error.code === '42P01' || error.code === 'PGRST205' ? 'Field visits are not set up yet. Run the Phase 1 field-visit SQL migration.' : error.message);
       return;
     }
     setFieldVisitError('');
@@ -2146,7 +2144,6 @@ function App() {
         await Promise.all(datasetLoaders(key));
       } catch (error) {
         console.error(`Failed to load ${key}:`, error);
-        loadedDataRef.current.delete(key); // allow a retry on the next visit
       } finally {
         setReadyDatasets(prev => new Set(prev).add(key));
       }
@@ -2934,6 +2931,73 @@ function App() {
     showToast('Notifications cleared.');
   }
 
+  async function createBirthdayReminderNotifications() {
+    if (!session?.user?.id || !authorized || authorizationProfile?.role !== 'hr') return;
+
+    const contacts = [...(customers || []), ...(leads || [])]
+      .filter(contact => contact?.birthday && birthdayIsTomorrow(contact.birthday));
+    if (!contacts.length) return;
+
+    const { data: hrUsers, error: hrError } = await supabase
+      .from('authorized_users')
+      .select('user_id, role, status')
+      .eq('role', 'hr')
+      .eq('status', 'active')
+      .not('user_id', 'is', null);
+
+    if (hrError) {
+      console.error('Failed to load HR users for birthday reminders:', hrError);
+      return;
+    }
+
+    const recipientIds = [...new Set((hrUsers || []).map(user => user.user_id).filter(Boolean))];
+    if (!recipientIds.length) return;
+
+    const { data: existing, error: existingError } = await supabase
+      .from('notifications')
+      .select('user_id, message')
+      .eq('type', 'birthday_reminder')
+      .in('user_id', recipientIds)
+      .limit(1000);
+
+    if (existingError) {
+      console.error('Failed to check existing birthday reminders:', existingError);
+      return;
+    }
+
+    const existingKeys = new Set((existing || []).map(row => `${row.user_id}|${row.message || ''}`));
+    const inserts = [];
+
+    contacts.forEach(contact => {
+      const birthday = formatBirthday(contact.birthday);
+      const message = `${contact.name || 'Customer'}${contact.company ? ` at ${contact.company}` : ''} has a birthday tomorrow (${birthday}).`;
+      recipientIds.forEach(user_id => {
+        const key = `${user_id}|${message}`;
+        if (!existingKeys.has(key)) {
+          inserts.push({
+            user_id,
+            type: 'birthday_reminder',
+            title: 'Birthday tomorrow',
+            message,
+            link: 'HR Panel',
+            read: false
+          });
+          existingKeys.add(key);
+        }
+      });
+    });
+
+    if (!inserts.length) return;
+
+    const { error: insertError } = await supabase.from('notifications').insert(inserts);
+    if (insertError) {
+      console.error('Failed to create birthday reminders:', insertError);
+      return;
+    }
+
+    await fetchNotifications();
+  }
+
   async function fetchNotifications() {
     const { data, error } = await supabase
       .from('notifications')
@@ -3127,6 +3191,28 @@ function App() {
 
     return () => window.clearInterval(intervalId);
   }, [session?.user?.id, authorized]);
+
+  // Birthday reminder: HR gets one notification on the day before each stored
+  // customer/lead birthday. Existing notifications are checked first so the same
+  // birthday reminder is never inserted twice.
+  useEffect(() => {
+    if (!session?.user?.id || !authorized || authorizationProfile?.role !== 'hr') return;
+
+    let running = false;
+    const checkBirthdayReminders = async () => {
+      if (running || document.visibilityState !== 'visible') return;
+      running = true;
+      try {
+        await createBirthdayReminderNotifications();
+      } finally {
+        running = false;
+      }
+    };
+
+    checkBirthdayReminders();
+    const intervalId = window.setInterval(checkBirthdayReminders, 60000);
+    return () => window.clearInterval(intervalId);
+  }, [session?.user?.id, authorized, authorizationProfile?.role, customers, leads]);
 
   // Quietly refresh when the user returns to the CRM tab after it has been idle.
   useEffect(() => {
@@ -4199,7 +4285,7 @@ function App() {
         {navSections.map(section => (
           <div className="nav-section" key={section.title} style={{ marginBottom: 10 }}>
             <div className="nav-section-title" style={{ fontSize: 11, fontWeight: 700, letterSpacing: ".08em", opacity: .55, padding: "10px 14px 6px", textTransform: "uppercase" }}>{section.title}</div>
-            {section.items.filter(([label]) => !(authorizationProfile?.role === 'technical_support' && label === 'Tickets') && !(label === 'Field Visits' && !['sales', 'head_of_sales', 'manager', 'admin'].includes(authorizationProfile?.role))).map(([label, Icon]) => (
+            {section.items.filter(([label]) => !(authorizationProfile?.role === 'technical_support' && label === 'Tickets')).map(([label, Icon]) => (
               <button key={label} className={`nav-item ${page === label ? 'active' : ''}`} onClick={() => { setPage(label); setSidebarOpen(false); }}>
                 <Icon size={18} /><span>{label}</span>
               </button>
@@ -4397,9 +4483,6 @@ function App() {
             )}
             {page === 'Field Visits' && ['sales', 'head_of_sales', 'manager', 'admin'].includes(authorizationProfile?.role) && (
               <FieldVisits customers={customers} fieldVisits={fieldVisits} currentUserId={session.user.id} role={authorizationProfile?.role} onStart={startFieldVisit} onCheckIn={checkInFieldVisit} onEnd={endFieldVisit} error={fieldVisitError} />
-            )}
-            {page === 'Field Visits' && !['sales', 'head_of_sales', 'manager', 'admin'].includes(authorizationProfile?.role) && (
-              <div className="panel"><div className="empty-state"><p>Field Visits aren't available for your role.</p></div></div>
             )}
             {page === 'Tickets' && authorizationProfile?.role !== 'technical_support' && (
               <Tickets
@@ -5576,27 +5659,29 @@ function JobTitleField({ value, onChange, label = 'Job title' }) {
   return <label>{label}<input list="orbit-job-title-options" value={value || ''} onChange={e => onChange(e.target.value)} placeholder="e.g. CTO" autoComplete="organization-title" /><datalist id="orbit-job-title-options">{JOB_TITLE_SUGGESTIONS.map(title => <option key={title} value={title} />)}</datalist></label>;
 }
 
-function birthdayDisplayValue(value) {
-  if (!value) return '';
-  const raw = String(value).trim();
-  const iso = raw.match(/^(\d{4})-(\d{2})-(\d{2})$/);
-  if (iso) return `${iso[3]}-${iso[2]}`;
-  const dayMonth = raw.match(/^(\d{1,2})-(\d{1,2})$/);
-  if (dayMonth) return `${dayMonth[1].padStart(2, '0')}-${dayMonth[2].padStart(2, '0')}`;
-  return raw;
-}
-
 function normalizeBirthdayValue(value) {
   if (!value) return null;
   const raw = String(value).trim();
   const iso = raw.match(/^(\d{4})-(\d{2})-(\d{2})$/);
-  if (iso) return raw;
-  const dayMonth = raw.match(/^(\d{2})-(\d{2})$/);
+  if (iso) {
+    const month = Number(iso[2]);
+    const day = Number(iso[3]);
+    if (month < 1 || month > 12 || day < 1 || day > new Date(2000, month, 0).getDate()) return null;
+    return `2000-${iso[2]}-${iso[3]}`;
+  }
+  const dayMonth = raw.match(/^(\d{1,2})-(\d{1,2})$/);
   if (!dayMonth) return null;
   const day = Number(dayMonth[1]);
   const month = Number(dayMonth[2]);
   if (month < 1 || month > 12 || day < 1 || day > new Date(2000, month, 0).getDate()) return null;
-  return `2000-${dayMonth[2]}-${dayMonth[1]}`;
+  return `2000-${String(month).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
+}
+
+function birthdayDisplayValue(value) {
+  const normalized = normalizeBirthdayValue(value);
+  if (!normalized) return '';
+  const parts = normalized.match(/^\d{4}-(\d{2})-(\d{2})$/);
+  return parts ? `${parts[2]}-${parts[1]}` : '';
 }
 
 function LocationCaptureFields({ latitude, longitude, onCapture }) {
@@ -5624,14 +5709,29 @@ function LocationCaptureFields({ latitude, longitude, onCapture }) {
 
 function BirthdayField({ value, onChange, label = 'Birthday' }) {
   const [inputValue, setInputValue] = useState(() => birthdayDisplayValue(value));
+  const [invalid, setInvalid] = useState(false);
 
   useEffect(() => {
     setInputValue(birthdayDisplayValue(value));
+    setInvalid(false);
   }, [value]);
 
   const handleChange = e => {
-    const next = e.target.value.replace(/[^0-9-]/g, '').slice(0, 5);
+    const digits = e.target.value.replace(/\D/g, '').slice(0, 4);
+    const next = digits.length > 2 ? `${digits.slice(0, 2)}-${digits.slice(2)}` : digits;
+
+    // Do not let the month move beyond 12 while typing.
+    if (digits.length === 4) {
+      const month = Number(digits.slice(2, 4));
+      const day = Number(digits.slice(0, 2));
+      if (month > 12 || month < 1 || day < 1 || day > new Date(2000, month, 0).getDate()) {
+        setInvalid(true);
+        return;
+      }
+    }
+
     setInputValue(next);
+    setInvalid(false);
 
     if (!next) {
       onChange('');
@@ -5645,16 +5745,24 @@ function BirthdayField({ value, onChange, label = 'Birthday' }) {
   };
 
   return (
-    <label>{label}
-      <input
-        type="text"
-        inputMode="numeric"
-        value={inputValue}
-        onChange={handleChange}
-        placeholder="DD-MM"
-        maxLength={5}
-        autoComplete="bday"
-      />
+    <label className="birthday-field">
+      <span className="birthday-field-label">{label}</span>
+      <div className={`birthday-input-shell${invalid ? ' is-invalid' : ''}`}>
+        <input
+          type="text"
+          inputMode="numeric"
+          value={inputValue}
+          onChange={handleChange}
+          placeholder="DD-MM"
+          maxLength={5}
+          autoComplete="bday"
+          aria-invalid={invalid}
+        />
+        <span className="birthday-input-suffix">DAY · MONTH</span>
+      </div>
+      <small className={invalid ? 'birthday-field-help birthday-field-error' : 'birthday-field-help'}>
+        {invalid ? 'Invalid date. Day must match the selected month and month must be 01-12.' : 'Enter day and month only — e.g. 31-10. No year.'}
+      </small>
     </label>
   );
 }
@@ -5670,9 +5778,19 @@ function birthdayIsToday(value, now = new Date()) {
 }
 
 function formatBirthday(value) {
-  if (!value) return '—';
-  const date = new Date(`${String(value).slice(0, 10)}T00:00:00`);
-  return Number.isNaN(date.getTime()) ? '—' : date.toLocaleDateString('en-US', { month: 'long', day: 'numeric' });
+  const normalized = normalizeBirthdayValue(value);
+  if (!normalized) return '—';
+  const parts = normalized.match(/^\d{4}-(\d{2})-(\d{2})$/);
+  return parts ? `${parts[2]}-${parts[1]}` : '—';
+}
+
+function birthdayIsTomorrow(value, now = new Date()) {
+  const normalized = normalizeBirthdayValue(value);
+  if (!normalized) return false;
+  const parts = normalized.match(/^\d{4}-(\d{2})-(\d{2})$/);
+  if (!parts) return false;
+  const tomorrow = new Date(now.getFullYear(), now.getMonth(), now.getDate() + 1);
+  return Number(parts[1]) === tomorrow.getMonth() + 1 && Number(parts[2]) === tomorrow.getDate();
 }
 
 function birthdayGreeting(customer) {
@@ -6769,7 +6887,7 @@ function ActivityDetail({ activity, customer, ownerProfiles = {}, currentUserEma
   );
 }
 
-function Tickets({ tickets, error, onAdd, onStatusChange, onDelete, onEdit, onView, currentUserId, isAdmin, canManage, canCreate = true, showHeading = true, role, staffName, staffOptions, onAssign }) {
+function Tickets({ tickets, error, onAdd, onStatusChange, onDelete, onEdit, onView, currentUserId, isAdmin, canManage, canCreate = true, role, staffName, staffOptions, onAssign }) {
   const [query, setQuery] = useState('');
   const [status, setStatus] = useState('All');
   const [priority, setPriority] = useState('All');
@@ -6783,7 +6901,7 @@ function Tickets({ tickets, error, onAdd, onStatusChange, onDelete, onEdit, onVi
   const count = s => tickets.filter(t => t.status === s).length;
   const portalOpen = tickets.filter(t => t.source === 'portal' && (t.status === 'Open' || t.status === 'In Progress')).length;
   return <>
-    {showHeading && <PageHeading eyebrow="SUPPORT" title="Tickets" description="Manage customer issues and support requests, including tickets raised from the customer portal." action="Create Ticket" onAction={onAdd} />}
+    <PageHeading eyebrow="SUPPORT" title="Tickets" description="Manage customer issues and support requests, including tickets raised from the customer portal." action="Create Ticket" onAction={onAdd} />
     <div className="stats-grid">
       <StatCard label="Open" value={count('Open')} hint="Waiting for a response" tone="orange" icon="!" />
       <StatCard label="In progress" value={count('In Progress')} hint="Being worked on" tone="blue" icon="◷" />
@@ -9688,7 +9806,7 @@ function TechnicalSupportPanel({ tickets = [], customers = [], formatAmount, cur
     <div className="panel role-panel-summary"><h3>Customer context</h3><p>Technical Support can view customer commercial information and prices when supporting a customer.</p></div>
     <div className="panel technical-ticket-panel" id="technical-support-tickets">
       <div className="panel-heading"><div><h3>Support Tickets</h3><p>Ticket management lives here for Technical Support, so it is not duplicated in the main navigation.</p></div></div>
-      <Tickets tickets={tickets} error={ticketError} onAdd={onAddTicket} onStatusChange={onStatusChange} onDelete={onDeleteTicket} onEdit={onEditTicket} onView={onViewTicket} currentUserId={currentUserId} isAdmin={isAdmin} role={role} canCreate={false} showHeading={false} canManage={canManage} staffName={staffName} staffOptions={staffOptions} onAssign={onAssign} />
+      <Tickets tickets={tickets} error={ticketError} onAdd={onAddTicket} onStatusChange={onStatusChange} onDelete={onDeleteTicket} onEdit={onEditTicket} onView={onViewTicket} currentUserId={currentUserId} isAdmin={isAdmin} role={role} canCreate={false} canManage={canManage} staffName={staffName} staffOptions={staffOptions} onAssign={onAssign} />
     </div>
   </>;
 }
