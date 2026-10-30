@@ -12974,3 +12974,74 @@ select {
   .skeleton { animation: none; }
   .page-loading-bar::before { animation-duration: 2.4s; }
 }
+
+
+/* ===== Pipeline on mobile: one stage at a time, with tabs so "Won" is one tap away ===== */
+.pipeline-stage-tabs {
+  display: none;
+}
+
+@media (max-width: 760px) {
+  .pipeline-stage-tabs {
+    display: flex;
+    gap: 8px;
+    margin: 0 0 12px;
+    padding: 2px 0 6px;
+    overflow-x: auto;
+    -webkit-overflow-scrolling: touch;
+    scrollbar-width: none;
+  }
+
+  .pipeline-stage-tabs::-webkit-scrollbar {
+    display: none;
+  }
+
+  .pipeline-stage-tab {
+    flex: 1 0 auto;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 6px;
+    padding: 9px 14px;
+    border: 1px solid #dfe2ee;
+    border-radius: 999px;
+    background: #ffffff;
+    color: #4a5068;
+    font-size: 13px;
+    font-weight: 600;
+    white-space: nowrap;
+    cursor: pointer;
+  }
+
+  .pipeline-stage-tab.active {
+    background: #0693e3;
+    border-color: #0693e3;
+    color: #ffffff;
+  }
+
+  .pipeline-stage-tab.active .count-badge {
+    background: rgba(255, 255, 255, 0.28);
+    color: #ffffff;
+  }
+
+  .pipeline-grid .pipeline-column {
+    display: none;
+    min-height: 0;
+  }
+
+  .pipeline-grid .pipeline-column.mobile-active {
+    display: block;
+  }
+}
+
+:root[data-theme="dark"] .pipeline-stage-tab {
+  background: #232430;
+  border-color: #30323a;
+  color: #c9cde0;
+}
+
+:root[data-theme="dark"] .pipeline-stage-tab.active {
+  background: #0693e3;
+  border-color: #0693e3;
+  color: #ffffff;
+}

@@ -105,6 +105,79 @@ function distanceInMeters(lat1, lon1, lat2, lon2) {
 // Accuracy (metres) above which a GPS fix is flagged LOW_ACCURACY instead of trusted.
 const LOW_ACCURACY_METERS = 150;
 
+// Looks up map coordinates for a typed address (OpenStreetMap Nominatim). Returns null if nothing is found.
+async function geocodeAddress(address) {
+  const query = String(address || '').trim();
+  if (!query) return null;
+  try {
+    const response = await fetch(`https://nominatim.openstreetmap.org/search?format=jsonv2&limit=1&q=${encodeURIComponent(query)}`);
+    if (!response.ok) return null;
+    const results = await response.json();
+    const latitude = Number(results?.[0]?.lat);
+    const longitude = Number(results?.[0]?.lon);
+    return Number.isFinite(latitude) && Number.isFinite(longitude) ? { latitude, longitude } : null;
+  } catch (error) {
+    console.warn('Address lookup failed:', error);
+    return null;
+  }
+}
+
+// Words found in almost every address that say nothing about WHERE someone actually is.
+const ADDRESS_FILLER_WORDS = new Set(['the', 'and', 'off', 'near', 'beside', 'opposite', 'along', 'behind', 'close', 'road', 'street', 'avenue', 'drive', 'crescent', 'estate', 'floor', 'building', 'plaza', 'house', 'plot', 'block', 'suite', 'way', 'lane', 'junction', 'lagos', 'nigeria', 'state']);
+
+// 0 to 1: share of the typed address's meaningful words that also appear in the address the GPS resolved to.
+// Returns null when there is nothing to compare.
+function addressMatchScore(typedAddress, gpsLocation = {}) {
+  const words = [...new Set(String(typedAddress || '').toLowerCase().split(/[^a-z0-9]+/).filter(word => word.length >= 3 && !ADDRESS_FILLER_WORDS.has(word)))];
+  if (words.length === 0) return null;
+  const gpsText = [gpsLocation.address, gpsLocation.street, gpsLocation.city, gpsLocation.state].filter(Boolean).join(' ').toLowerCase();
+  if (!gpsText) return null;
+  return words.filter(word => gpsText.includes(word)).length / words.length;
+}
+
+const VERIFICATION_RANK = { MISMATCH: 0, NEARBY: 1, VERIFIED: 2 };
+
+// Compares where the GPS says the sales person is with the visit address.
+// 1) Uses the saved customer coordinates if there are any, otherwise looks up the typed address on the map.
+// 2) Also compares the typed address text with the street address the GPS resolved to.
+async function verifyVisitLocation(visit, coords, gpsLocation) {
+  let targetLat = Number(visit.customer_latitude);
+  let targetLng = Number(visit.customer_longitude);
+  let hasTarget = visit.customer_latitude != null && visit.customer_longitude != null && Number.isFinite(targetLat) && Number.isFinite(targetLng);
+  let geocoded = false;
+  if (!hasTarget && visit.target_address) {
+    const point = await geocodeAddress(visit.target_address);
+    if (point) { targetLat = point.latitude; targetLng = point.longitude; hasTarget = true; geocoded = true; }
+  }
+  const distance = hasTarget ? distanceInMeters(coords.latitude, coords.longitude, targetLat, targetLng) : null;
+  const textScore = visit.target_address ? addressMatchScore(visit.target_address, gpsLocation) : null;
+  const byDistance = distance == null ? null : distance <= 300 ? 'VERIFIED' : distance <= 1000 ? 'NEARBY' : 'MISMATCH';
+  const byText = textScore == null ? null : textScore >= 0.6 ? 'VERIFIED' : textScore >= 0.3 ? 'NEARBY' : 'MISMATCH';
+  let verification;
+  if (coords.accuracy > LOW_ACCURACY_METERS) verification = 'LOW_ACCURACY';
+  else if (byDistance && byText && geocoded) verification = VERIFICATION_RANK[byText] > VERIFICATION_RANK[byDistance] ? byText : byDistance; // map lookups of typed addresses can be imprecise, so take the better signal
+  else if (byDistance) verification = byDistance;
+  else if (byText) verification = byText;
+  else verification = visit.target_type === 'other' ? 'LOCATION_CAPTURED' : 'NOT_CONFIGURED';
+  return { verification, distance, textScore, geocoded };
+}
+
+// Turns a check-in / check-out result into the message shown to the sales person.
+function describeVisitCheck(type, visit) {
+  const check = visit?.verification_check || {};
+  const action = type === 'checkin' ? 'Checked in' : 'Checked out';
+  const distance = Number.isFinite(check.distance) ? check.distance : null;
+  const away = distance == null ? '' : distance < 1000 ? `${Math.round(distance)} m` : `${(distance / 1000).toFixed(1)} km`;
+  switch (check.verification) {
+    case 'VERIFIED': return { tone: 'success', text: `${action}. Location verified: you are at the visit address${away ? ` (${away} from it)` : ''}.` };
+    case 'NEARBY': return { tone: 'warning', text: `${action}. You are near the visit address${away ? ` (${away} away)` : ''} but not exactly there. This has been flagged for review.` };
+    case 'MISMATCH': return { tone: 'error', text: `${action}, but your location does not match the visit address${away ? ` (about ${away} away)` : ''}. This has been flagged.` };
+    case 'LOW_ACCURACY': return { tone: 'warning', text: `${action}, but GPS accuracy was too low to verify your location.` };
+    case 'NOT_CONFIGURED': return { tone: 'warning', text: `${action}. No address is on file for this visit, so your location could not be verified.` };
+    default: return { tone: 'success', text: `${action}. Location captured.` };
+  }
+}
+
 // Waits for a good GPS fix instead of trusting the first (often coarse) one.
 // Listens up to maxWaitMs, stops early once accuracy <= targetAccuracy metres,
 // otherwise resolves with the most accurate fix seen. Resolves a plain
@@ -1721,8 +1794,10 @@ function App() {
       .select('*')
       .order('check_in_at', { ascending: false });
     if (error) {
-      if (!['42P01', 'PGRST205'].includes(error.code)) console.error('Error fetching field visits:', error);
-      setFieldVisitError(error.code === '42P01' || error.code === 'PGRST205' ? 'Field visits are not set up yet. Run the Phase 1 field-visit SQL migration.' : error.message);
+      const notSetUp = ['42P01', 'PGRST205'].includes(error.code);
+      if (!notSetUp) console.error('Error fetching field visits:', error);
+      setFieldVisitError(notSetUp ? 'Field visits are not set up yet. Run the Phase 1 field-visit SQL migration.' : error.message);
+      if (!notSetUp) throw error;
       return;
     }
     setFieldVisitError('');
@@ -2144,6 +2219,7 @@ function App() {
         await Promise.all(datasetLoaders(key));
       } catch (error) {
         console.error(`Failed to load ${key}:`, error);
+        loadedDataRef.current.delete(key); // allow a retry on the next visit
       } finally {
         setReadyDatasets(prev => new Set(prev).add(key));
       }
@@ -3959,26 +4035,22 @@ function App() {
         try {
           const location = await reverseGeocodeLocation(coords.latitude, coords.longitude);
           const now = new Date().toISOString();
-          const customerLat = Number(visit.customer_latitude);
-          const customerLng = Number(visit.customer_longitude);
-          const hasCustomerLocation = visit.customer_latitude != null && visit.customer_longitude != null && Number.isFinite(customerLat) && Number.isFinite(customerLng);
-          const distance = hasCustomerLocation ? distanceInMeters(coords.latitude, coords.longitude, customerLat, customerLng) : null;
-          const verification = coords.accuracy > LOW_ACCURACY_METERS ? 'LOW_ACCURACY' : visit.target_type === 'other' ? 'LOCATION_CAPTURED' : !hasCustomerLocation ? 'NOT_CONFIGURED' : distance <= 300 ? 'VERIFIED' : distance <= 1000 ? 'NEARBY' : 'MISMATCH';
+          const check = await verifyVisitLocation(visit, coords, location);
           const { data, error } = await supabase.from('field_visits').update({
             check_in_at: now, check_in_latitude: coords.latitude, check_in_longitude: coords.longitude,
             check_in_accuracy: coords.accuracy || null,
             check_in_location_url: googleMapsLocationUrl(coords.latitude, coords.longitude, location.address),
             check_in_location_address: location.address || null, check_in_street: location.street || null,
             check_in_city: location.city || null, check_in_state: location.state || null, check_in_country: location.country || null,
-            distance_from_customer: distance, verification_status: verification
+            distance_from_customer: check.distance, verification_status: check.verification
           }).eq('id', visit.id).is('check_in_at', null).select().single();
           if (error) throw error;
-          const activityNotes = `Field visit checked in at ${now}. Address: ${location.address || 'Address unavailable'}. GPS accuracy: ${Math.round(coords.accuracy || 0)}m.`;
+          const activityNotes = `Field visit checked in at ${now}. Address: ${location.address || 'Address unavailable'}. GPS accuracy: ${Math.round(coords.accuracy || 0)}m. Verification: ${check.verification}.`;
           const { error: activityError } = await supabase.from('activities').update({ status: 'In Progress', notes: activityNotes }).eq('id', visit.activity_id);
           if (activityError) console.warn('Could not update related activity status:', activityError.message);
           setFieldVisits(prev => prev.map(item => item.id === data.id ? data : item));
           setActivities(prev => prev.map(item => item.id === visit.activity_id ? { ...item, status: 'In Progress', notes: activityNotes } : item));
-          resolve(data);
+          resolve({ ...data, verification_check: check });
         } catch (error) { reject(error); }
       }, reject);
     });
@@ -3991,25 +4063,21 @@ function App() {
         try {
           const location = await reverseGeocodeLocation(coords.latitude, coords.longitude);
           const now = new Date().toISOString();
-          const customerLat = Number(visit.customer_latitude);
-          const customerLng = Number(visit.customer_longitude);
-          const hasCustomerLocation = visit.customer_latitude != null && visit.customer_longitude != null && Number.isFinite(customerLat) && Number.isFinite(customerLng);
-          const distance = hasCustomerLocation ? distanceInMeters(coords.latitude, coords.longitude, customerLat, customerLng) : null;
-          const verification = coords.accuracy > LOW_ACCURACY_METERS ? 'LOW_ACCURACY' : visit.target_type === 'other' ? 'LOCATION_CAPTURED' : !hasCustomerLocation ? 'NOT_CONFIGURED' : distance <= 300 ? 'VERIFIED' : distance <= 1000 ? 'NEARBY' : 'MISMATCH';
+          const check = await verifyVisitLocation(visit, coords, location);
           const { data, error } = await supabase.from('field_visits').update({
             check_out_at: now, check_out_latitude: coords.latitude, check_out_longitude: coords.longitude,
             check_out_accuracy: coords.accuracy || null,
             check_out_location_url: googleMapsLocationUrl(coords.latitude, coords.longitude, location.address),
             check_out_location_address: location.address || null, check_out_street: location.street || null,
             check_out_city: location.city || null, check_out_state: location.state || null, check_out_country: location.country || null,
-            distance_from_customer: distance ?? visit.distance_from_customer, verification_status: verification
+            distance_from_customer: check.distance ?? visit.distance_from_customer, verification_status: check.verification
           }).eq('id', visit.id).is('check_out_at', null).select().single();
           if (error) throw error;
           const activityNotes = `Field visit completed. Check-out address: ${location.address || 'Address unavailable'}. GPS accuracy: ${Math.round(coords.accuracy || 0)}m.`;
           await supabase.from('activities').update({ status: 'Completed', notes: activityNotes }).eq('id', visit.activity_id);
           setFieldVisits(prev => prev.map(item => item.id === data.id ? data : item));
           setActivities(prev => prev.map(item => item.id === visit.activity_id ? { ...item, status: 'Completed', notes: activityNotes } : item));
-          resolve(data);
+          resolve({ ...data, verification_check: check });
         } catch (error) { reject(error); }
       }, reject);
     });
@@ -4285,7 +4353,7 @@ function App() {
         {navSections.map(section => (
           <div className="nav-section" key={section.title} style={{ marginBottom: 10 }}>
             <div className="nav-section-title" style={{ fontSize: 11, fontWeight: 700, letterSpacing: ".08em", opacity: .55, padding: "10px 14px 6px", textTransform: "uppercase" }}>{section.title}</div>
-            {section.items.filter(([label]) => !(authorizationProfile?.role === 'technical_support' && label === 'Tickets')).map(([label, Icon]) => (
+            {section.items.filter(([label]) => !(authorizationProfile?.role === 'technical_support' && label === 'Tickets') && !(label === 'Field Visits' && !['sales', 'head_of_sales', 'manager', 'admin'].includes(authorizationProfile?.role))).map(([label, Icon]) => (
               <button key={label} className={`nav-item ${page === label ? 'active' : ''}`} onClick={() => { setPage(label); setSidebarOpen(false); }}>
                 <Icon size={18} /><span>{label}</span>
               </button>
@@ -4483,6 +4551,9 @@ function App() {
             )}
             {page === 'Field Visits' && ['sales', 'head_of_sales', 'manager', 'admin'].includes(authorizationProfile?.role) && (
               <FieldVisits customers={customers} fieldVisits={fieldVisits} currentUserId={session.user.id} role={authorizationProfile?.role} onStart={startFieldVisit} onCheckIn={checkInFieldVisit} onEnd={endFieldVisit} error={fieldVisitError} />
+            )}
+            {page === 'Field Visits' && !['sales', 'head_of_sales', 'manager', 'admin'].includes(authorizationProfile?.role) && (
+              <div className="panel"><div className="empty-state"><p>Field Visits aren't available for your role.</p></div></div>
             )}
             {page === 'Tickets' && authorizationProfile?.role !== 'technical_support' && (
               <Tickets
@@ -6475,6 +6546,7 @@ function Pipeline({ deals, customers, dealSupport = [], supportEngineers = [], m
   const [query, setQuery] = useState('');
   const [mineOnly, setMineOnly] = useState(false);
   const [dragOver, setDragOver] = useState(null);
+  const [mobileStage, setMobileStage] = useState(PIPELINE_STAGES[0]); // which stage is shown on phones
   const [openDealMenu, setOpenDealMenu] = useState(null);
   const [viewingDeal, setViewingDeal] = useState(null);
   const [, setClock] = useState(Date.now());
@@ -6512,12 +6584,20 @@ function Pipeline({ deals, customers, dealSupport = [], supportEngineers = [], m
           {' · '}Won: <strong>{formatAmount(sumAmount(visible.filter(d => d.stage === 'Won')))}</strong>
         </span>
       </div>
+      <div className="pipeline-stage-tabs" role="tablist" aria-label="Pipeline stages">
+        {PIPELINE_STAGES.map(stage => (
+          <button key={stage} type="button" role="tab" aria-selected={mobileStage === stage} className={`pipeline-stage-tab ${mobileStage === stage ? 'active' : ''}`} onClick={() => setMobileStage(stage)}>
+            <span>{stage}</span>
+            <span className="count-badge">{visible.filter(d => d.stage === stage).length}</span>
+          </button>
+        ))}
+      </div>
       <div className="pipeline-grid">
         {PIPELINE_STAGES.map(stage => {
           const stageDeals = visible.filter(d => d.stage === stage);
           return (
             <div
-              className={`pipeline-column ${dragOver === stage ? 'drag-over' : ''}`}
+              className={`pipeline-column ${dragOver === stage ? 'drag-over' : ''} ${mobileStage === stage ? 'mobile-active' : ''}`}
               key={stage}
               onDragOver={e => { e.preventDefault(); setDragOver(stage); }}
               onDragLeave={() => setDragOver(null)}
@@ -6594,7 +6674,7 @@ function Pipeline({ deals, customers, dealSupport = [], supportEngineers = [], m
                         {closureTimerText(deal.closure_end_at)}
                       </div>
                     )}
-                    <select value={deal.stage} onChange={e => moveDeal(deal.id, e.target.value)} disabled={!canEdit}>
+                    <select value={deal.stage} onChange={e => { moveDeal(deal.id, e.target.value); setMobileStage(e.target.value); }} disabled={!canEdit}>
                       {PIPELINE_STAGES.map(s => <option key={s}>{s}</option>)}
                     </select>
                   </div>
@@ -6652,7 +6732,9 @@ function FieldVisits({ customers = [], fieldVisits = [], currentUserId, role, on
   const [contactPerson, setContactPerson] = useState('');
   const [objective, setObjective] = useState('');
   const [notes, setNotes] = useState('');
-  const [busy, setBusy] = useState(false);
+  const [scheduling, setScheduling] = useState(false);
+  const [activeAction, setActiveAction] = useState(null); // { id, type: 'checkin' | 'checkout' }
+  const [notice, setNotice] = useState(null); // { tone, text } result of the last check-in / check-out
 
   const visibleVisits = fieldVisits.filter(visit => role === 'manager' || role === 'admin' || visit.sales_rep_id === currentUserId);
   const activeVisits = visibleVisits.filter(visit => !visit.check_out_at);
@@ -6670,18 +6752,44 @@ function FieldVisits({ customers = [], fieldVisits = [], currentUserId, role, on
   };
 
   const start = async () => {
-    if (targetType === 'customer' && !customerId) return;
-    if (targetType === 'other' && !targetName.trim()) return;
-    if (!objective.trim()) return;
-    setBusy(true);
+    const missing = [];
+    if (targetType === 'customer' && !customerId) missing.push('Customer');
+    if (targetType === 'other' && !targetName.trim()) missing.push('Person / organization name');
+    if (targetType === 'other' && !targetAddress.trim()) missing.push('Visit address');
+    if (!objective.trim()) missing.push('Visit objective');
+    if (missing.length > 0) {
+      alert(`Please fill in the following before scheduling:\n\n${missing.map(field => `• ${field}`).join('\n')}`);
+      return;
+    }
+    if (targetType === 'customer' && !selectedCustomer?.location_address?.trim() && !window.confirm('This customer has no registered address, so your arrival cannot be verified at check-in. Schedule the visit anyway?')) return;
+    setScheduling(true);
     try {
       await onStart({ targetType, customerId, targetName, targetOrganization, targetAddress, visitType, contactPerson, objective, notes });
       resetForm();
     } catch (e) {
       alert(e.message || 'Unable to start field visit.');
     } finally {
-      setBusy(false);
+      setScheduling(false);
     }
+  };
+
+  const isAction = (visit, type) => activeAction?.id === visit.id && activeAction?.type === type;
+  const actionLocked = Boolean(activeAction);
+  const runVisitAction = async (visit, type) => {
+    setActiveAction({ id: visit.id, type });
+    setNotice(null);
+    try {
+      const result = type === 'checkin' ? await onCheckIn(visit) : await onEnd(visit);
+      setNotice(describeVisitCheck(type, result));
+    } catch (e) {
+      alert(e.message || (type === 'checkin' ? 'Unable to check in.' : 'Unable to check out.'));
+    } finally {
+      setActiveAction(null);
+    }
+  };
+  const noticeStyle = tone => {
+    const rgb = { success: '22, 163, 74', warning: '217, 119, 6', error: '220, 38, 38' }[tone] || '100, 116, 139';
+    return { margin: '0 0 14px', padding: '10px 12px', borderRadius: 8, fontSize: 13, lineHeight: 1.5, display: 'flex', justifyContent: 'space-between', gap: 12, alignItems: 'flex-start', background: `rgba(${rgb}, 0.12)`, border: `1px solid rgba(${rgb}, 0.45)` };
   };
 
   const statusLabel = visit => ({
@@ -6705,6 +6813,11 @@ function FieldVisits({ customers = [], fieldVisits = [], currentUserId, role, on
       title="Field Visits"
       description="Schedule a field visit first, then capture arrival and departure locations with Check In and Check Out."
     />
+
+    {notice && <div role="status" style={noticeStyle(notice.tone)}>
+      <span>{notice.text}</span>
+      <button type="button" aria-label="Dismiss" onClick={() => setNotice(null)} style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'inherit', fontSize: 14 }}>✕</button>
+    </div>}
 
     <div className="panel">
       <div className="panel-heading">
@@ -6776,8 +6889,8 @@ function FieldVisits({ customers = [], fieldVisits = [], currentUserId, role, on
         </div>
 
         <div className="field-visit-form-actions field-visit-full">
-          <button type="button" className="primary-btn" onClick={start} disabled={(targetType === 'customer' ? !customerId : !targetName.trim()) || !objective.trim() || busy}>
-            {busy ? 'Scheduling visit…' : 'Schedule Field Visit'}
+          <button type="button" className="primary-btn" onClick={start} disabled={scheduling}>
+            {scheduling ? 'Scheduling visit…' : 'Schedule Field Visit'}
           </button>
         </div>
       </div>
@@ -6804,7 +6917,9 @@ function FieldVisits({ customers = [], fieldVisits = [], currentUserId, role, on
                 {targetMapUrl && <a href={targetMapUrl} target="_blank" rel="noreferrer" className="field-visit-map-link">Open target location</a>}
               </div>
             </div>
-            <div><span className={`status ${String(visit.verification_status || '').toLowerCase()}`}>{statusLabel(visit)}</span>{!visit.check_in_at ? <button type="button" className="primary-btn" disabled={busy} onClick={async () => { setBusy(true); try { await onCheckIn(visit); } catch (e) { alert(e.message || 'Unable to check in.'); } finally { setBusy(false); } }}>Check In</button> : <button type="button" className="secondary-btn" disabled={busy} onClick={async () => { setBusy(true); try { await onEnd(visit); } catch (e) { alert(e.message || 'Unable to check out.'); } finally { setBusy(false); } }}>Check Out</button>}</div>
+            <div><span className={`status ${String(visit.verification_status || '').toLowerCase()}`}>{statusLabel(visit)}</span>{!visit.check_in_at
+              ? <button type="button" className="primary-btn" disabled={actionLocked} aria-busy={isAction(visit, 'checkin')} onClick={() => runVisitAction(visit, 'checkin')}>{isAction(visit, 'checkin') ? 'Checking in… getting GPS' : 'Check In'}</button>
+              : <button type="button" className="secondary-btn" disabled={actionLocked} aria-busy={isAction(visit, 'checkout')} onClick={() => runVisitAction(visit, 'checkout')}>{isAction(visit, 'checkout') ? 'Checking out… getting GPS' : 'Check Out'}</button>}</div>
           </div>;
         })}
       </div>
