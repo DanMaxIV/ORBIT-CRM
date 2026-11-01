@@ -17,6 +17,7 @@
     "@fullcalendar/react": "^7.1.3",
     "@supabase/supabase-js": "^2.116.0",
     "@vitejs/plugin-react": "latest",
+    "capacitor-native-settings": "^8.2.0",
     "lucide-react": "latest",
     "react": "latest",
     "react-dom": "latest",

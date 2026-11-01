@@ -3,6 +3,8 @@ import { supabase } from './lib/supabase';
 import { Capacitor } from '@capacitor/core';
 import { Browser } from '@capacitor/browser';
 import { App as CapApp } from '@capacitor/app';
+import { Geolocation } from '@capacitor/geolocation';
+import { NativeSettings, AndroidSettings, IOSSettings } from 'capacitor-native-settings';
 import FullCalendar from '@fullcalendar/react';
 import dayGridPlugin from '@fullcalendar/react/daygrid';
 import timeGridPlugin from '@fullcalendar/react/timegrid';
@@ -182,7 +184,7 @@ function describeVisitCheck(type, visit) {
 // Listens up to maxWaitMs, stops early once accuracy <= targetAccuracy metres,
 // otherwise resolves with the most accurate fix seen. Resolves a plain
 // { latitude, longitude, accuracy } object.
-function captureCurrentLocation(onSuccess, onFailure, { targetAccuracy = 50, maxWaitMs = 20000 } = {}) {
+function captureLocationOnce(onSuccess, onFailure, { targetAccuracy = 50, maxWaitMs = 20000 } = {}) {
   if (!navigator.geolocation) {
     onFailure?.(new Error('Location is not supported by this browser.'));
     return;
@@ -223,6 +225,59 @@ function captureCurrentLocation(onSuccess, onFailure, { targetAccuracy = 50, max
     { enableHighAccuracy: true, timeout: maxWaitMs, maximumAge: 0 }
   );
   timer = setTimeout(finish, maxWaitMs);
+}
+
+// ---- Phone location helpers (Android app) ----
+// Checks that the app may use location and that the phone's Location (GPS) switch is on.
+// Returns null when ready, or 'permission' / 'services' describing what needs fixing.
+async function checkNativeLocationReady() {
+  if (!IS_NATIVE) return null;
+  try {
+    const isGranted = status => status.location === 'granted' || status.coarseLocation === 'granted';
+    let status = await Geolocation.checkPermissions();
+    if (!isGranted(status)) status = await Geolocation.requestPermissions();
+    if (!isGranted(status)) return 'permission';
+  } catch (error) {
+    console.warn('Location permission check failed:', error);
+    return null; // let the normal location request try anyway
+  }
+  try {
+    // Quick, low-power probe, only used to find out whether the phone's Location switch is off.
+    await Geolocation.getCurrentPosition({ enableHighAccuracy: false, timeout: 3000, maximumAge: 60000 });
+  } catch (error) {
+    if (/not enabled|disabled|turned off/i.test(String(error?.message || error))) return 'services';
+  }
+  return null;
+}
+
+async function openPhoneLocationSettings(problem) {
+  try {
+    await NativeSettings.open({
+      optionAndroid: problem === 'permission' ? AndroidSettings.ApplicationDetails : AndroidSettings.Location,
+      optionIOS: IOSSettings.App
+    });
+  } catch (error) {
+    console.warn('Could not open phone settings:', error);
+  }
+}
+
+// Same as captureLocationOnce, but in the Android app it first makes sure location is allowed and switched on,
+// and offers to open the right phone settings screen if it is not.
+function captureCurrentLocation(onSuccess, onFailure, options) {
+  (async () => {
+    const problem = await checkNativeLocationReady();
+    if (problem) {
+      const message = problem === 'permission'
+        ? 'Location access is blocked for Storhet CRM. Allow "Location" in the app settings, then try again.'
+        : 'Location (GPS) is turned off on this phone. Turn it on, then try again.';
+      const error = new Error(message);
+      error.handled = window.confirm(`${message}\n\nOpen settings now?`);
+      if (error.handled) await openPhoneLocationSettings(problem);
+      onFailure?.(error);
+      return;
+    }
+    captureLocationOnce(onSuccess, onFailure, options);
+  })();
 }
 
 function AuthScreen({ onGoogleSignIn, onMicrosoftSignIn, onEmailSignIn, onEmailSignUp, onPortalSignUp, authMode, setAuthMode, email, setEmail, password, setPassword,
@@ -1243,25 +1298,25 @@ function App() {
   }, [session]);
 
   useEffect(() => {
-  if (!IS_NATIVE) return;
-  const handle = CapApp.addListener('appUrlOpen', async ({ url }) => {
-    if (!url.startsWith(NATIVE_REDIRECT)) return;
-    await Browser.close();
-    const parsed = new URL(url);
-    const code = parsed.searchParams.get('code');
-    if (code) {
-      await supabase.auth.exchangeCodeForSession(code);
-      return;
-    }
-    const hash = new URLSearchParams(parsed.hash.replace(/^#/, ''));
-    const access_token = hash.get('access_token');
-    const refresh_token = hash.get('refresh_token');
-    if (access_token && refresh_token) {
-      await supabase.auth.setSession({ access_token, refresh_token });
-    }
-  });
-  return () => { handle.then(h => h.remove()); };
-}, []);
+    if (!IS_NATIVE) return;
+    const handle = CapApp.addListener('appUrlOpen', async ({ url }) => {
+      if (!url.startsWith(NATIVE_REDIRECT)) return;
+      await Browser.close();
+      const parsed = new URL(url);
+      const code = parsed.searchParams.get('code');
+      if (code) {
+        await supabase.auth.exchangeCodeForSession(code);
+        return;
+      }
+      const hash = new URLSearchParams(parsed.hash.replace(/^#/, ''));
+      const access_token = hash.get('access_token');
+      const refresh_token = hash.get('refresh_token');
+      if (access_token && refresh_token) {
+        await supabase.auth.setSession({ access_token, refresh_token });
+      }
+    });
+    return () => { handle.then(h => h.remove()); };
+  }, []);
 
   const showToast = (message) => {
     setToast(message);
@@ -6249,13 +6304,13 @@ function CustomerTable({ customers, deals = [], formatAmount, onSelectCustomer, 
                     <strong>{c.email || '—'}</strong>
                   </div>
                 </td>
-                <td> 
-                  <div> 
+                <td>
+                  <div>
                     <span>{c.phone || '—'}</span>
                   </div>
                 </td>
-                <td> 
-                  <div> 
+                <td>
+                  <div>
                     <span>{c.job_title && <small>{c.job_title}</small>}</span>
                   </div>
                 </td>
@@ -6782,7 +6837,7 @@ function FieldVisits({ customers = [], fieldVisits = [], currentUserId, role, on
       const result = type === 'checkin' ? await onCheckIn(visit) : await onEnd(visit);
       setNotice(describeVisitCheck(type, result));
     } catch (e) {
-      alert(e.message || (type === 'checkin' ? 'Unable to check in.' : 'Unable to check out.'));
+      if (!e?.handled) alert(e.message || (type === 'checkin' ? 'Unable to check in.' : 'Unable to check out.'));
     } finally {
       setActiveAction(null);
     }
@@ -8362,8 +8417,7 @@ function Quotes({ quotes = [], products = [], quoteItems = [], deals = [], dealP
               <tr key={q.id}>
                 <td><strong>{q.quote_number}</strong><div className="deal-customer">{q.title}</div></td>
                 <td>{q.customer_name || q.company || '—'}{q.company && q.customer_name ? <div className="deal-customer">{q.company}</div> : null}</td>
-                <td>{deals.find(d => d.id === q.deal_id)?.title || '—'}</td>
-                <td>{formatAmount(docAmountUsd(q, 'total'))}</td>
+                <td> <strong>{formatAmount(docAmountUsd(q, 'total'))}</strong> <br />{deals.find(d => d.id === q.deal_id)?.title || '—'}</td>
                 <td><div>{q.status || '—'}</div><small className="approval-range-hint">{approvalRequirement(q.total).label} approval</small></td>
                 <td>{q.valid_until ? formatDate(q.valid_until) : '—'}</td>
                 <td><div className="quote-actions">
@@ -8380,7 +8434,71 @@ function Quotes({ quotes = [], products = [], quoteItems = [], deals = [], dealP
       </div>
     </div>
 
-    {preview && <div className="commercial-preview-backdrop" onClick={() => setPreview(null)}><div className="commercial-preview-shell" onClick={e => e.stopPropagation()}><div className="commercial-preview-toolbar"><div><strong>Quote preview</strong><span>Commercial document</span></div><div className="toolbar-actions"><button type="button" className="secondary-btn" onClick={() => window.print()}>Print / Save PDF</button><button type="button" className="icon-btn" onClick={() => setPreview(null)}><X size={18} /></button></div></div><div className="commercial-print-sheet"><header className="commercial-document-header"><div><img src="/storhet-logo.png" alt="Storhet Solutions" className="invoice-company-logo" /><h2>STORHET SOLUTIONS</h2><p>Technology Solutions & Services</p></div><div className="commercial-document-title-block"><div className="commercial-document-title">QUOTATION</div><span>{preview.status || 'Draft'}</span></div></header><div className="commercial-rule" /><section className="commercial-meta-grid"><div><span className="invoice-label">BILL TO</span><strong>{preview.customer_name || preview.company || 'Customer'}</strong><span>{preview.company || ''}</span><span>{preview.email || ''}</span><span>{preview.billing_address || ''}</span></div><div className="commercial-details-box"><div><span>Quote #</span><strong>{preview.quote_number}</strong></div><div><span>Quote Date</span><strong>{formatDate(preview.quote_date)}</strong></div><div><span>Valid Until</span><strong>{preview.valid_until ? formatDate(preview.valid_until) : '—'}</strong></div><div><span>Currency</span><strong>{preview.currency_code || 'USD'}{preview.currency_code && preview.currency_code !== 'USD' ? ` · 1 ${preview.currency_code} = ${preview.exchange_rate || 1} USD` : ''}</strong></div></div></section><table className="commercial-document-table"><thead><tr><th>#</th><th>ITEM &amp; DESCRIPTION</th><th>QTY</th><th>PRICE</th><th>DISCOUNT</th><th>AMOUNT</th></tr></thead><tbody>{(preview.__items || []).map((item, idx) => <tr key={item.id || idx}><td>{idx + 1}</td><td><strong>{item.product_name || 'Solution'}</strong><span>{item.description || ''}</span></td><td>{item.quantity || 1}</td><td>{formatCommercialAmount(item.unit_price, preview.currency_code)}</td><td>{Number(item.discount_percent || 0).toFixed(2)}%</td><td>{formatCommercialAmount(Number(item.total || 0), preview.currency_code)}</td></tr>)}</tbody></table><section className="commercial-bottom-grid"><div><span className="invoice-label">NOTES</span><p>{preview.notes || 'Thank you for your business.'}</p><span className="invoice-label">TERMS</span><p>{preview.terms || '—'}</p></div><div className="commercial-totals-block"><div><span>Subtotal</span><strong>{formatCommercialAmount(preview.subtotal, preview.currency_code)}</strong></div><div><span>Discount</span><strong>- {formatCommercialAmount(preview.discount, preview.currency_code)}</strong></div><div><span>VAT ({preview.vat_rate ?? 7.5}%)</span><strong>{formatCommercialAmount(preview.vat_amount || 0, preview.currency_code)}</strong></div><div><span>Manual tax</span><strong>{formatCommercialAmount(preview.manual_tax || 0, preview.currency_code)}</strong></div><div className="commercial-grand-total"><span>TOTAL</span><strong>{formatCommercialAmount(preview.total, preview.currency_code)}</strong></div></div></section><footer className="commercial-document-footer"><div><strong>Payment terms</strong><p>{preview.payment_terms || 'Due on receipt.'}</p><strong>Delivery terms</strong><p>{preview.delivery_terms || '—'}</p></div><div>Thank you for doing business with<br /><strong>STORHET SOLUTIONS</strong>.</div></footer></div></div></div>}
+    {preview && <div className="commercial-preview-backdrop" onClick={() => setPreview(null)}>
+      <div className="commercial-preview-shell" onClick={e => e.stopPropagation()}>
+        <div className="commercial-preview-toolbar">
+          <div><strong>Quote preview</strong><span>Commercial document</span></div>
+          <div className="toolbar-actions"><button type="button" className="secondary-btn" onClick={() => window.print()}>Print / Save PDF</button>
+            <button type="button" className="icon-btn" onClick={() => setPreview(null)}><X size={18} />
+            </button>
+          </div>
+        </div>
+        <div className="commercial-print-sheet">
+          <header className="commercial-document-header">
+            <div>
+              <img src="/storhet-logo.png" alt="Storhet Solutions" className="invoice-company-logo" />
+              <h2>STORHET SOLUTIONS</h2><p>Technology Solutions & Services</p>
+            </div>
+            <div className="commercial-document-title-block">
+              <div className="commercial-document-title">QUOTATION</div>
+              <span>{preview.status || 'Draft'}</span>
+            </div>
+          </header>
+          <div className="commercial-rule" />
+          <section className="commercial-meta-grid">
+            <div><span className="invoice-label">BILL TO</span>
+              <strong>{preview.customer_name || preview.company || 'Customer'}</strong>
+              <span>{preview.company || ''}</span><span>{preview.email || ''}</span>
+              <span>{preview.billing_address || ''}</span>
+            </div>
+            <div className="commercial-details-box">
+              <div>
+                <span>Quote #</span>
+                <strong>{preview.quote_number}</strong>
+              </div>
+              <div>
+                <span>Quote Date</span>
+                <strong>{formatDate(preview.quote_date)}</strong>
+              </div>
+              <div><span>Valid Until</span><strong>{preview.valid_until ? formatDate(preview.valid_until) : '—'}</strong>
+              </div>
+              <div><span>Currency</span><strong>{preview.currency_code || 'USD'}{preview.currency_code && preview.currency_code !== 'USD' ? ` · 1 ${preview.currency_code} = ${preview.exchange_rate || 1} USD` : ''}</strong></div>
+            </div>
+          </section>
+          <table className="commercial-document-table">
+            <thead>
+              <tr>
+                <th>#</th>
+                <th>ITEM &amp; DESCRIPTION</th>
+                <th>QTY</th>
+                <th>PRICE</th>
+                <th>DISCOUNT</th><th>AMOUNT</th>
+              </tr>
+            </thead>
+            <tbody>{(preview.__items || []).map((item, idx) =>
+              <tr key={item.id || idx}>
+                <td>{idx + 1}</td>
+                <td><strong>{item.product_name || 'Solution'}</strong><span>{item.description || ''}</span></td>
+                <td>{item.quantity || 1}</td><td>{formatCommercialAmount(item.unit_price, preview.currency_code)}</td><td>{Number(item.discount_percent || 0).toFixed(2)}%</td>
+                <td>{formatCommercialAmount(Number(item.total || 0), preview.currency_code)}</td>
+              </tr>)}
+            </tbody>
+          </table>
+          <section className="commercial-bottom-grid"><div><span className="invoice-label">NOTES</span><p>{preview.notes || 'Thank you for your business.'}</p><span className="invoice-label">TERMS</span><p>{preview.terms || '—'}</p></div><div className="commercial-totals-block"><div><span>Subtotal</span><strong>{formatCommercialAmount(preview.subtotal, preview.currency_code)}</strong></div><div><span>Discount</span><strong>- {formatCommercialAmount(preview.discount, preview.currency_code)}</strong></div><div><span>VAT ({preview.vat_rate ?? 7.5}%)</span><strong>{formatCommercialAmount(preview.vat_amount || 0, preview.currency_code)}</strong></div><div><span>Manual tax</span><strong>{formatCommercialAmount(preview.manual_tax || 0, preview.currency_code)}</strong></div><div className="commercial-grand-total"><span>TOTAL</span><strong>{formatCommercialAmount(preview.total, preview.currency_code)}</strong></div></div></section><footer className="commercial-document-footer"><div><strong>Payment terms</strong><p>{preview.payment_terms || 'Due on receipt.'}</p><strong>Delivery terms</strong><p>{preview.delivery_terms || '—'}</p></div><div>Thank you for doing business with<br /><strong>STORHET SOLUTIONS</strong>.</div></footer>
+        </div>
+      </div>
+    </div>
+    }
 
     {show && <div className="modal-backdrop" onClick={() => !saving && setShow(false)}>
       <form className="modal modal-wide" noValidate onSubmit={save} onClick={e => e.stopPropagation()}>
