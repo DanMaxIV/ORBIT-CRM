@@ -1699,10 +1699,6 @@ function App() {
       return;
     }
 
-    const authProvider = currentSession.user.app_metadata?.provider;
-    const authProviders = currentSession.user.app_metadata?.providers || [];
-    const isGoogleOAuthUser = authProvider === 'google' || authProviders.includes('google');
-
     // A customer-portal account must never be routed into the internal CRM,
     // even if an older/stale authorized_users row marks the same user as a member.
     // Portal account_type takes precedence over internal role/status.
@@ -1723,10 +1719,7 @@ function App() {
 
     // Only accounts explicitly created for the customer portal may use this path.
     // Ordinary internal CRM sign-ups continue to require staff approval.
-    if (
-      currentSession.user.user_metadata?.account_type === 'customer_portal' ||
-      (!data && isGoogleOAuthUser)
-    ) {
+    if (currentSession.user.user_metadata?.account_type === 'customer_portal') {
       try {
         let { data: account, error: accountError } = await supabase
           .from('customer_portal_accounts')
