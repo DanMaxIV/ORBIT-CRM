@@ -1699,6 +1699,10 @@ function App() {
       return;
     }
 
+    const authProvider = currentSession.user.app_metadata?.provider;
+    const authProviders = currentSession.user.app_metadata?.providers || [];
+    const isGoogleOAuthUser = authProvider === 'google' || authProviders.includes('google');
+
     // A customer-portal account must never be routed into the internal CRM,
     // even if an older/stale authorized_users row marks the same user as a member.
     // Portal account_type takes precedence over internal role/status.
@@ -1719,7 +1723,10 @@ function App() {
 
     // Only accounts explicitly created for the customer portal may use this path.
     // Ordinary internal CRM sign-ups continue to require staff approval.
-    if (currentSession.user.user_metadata?.account_type === 'customer_portal') {
+    if (
+      currentSession.user.user_metadata?.account_type === 'customer_portal' ||
+      (!data && isGoogleOAuthUser)
+    ) {
       try {
         let { data: account, error: accountError } = await supabase
           .from('customer_portal_accounts')
@@ -1793,47 +1800,6 @@ function App() {
         await supabase.auth.signOut();
         return;
       }
-    }
-
-    // First-time Google OAuth users are registered in authorized_users as
-    // pending staff accounts. They must still be approved by an administrator
-    // before they can enter the internal CRM.
-    const authProvider = currentSession.user.app_metadata?.provider;
-    const authProviders = currentSession.user.app_metadata?.providers || [];
-    const isGoogleOAuthUser = authProvider === 'google' || authProviders.includes('google');
-
-    if (!data && isGoogleOAuthUser) {
-      try {
-        const googleEmail = (currentSession.user.email || '').trim().toLowerCase();
-        if (!googleEmail) {
-          throw new Error('Google did not return an email address for this account.');
-        }
-
-        const { error: provisionError } = await supabase
-          .from('authorized_users')
-          .insert({
-            user_id: currentSession.user.id,
-            email: googleEmail,
-            role: DEFAULT_ROLE,
-            status: 'pending'
-          });
-
-        if (provisionError) throw provisionError;
-
-        setAuthNotice(
-          'Your Google account has been registered. An administrator must approve your Storhet CRM access before you can sign in.'
-        );
-      } catch (provisionError) {
-        console.error('Google user provisioning failed:', provisionError);
-        setAuthError(
-          provisionError.message ||
-          'We could not register your Google account. Please contact your administrator.'
-        );
-      } finally {
-        setAuthorizationLoading(false);
-        await supabase.auth.signOut();
-      }
-      return;
     }
 
     setAuthorizationLoading(false);
