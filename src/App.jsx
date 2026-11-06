@@ -1795,6 +1795,47 @@ function App() {
       }
     }
 
+    // First-time Google OAuth users are registered in authorized_users as
+    // pending staff accounts. They must still be approved by an administrator
+    // before they can enter the internal CRM.
+    const authProvider = currentSession.user.app_metadata?.provider;
+    const authProviders = currentSession.user.app_metadata?.providers || [];
+    const isGoogleOAuthUser = authProvider === 'google' || authProviders.includes('google');
+
+    if (!data && isGoogleOAuthUser) {
+      try {
+        const googleEmail = (currentSession.user.email || '').trim().toLowerCase();
+        if (!googleEmail) {
+          throw new Error('Google did not return an email address for this account.');
+        }
+
+        const { error: provisionError } = await supabase
+          .from('authorized_users')
+          .insert({
+            user_id: currentSession.user.id,
+            email: googleEmail,
+            role: DEFAULT_ROLE,
+            status: 'pending'
+          });
+
+        if (provisionError) throw provisionError;
+
+        setAuthNotice(
+          'Your Google account has been registered. An administrator must approve your Storhet CRM access before you can sign in.'
+        );
+      } catch (provisionError) {
+        console.error('Google user provisioning failed:', provisionError);
+        setAuthError(
+          provisionError.message ||
+          'We could not register your Google account. Please contact your administrator.'
+        );
+      } finally {
+        setAuthorizationLoading(false);
+        await supabase.auth.signOut();
+      }
+      return;
+    }
+
     setAuthorizationLoading(false);
     await supabase.auth.signOut();
     if (!justSignedUp.current) {
