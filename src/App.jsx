@@ -11,7 +11,7 @@ import timeGridPlugin from '@fullcalendar/react/timegrid';
 import listPlugin from '@fullcalendar/react/list';
 import interactionPlugin from '@fullcalendar/react/interaction';
 import '@fullcalendar/react/skeleton.css';
-import { LayoutDashboard, Users, Kanban, CalendarCheck, BarChart3, Settings, Bell, Search, Plus, ArrowUpRight, MoreHorizontal, Menu, X, UserRound, Pencil, Receipt, LogOut, UserCog, MessageCircle, UserPlus, Mail, CalendarDays, FileText, Workflow, TrendingUp, Tags, DollarSign, CreditCard, Upload, Download, Play, Target, CheckCircle2, ArrowLeft, ChevronRight, Building2, RefreshCw, GripVertical, MapPin } from 'lucide-react';
+import { LayoutDashboard, Users, Kanban, CalendarCheck, BarChart3, Settings, Bell, Search, Plus, ArrowUpRight, MoreHorizontal, Menu, X, UserRound, Pencil, Receipt, LogOut, UserCog, MessageCircle, UserPlus, Mail, CalendarDays, FileText, Workflow, TrendingUp, Tags, DollarSign, CreditCard, Upload, Download, Play, Target, CheckCircle2, ArrowLeft, ChevronRight, Building2, RefreshCw, GripVertical, MapPin, ClipboardList } from 'lucide-react';
 
 
 const IS_NATIVE = Capacitor.isNativePlatform();
@@ -321,7 +321,11 @@ function AuthScreen({ onGoogleSignIn, onMicrosoftSignIn, onEmailSignIn, onEmailS
             </label>
             <button type="submit" className="primary-btn" disabled={loading}>{loading ? 'Creating account…' : 'Create account'}</button>
           </form>
-          <p className="invite-expiry">This invitation expires {new Date(staffInvite.expires_at).toLocaleDateString()}.</p>
+          <div className="auth-divider"><span>or</span></div>
+          <button type="button" className="google-signin-btn" onClick={onGoogleSignIn} disabled={loading}>
+            Continue with Google
+          </button>
+          <p className="invite-expiry">Use the Google account matching the invited email address. This invitation expires {new Date(staffInvite.expires_at).toLocaleDateString()}.</p>
         </div>
       </div>
     );
@@ -1033,7 +1037,7 @@ function CustomerPortalHome({ user, account, onSignOut }) {
 const navSections = [
   { title: 'Overview', items: [['Dashboard', LayoutDashboard], ['Reports', BarChart3]] },
   { title: 'Customers & Sales', items: [['Customers', Users], ['Leads', UserPlus], ['Pipeline', Kanban], ['Products', FileText], ['Quotes', FileText], ['Invoices', CreditCard], ['Forecast', TrendingUp]] },
-  { title: 'Work & Support', items: [['Activities', CalendarCheck], ['Field Visits', MapPin], ['Calendar', CalendarDays], ['Technical Support', UserCog], ['Tickets', Receipt], ['Documents', FileText]] },
+  { title: 'Work & Support', items: [['Activities', CalendarCheck], ['Field Visits', MapPin], ['Calendar', CalendarDays], ['Technical Support', UserCog], ['Tickets', Receipt], ['Documents', FileText], ['Requisition', ClipboardList]] },
   { title: 'Communication', items: [['Email', Mail], ['Chat', MessageCircle]] },
   { title: 'Automation & Insights', items: [['Automation', Workflow], ['Segments', Tags]] },
   { title: 'System', items: [['Settings', Settings]] }
@@ -1111,6 +1115,7 @@ const PAGE_DATA = {
   Pipeline: ['deals', 'customers', 'support', 'dealProducts', 'products'],
   Activities: ['activities', 'customers'],
   'Field Visits': ['fieldVisits', 'customers'],
+  Requisition: ['requisitions'],
   Tickets: ['tickets', 'customers'],
   Reports: ['customers', 'deals', 'activities', 'tickets', 'leads', 'quotes', 'invoices'],
   'Email Logs': ['emailLogs', 'customers']
@@ -1206,6 +1211,8 @@ function App() {
   const [editingCustomer, setEditingCustomer] = useState(null);
   const [activities, setActivities] = useState([]);
   const [fieldVisits, setFieldVisits] = useState([]);
+  const [requisitions, setRequisitions] = useState([]);
+  const [requisitionError, setRequisitionError] = useState('');
   const [fieldVisitError, setFieldVisitError] = useState('');
   const [showActivityForm, setShowActivityForm] = useState(false);
   const [newActivity, setNewActivity] = useState({
@@ -1446,10 +1453,17 @@ function App() {
   // }
   async function oauthSignIn(provider, extraOptions = {}) {
     setAuthError('');
+    // Preserve a staff-invitation token across the OAuth round trip. Without
+    // this, Google returns to the app root and the invitation cannot be claimed.
+    const currentUrl = new URL(window.location.href);
+    const hasStaffInvite = Boolean(currentUrl.searchParams.get('staff_invite'));
+    const webRedirectTo = hasStaffInvite
+      ? `${window.location.origin}${currentUrl.pathname}${currentUrl.search}`
+      : window.location.origin;
     const { data, error } = await supabase.auth.signInWithOAuth({
       provider,
       options: {
-        redirectTo: IS_NATIVE ? NATIVE_REDIRECT : window.location.origin,
+        redirectTo: IS_NATIVE ? NATIVE_REDIRECT : webRedirectTo,
         skipBrowserRedirect: IS_NATIVE,
         ...extraOptions
       }
@@ -1533,17 +1547,17 @@ function App() {
       const newUser = authData?.user;
 
       if (newUser) {
-        // 2. Insert user into authorized_users as 'pending' for admin approval
+        // Email/password staff sign-ups are saved as pending. Google OAuth
+        // accounts without a row are provisioned by ensure_authorized_user
+        // after the user returns with an authenticated session.
         const { error: insertError } = await supabase
           .from('authorized_users')
-          .insert([
-            {
-              user_id: newUser.id,
-              email: trimmedEmail,
-              role: DEFAULT_ROLE,
-              status: 'pending'
-            }
-          ]);
+          .insert([{
+            user_id: newUser.id,
+            email: trimmedEmail,
+            role: DEFAULT_ROLE,
+            status: 'pending'
+          }]);
 
         if (insertError) {
           console.warn('Could not provision authorized_users entry:', insertError.message);
@@ -1628,6 +1642,7 @@ function App() {
         email: staffInviteInfo.email,
         password: invitePassword,
         options: {
+          emailRedirectTo: `${window.location.origin}${window.location.pathname}?staff_invite=${encodeURIComponent(staffInviteInfo.token)}`,
           data: { account_type: 'staff_invite', full_name: fullName.trim(), staff_invite_token: staffInviteInfo.token }
         }
       });
@@ -1684,10 +1699,15 @@ function App() {
     setPortalAccount(null);
     setPortalSetupPending(false);
 
-    const { data, error } = await supabase
+    const currentUser = currentSession.user;
+    const accountType = currentUser.user_metadata?.account_type || '';
+    const inviteToken = currentUser.user_metadata?.staff_invite_token ||
+      new URLSearchParams(window.location.search).get('staff_invite');
+
+    let { data, error } = await supabase
       .from('authorized_users')
       .select('role, status')
-      .eq('user_id', currentSession.user.id)
+      .eq('user_id', currentUser.id)
       .maybeSingle();
 
     if (error) {
@@ -1699,50 +1719,89 @@ function App() {
       return;
     }
 
-    // A customer-portal account must never be routed into the internal CRM,
-    // even if an older/stale authorized_users row marks the same user as a member.
-    // Portal account_type takes precedence over internal role/status.
+    // Complete an invitation before ordinary internal-user provisioning.
+    // The RPC validates the token, invited email, expiry and invitation status.
+    // The token is read from either auth metadata or the preserved invite URL,
+    // so Google OAuth invitations work as well as email/password invitations.
     if (
-      data?.status === 'active' &&
-      currentSession.user.user_metadata?.account_type !== 'customer_portal'
+      !data &&
+      accountType !== 'customer_portal' &&
+      inviteToken &&
+      currentUser.email_confirmed_at
     ) {
-      setAuthorized(true);
-      setAuthorizationProfile(data);
-      setPortalAccount(null);
-      setPortalSetupPending(false);
+      try {
+        const { error: inviteCompletionError } = await supabase.rpc('complete_staff_invitation_signup', {
+          p_token: inviteToken,
+          p_full_name: currentUser.user_metadata?.full_name || null
+        });
+        if (inviteCompletionError) throw inviteCompletionError;
+
+        const refreshed = await supabase
+          .from('authorized_users')
+          .select('role, status')
+          .eq('user_id', currentUser.id)
+          .maybeSingle();
+        if (refreshed.error) throw refreshed.error;
+        data = refreshed.data;
+        if (!data) throw new Error('The invitation was processed, but no staff access record was created. Please contact your administrator.');
+        if (data.status === 'active') setShowStaffOnboarding(true);
+      } catch (staffInviteCompletionError) {
+        console.error('Staff invitation completion failed:', staffInviteCompletionError);
+        setAuthError(staffInviteCompletionError.message || 'Unable to complete your invited sign-up.');
+        setAuthorizationLoading(false);
+        await supabase.auth.signOut();
+        return;
+      }
+    }
+
+    // Internal authorization records take precedence over Customer Portal
+    // metadata. This permits an explicitly provisioned internal employee to
+    // use the CRM even if their Auth account has stale portal metadata.
+    if (data) {
+      if (data.status === 'active') {
+        setAuthorized(true);
+        setAuthorizationProfile(data);
+        setPortalAccount(null);
+        setPortalSetupPending(false);
+        setAuthorizationLoading(false);
+        return;
+      }
+
+      setAuthorized(false);
+      setAuthorizationProfile(null);
       setAuthorizationLoading(false);
+      await supabase.auth.signOut();
+      if (!justSignedUp.current) {
+        setAuthError(data.status === 'pending'
+          ? 'Your internal CRM account is awaiting administrator approval.'
+          : 'Your internal CRM account is inactive. Please contact your administrator.');
+      }
       return;
     }
 
-    setAuthorized(false);
-    setAuthorizationProfile(null);
-
-    // Only accounts explicitly created for the customer portal may use this path.
-    // Ordinary internal CRM sign-ups continue to require staff approval.
-    if (currentSession.user.user_metadata?.account_type === 'customer_portal') {
+    // Only explicitly registered Customer Portal accounts use this path.
+    // Customer Portal sign-ups are never inserted into authorized_users.
+    if (accountType === 'customer_portal') {
       try {
         let { data: account, error: accountError } = await supabase
           .from('customer_portal_accounts')
           .select('user_id, customer_id, email, full_name, status, registration_source')
-          .eq('user_id', currentSession.user.id)
+          .eq('user_id', currentUser.id)
           .maybeSingle();
         if (accountError) throw accountError;
 
-        // Create/refresh the portal registration after email verification.
-        // The database function always leaves self-registrations pending; only
-        // an authorized CRM admin can approve access.
         if (
-          currentSession.user.email_confirmed_at &&
+          currentUser.email_confirmed_at &&
           (!account || account.registration_source === 'signup')
         ) {
           const { error: completionError } = await supabase.rpc('complete_customer_portal_signup', {
-            p_full_name: currentSession.user.user_metadata?.full_name || account?.full_name || portalSignUpName || null
+            p_full_name: currentUser.user_metadata?.full_name || account?.full_name || portalSignUpName || null
           });
           if (completionError) throw completionError;
           const refreshed = await supabase
             .from('customer_portal_accounts')
             .select('user_id, customer_id, email, full_name, status, registration_source')
-            .eq('user_id', currentSession.user.id)
+            .eq('user_id', currentUser.id)
             .maybeSingle();
           if (refreshed.error) throw refreshed.error;
           account = refreshed.data;
@@ -1751,7 +1810,7 @@ function App() {
         setPortalAccount(account || null);
         setPortalSetupPending(!account);
         setAuthorizationLoading(false);
-        if (!account) setAuthNotice('Please verify your email address. Once verified, your request will remain pending until an Storhet CRM admin approves it.');
+        if (!account) setAuthNotice('Please verify your email address. Once verified, your request will remain pending until a Storhet CRM admin approves it.');
         return;
       } catch (portalError) {
         console.error('Customer portal authorization check failed:', portalError);
@@ -1763,32 +1822,39 @@ function App() {
       }
     }
 
-    // An invited worker has no authorized_users row yet on their very first
-    // sign-in; this is the only time this branch runs, since every later
-    // login finds an active row and returns from the top of this function.
-    if (
-      !data &&
-      currentSession.user.user_metadata?.account_type === 'staff_invite' &&
-      currentSession.user.email_confirmed_at
-    ) {
+    // Never turn an unconfirmed invitation into an ordinary Sales account.
+    if (inviteToken && accountType !== 'customer_portal' && !currentUser.email_confirmed_at) {
+      setAuthorizationLoading(false);
+      setAuthNotice('Please verify the invited email address before completing your staff invitation.');
+      await supabase.auth.signOut();
+      return;
+    }
+
+    // A normal internal Google/email login may already have a Supabase Auth
+    // identity but no authorized_users row. Provision it as Sales / Pending.
+    // The RPC excludes Customer Portal and staff-invitation identities again
+    // on the server, so this client-side check is not the security boundary.
+    if (accountType !== 'staff_invite') {
       try {
-        const { error: inviteCompletionError } = await supabase.rpc('complete_staff_invitation_signup', {
-          p_token: currentSession.user.user_metadata?.staff_invite_token,
-          p_full_name: currentSession.user.user_metadata?.full_name || null
-        });
-        if (inviteCompletionError) throw inviteCompletionError;
-        const refreshed = await supabase.from('authorized_users').select('role, status').eq('user_id', currentSession.user.id).maybeSingle();
+        const { error: provisionError } = await supabase.rpc('ensure_authorized_user');
+        if (provisionError) throw provisionError;
+        const refreshed = await supabase
+          .from('authorized_users')
+          .select('role, status')
+          .eq('user_id', currentUser.id)
+          .maybeSingle();
         if (refreshed.error) throw refreshed.error;
-        if (refreshed.data?.status === 'active') {
+        data = refreshed.data;
+
+        if (data?.status === 'active') {
           setAuthorized(true);
-          setAuthorizationProfile(refreshed.data);
+          setAuthorizationProfile(data);
           setAuthorizationLoading(false);
-          setShowStaffOnboarding(true);
           return;
         }
-      } catch (staffInviteCompletionError) {
-        console.error('Staff invitation completion failed:', staffInviteCompletionError);
-        setAuthError(staffInviteCompletionError.message || 'Unable to complete your invited sign-up.');
+      } catch (provisionError) {
+        console.error('Internal account provisioning failed:', provisionError);
+        setAuthError(provisionError.message || 'Unable to create your internal CRM access request.');
         setAuthorizationLoading(false);
         await supabase.auth.signOut();
         return;
@@ -1798,7 +1864,7 @@ function App() {
     setAuthorizationLoading(false);
     await supabase.auth.signOut();
     if (!justSignedUp.current) {
-      setAuthError('Your internal CRM account has not been approved yet. Please contact your administrator.');
+      setAuthError('Your internal CRM account is awaiting administrator approval. Please contact your administrator.');
     }
   };
   const fetchCustomers = async () => {
@@ -2240,8 +2306,35 @@ function App() {
   }
   async function deleteLead(id) { if (!window.confirm('Delete this lead?')) return; const { error } = await supabase.from('leads').delete().eq('id', id); if (error) { alert(error.message); return; } setLeads(prev => prev.filter(x => x.id !== id)); }
 
+  async function fetchRequisitions() {
+    const { data, error } = await fetchAllRows(() => supabase.from('requisitions').select('*').order('created_at', { ascending: false }));
+    if (error) {
+      const notSetUp = ['42P01', 'PGRST205'].includes(error.code);
+      if (!notSetUp) console.error('Error fetching requisitions:', error);
+      setRequisitionError(notSetUp ? 'Requisitions are not set up yet. Run the requisitions SQL file in Supabase.' : error.message);
+      if (!notSetUp) throw error;
+      return;
+    }
+    setRequisitionError('');
+    setRequisitions(data || []);
+  }
+
+  async function submitRequisition({ department, requestType, description, startDate, endDate }) {
+    const { data, error } = await supabase.from('requisitions').insert([{
+      requester_id: session.user.id, employee_name: displayUserName, employee_email: session.user.email,
+      department, request_type: requestType, description, start_date: startDate, end_date: endDate
+    }]).select('*').single();
+    if (error) {
+      console.error('Error submitting requisition:', error);
+      throw new Error(['42P01', 'PGRST205'].includes(error.code) ? 'Requisitions are not set up yet. Run the requisitions SQL file in Supabase.' : error.message);
+    }
+    setRequisitions(prev => [data, ...prev]);
+    showToast('Request submitted.');
+  }
+
   function datasetLoaders(key) {
     switch (key) {
+      case 'requisitions': return [fetchRequisitions()];
       case 'customers': return [fetchCustomers()];
       case 'deals': return [fetchDeals()];
       case 'activities': return [fetchActivities()];
@@ -4564,6 +4657,7 @@ function App() {
             {page === 'Calendar' && <CalendarPage events={calendarEvents} customers={customers} onAdd={addCalendarEvent} onUpdate={updateCalendarEvent} onDelete={deleteCalendarEvent} onRefresh={fetchCalendarEvents} />}
             {page === 'Quotes' && <Quotes quotes={quotes} products={products} deals={deals} dealProducts={dealProducts} customers={customers} quoteItems={quoteItems} onLoadQuoteItems={loadQuoteItems} onAdd={addQuote} onUpdate={updateQuote} onDelete={deleteQuote} formatAmount={formatAmount} currentUserId={session.user.id} isAdmin={isAdminRole(authorizationProfile?.role)} role={authorizationProfile?.role} onSendToHOS={sendQuoteToHOS} initialDealId={commercialLaunch?.type === 'quote' ? commercialLaunch.dealId : ''} dealFilterId={commercialView?.type === 'quotes' ? commercialView.dealId : ''} onLaunchConsumed={() => setCommercialLaunch(null)} onCreateInvoice={launchInvoiceFromQuote} />}
             {page === 'Invoices' && <Invoices invoices={invoices} payments={payments} customers={customers} products={products} deals={deals} dealProducts={dealProducts} quotes={quotes} onAdd={addInvoice} onUpdate={updateInvoice} onDelete={deleteInvoice} onAddPayment={addPayment} formatAmount={formatAmount} currentUserId={session.user.id} isAdmin={isAdminRole(authorizationProfile?.role)} role={authorizationProfile?.role} onSendToHOS={sendInvoiceToHOS} onLoadInvoiceItems={loadInvoiceItems} onLoadQuoteItems={loadQuoteItems} initialDealId={commercialLaunch?.type === 'invoice' ? commercialLaunch.dealId : ''} initialQuoteId={commercialLaunch?.type === 'invoice' ? commercialLaunch.quoteId : ''} dealFilterId={commercialView?.type === 'invoices' ? commercialView.dealId : ''} onLaunchConsumed={() => setCommercialLaunch(null)} />}
+            {page === 'Requisition' && <Requisition requisitions={requisitions} error={requisitionError} currentUserId={session.user.id} role={authorizationProfile?.role} employeeName={displayUserName} employeeEmail={session.user.email} onSubmit={submitRequisition} />}
             {page === 'Documents' && <Documents documents={documents} customers={customers} onUpload={uploadDocument} onDownload={downloadDocument} onDelete={deleteDocument} />}
             {page === 'Automation' && <Automation workflows={workflows} onAdd={addWorkflow} onUpdate={updateWorkflow} />}
             {page === 'Segments' && <Segments segments={segments} customers={customers} onAdd={addSegment} onUpdate={updateSegment} />}
@@ -5747,6 +5841,179 @@ function PageSkeleton() {
       </div>
     </div>
   );
+}
+
+// ── Requisition ──────────────────────────────────────────────────────────────
+// Staff raise requests (leave, procurement, expenses, IT support, assets). Edit these lists to change the form.
+const REQUISITION_TYPES = ['Leave Request', 'Procurement Request', 'Expense Request', 'IT Support Request', 'Asset Request'];
+const REQUISITION_DEPARTMENTS = ['Sales', 'Technical Support', 'HR', 'Finance', 'Operations', 'IT', 'Management', 'Administration'];
+const REQUISITION_STATUSES = ['Pending', 'Approved', 'Rejected'];
+const requisitionNumber = request => `REQ-${String(request?.request_number ?? 0).padStart(4, '0')}`;
+const formatRequisitionDate = value => value
+  ? new Date(`${value}T00:00:00`).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })
+  : '—';
+const requisitionStatusClass = status => `requisition-status ${String(status || 'Pending').toLowerCase()}`;
+
+function Requisition({ requisitions, error, currentUserId, role, employeeName, employeeEmail, onSubmit }) {
+  const canSeeAll = ['manager', 'admin'].includes(role);
+  const [view, setView] = useState('dashboard'); // 'dashboard' | 'all' | 'new'
+  const [scope, setScope] = useState('mine'); // managers and admins can switch to everyone's requests
+  const [statusFilter, setStatusFilter] = useState('All');
+  const [department, setDepartment] = useState('');
+  const [requestType, setRequestType] = useState('');
+  const [description, setDescription] = useState('');
+  const [startDate, setStartDate] = useState('');
+  const [endDate, setEndDate] = useState('');
+  const [saving, setSaving] = useState(false);
+
+  const scoped = requisitions.filter(request => (canSeeAll && scope === 'everyone') || request.requester_id === currentUserId);
+  const countOf = status => scoped.filter(request => request.status === status).length;
+  const typeCounts = REQUISITION_TYPES
+    .map(type => ({ type, count: scoped.filter(request => request.request_type === type).length }))
+    .filter(item => item.count > 0)
+    .sort((a, b) => b.count - a.count);
+  const maxTypeCount = Math.max(1, ...typeCounts.map(item => item.count));
+  const listed = scoped.filter(request => statusFilter === 'All' || request.status === statusFilter);
+
+  const resetForm = () => { setDepartment(''); setRequestType(''); setDescription(''); setStartDate(''); setEndDate(''); };
+  const openAll = (status = 'All') => { setStatusFilter(status); setView('all'); };
+
+  const submit = async () => {
+    const missing = [];
+    if (!department) missing.push('Department');
+    if (!requestType) missing.push('Request Type');
+    if (!description.trim()) missing.push('Request Description');
+    if (!startDate) missing.push('Start Date');
+    if (!endDate) missing.push('End Date');
+    if (missing.length > 0) {
+      alert(`Please fill in the following before submitting:\n\n${missing.map(field => `• ${field}`).join('\n')}`);
+      return;
+    }
+    if (endDate < startDate) { alert('End Date cannot be earlier than Start Date.'); return; }
+    setSaving(true);
+    try {
+      await onSubmit({ department, requestType, description: description.trim(), startDate, endDate });
+      resetForm();
+      setView('dashboard');
+    } catch (e) {
+      alert(e.message || 'Unable to submit the request.');
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  if (view === 'new') {
+    return <>
+      <PageHeading eyebrow="REQUISITION" title="New Request" description="Submit a request for approval." refresh={false} />
+      <div className="panel">
+        <div className="panel-heading"><div><h3>Request Details</h3><p>Complete the information below to submit your request.</p></div></div>
+        <div className="requisition-form">
+          <label><span>Employee Name <span className="required">*</span></span>
+            <input value={employeeName} readOnly />
+          </label>
+          <label><span>Employee Email <span className="required">*</span></span>
+            <input value={employeeEmail || ''} readOnly />
+          </label>
+          <label><span>Department <span className="required">*</span></span>
+            <select value={department} onChange={e => setDepartment(e.target.value)}>
+              <option value="">Select department</option>
+              {REQUISITION_DEPARTMENTS.map(item => <option key={item} value={item}>{item}</option>)}
+            </select>
+          </label>
+          <label><span>Request Type <span className="required">*</span></span>
+            <select value={requestType} onChange={e => setRequestType(e.target.value)}>
+              <option value="">Select request type</option>
+              {REQUISITION_TYPES.map(item => <option key={item} value={item}>{item}</option>)}
+            </select>
+          </label>
+          <label className="wide"><span>Request Description <span className="required">*</span></span>
+            <textarea value={description} onChange={e => setDescription(e.target.value)} placeholder="Describe your request and provide any relevant details..." />
+          </label>
+          <label><span>Start Date <span className="required">*</span></span>
+            <input type="date" value={startDate} onChange={e => setStartDate(e.target.value)} />
+          </label>
+          <label><span>End Date <span className="required">*</span></span>
+            <input type="date" value={endDate} min={startDate || undefined} onChange={e => setEndDate(e.target.value)} />
+          </label>
+        </div>
+        <div className="requisition-actions">
+          <button type="button" className="secondary-btn" onClick={() => { resetForm(); setView('dashboard'); }} disabled={saving}>Cancel</button>
+          <button type="button" className="primary-btn" onClick={submit} disabled={saving}>{saving ? 'Submitting…' : 'Submit Request'}</button>
+        </div>
+      </div>
+    </>;
+  }
+
+  const scopeToggle = canSeeAll && <div className="requisition-scope" role="group" aria-label="Whose requests to show">
+    <button type="button" className={scope === 'mine' ? 'active' : ''} onClick={() => setScope('mine')}>My requests</button>
+    <button type="button" className={scope === 'everyone' ? 'active' : ''} onClick={() => setScope('everyone')}>Everyone</button>
+  </div>;
+
+  if (view === 'all') {
+    return <>
+      <PageHeading eyebrow="REQUISITION" title="All Requests" description={scope === 'everyone' && canSeeAll ? 'Every request submitted in the company.' : 'Every request you have submitted.'} action="New Request" onAction={() => setView('new')} />
+      {error && <div className="form-error">{error}</div>}
+      {scopeToggle}
+      <div className="panel">
+        <div className="panel-heading">
+          <div><h3>Requests</h3><p>{listed.length} request{listed.length === 1 ? '' : 's'}{statusFilter === 'All' ? '' : ` with status ${statusFilter}`}.</p></div>
+          <div style={{ display: 'flex', gap: 10, alignItems: 'center' }}>
+            <select value={statusFilter} onChange={e => setStatusFilter(e.target.value)} aria-label="Filter by status">
+              <option value="All">All statuses</option>
+              {REQUISITION_STATUSES.map(item => <option key={item} value={item}>{item}</option>)}
+            </select>
+            <button type="button" className="secondary-btn" onClick={() => setView('dashboard')}>Back to dashboard</button>
+          </div>
+        </div>
+        {listed.length === 0 ? <div className="empty-state"><p>No requests found.</p></div> : <div className="table-wrap"><table>
+          <thead><tr><th>Request ID</th><th>Employee</th><th>Department</th><th>Type</th><th>Dates</th><th>Description</th><th>Submitted</th><th>Status</th></tr></thead>
+          <tbody>{listed.map(request => <tr key={request.id}>
+            <td><strong>{requisitionNumber(request)}</strong></td>
+            <td>{request.employee_name}<div className="deal-customer">{request.employee_email}</div></td>
+            <td>{request.department}</td>
+            <td>{request.request_type}</td>
+            <td>{formatRequisitionDate(request.start_date)} – {formatRequisitionDate(request.end_date)}</td>
+            <td title={request.description} style={{ maxWidth: 260, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{request.description}</td>
+            <td>{formatDate(request.created_at)}</td>
+            <td><span className={requisitionStatusClass(request.status)}>{request.status}</span></td>
+          </tr>)}</tbody>
+        </table></div>}
+      </div>
+    </>;
+  }
+
+  return <>
+    <PageHeading eyebrow="REQUISITION" title="Requisition Dashboard" description="Track your requests and their approval status." action="New Request" onAction={() => setView('new')} />
+    {error && <div className="form-error">{error}</div>}
+    {scopeToggle}
+    <div className="stats-grid">
+      <StatCard label="Total Requests" value={scoped.length} hint="All requests" tone="purple" icon="▣" onClick={() => openAll('All')} />
+      <StatCard label="Pending" value={countOf('Pending')} hint="Awaiting a decision" tone="orange" icon="◷" onClick={() => openAll('Pending')} />
+      <StatCard label="Approved" value={countOf('Approved')} hint="Approved requests" tone="green" icon="✓" onClick={() => openAll('Approved')} />
+      <StatCard label="Rejected" value={countOf('Rejected')} hint="Declined requests" tone="red" icon="✕" onClick={() => openAll('Rejected')} />
+    </div>
+    <div className="dashboard-grid">
+      <div className="panel">
+        <div className="panel-heading"><div><h3>Recent Requests</h3></div><button type="button" className="text-btn" onClick={() => openAll('All')}>View all</button></div>
+        {scoped.length === 0 ? <div className="empty-state"><p>No requests yet.</p></div> : <div className="table-wrap"><table>
+          <thead><tr><th>Request ID</th><th>Employee</th><th>Type</th><th>Status</th></tr></thead>
+          <tbody>{scoped.slice(0, 5).map(request => <tr key={request.id}>
+            <td><strong>{requisitionNumber(request)}</strong></td>
+            <td>{request.employee_name}</td>
+            <td>{request.request_type}</td>
+            <td><span className={requisitionStatusClass(request.status)}>{request.status}</span></td>
+          </tr>)}</tbody>
+        </table></div>}
+      </div>
+      <div className="panel">
+        <div className="panel-heading"><div><h3>Requests by Type</h3></div></div>
+        {typeCounts.length === 0 ? <div className="empty-state"><p>No requests yet.</p></div> : typeCounts.map(item => <div className="requisition-type-row" key={item.type}>
+          <div className="requisition-type-head"><span>{item.type}</span><strong>{item.count}</strong></div>
+          <div className="requisition-bar"><span style={{ width: `${(item.count / maxTypeCount) * 100}%` }} /></div>
+        </div>)}
+      </div>
+    </div>
+  </>;
 }
 
 function PageHeading({ eyebrow, title, description, action, onAction, refresh = true }) {
@@ -9718,6 +9985,7 @@ function HOSPanel({
   invoices = [],
   quoteItems = [],
   tickets = [],
+  requisitions= [],
   ownerProfiles = {},
   formatAmount,
   onApprove,
@@ -9752,8 +10020,11 @@ function HOSPanel({
       .map(q => ({ ...q, _type: 'Quote', _amount: docAmountUsd(q, 'total'), _idLabel: q.quote_number || q.id })),
     ...invoices
       .filter(i => ['HOS_PENDING', 'APPROVED', 'REJECTED', 'MD_PENDING'].includes(i.approval_status))
-      .map(i => ({ ...i, _type: 'Invoice', _amount: docAmountUsd(i, 'amount'), _idLabel: i.invoice_number || i.id }))
-  ].sort((a, b) => new Date(b.created_at || 0) - new Date(a.created_at || 0));
+      .map(i => ({ ...i, _type: 'Invoice', _amount: docAmountUsd(i, 'amount'), _idLabel: i.invoice_number || i.id })),
+    ...requisitions
+      .filter(request => ['HOS_PENDING', 'APPROVED', 'REJECTED', 'MD_PENDING'].includes(request.status))
+      .map(request => ({...request, _type: 'request', }))
+  ].sort((a, b, c) => new Date(b.created_at || 0) - new Date(a.created_at || 0));
 
   const filteredRecords = approvalFilter === 'All'
     ? hosRecords
@@ -9876,6 +10147,68 @@ function HOSPanel({
             ) : filteredRecords.map(record => (
               <tr key={`${record._type}-${record.id}`}>
                 <td><span className="hos-type-badge">{record._type}</span></td>
+                <td><strong>{record._idLabel}</strong></td>
+                <td>
+                  <div className="hos-solution-cell">
+                    <strong>{recordSolution(record)}</strong>
+                    {record._type === 'Quote' && record.title && record.title !== recordSolution(record) ? <small>{record.title}</small> : null}
+                  </div>
+                </td>
+                <td><strong>{formatAmount(record._amount)}</strong></td>
+                <td><span className={`hos-status-badge ${record.approval_status === 'REJECTED' ? 'is-rejected' : record.approval_status === 'HOS_PENDING' ? 'is-pending' : 'is-approved'}`}>{statusLabel(record)}</span></td>
+                <td>{repName(record)}</td>
+                <td>
+                  <div className="hos-company-cell">
+                    <strong>{companyName(record)}</strong>
+                    {record._type === 'Quote' && record.customer_name && record.company ? <small>{record.customer_name}</small> : null}
+                    {record._type === 'Invoice' && record.customers?.name && record.customers?.company ? <small>{record.customers.name}</small> : null}
+                  </div>
+                </td>
+                <td className="hos-action-cell">
+                  <div className="hos-action-buttons">
+                    <button type="button" className="secondary-btn" onClick={() => setViewRecord(record)}>View</button>
+                    {isPending(record) && <>
+                      <button type="button" className="primary-btn" onClick={async () => { try { await onApprove(record._type.toLowerCase(), record.id); } catch (e) { alert(e.message); } }}>Approve</button>
+                      <button type="button" className="secondary-btn" onClick={async () => { const note = window.prompt('Why is this quote/invoice being rejected?'); if (!note?.trim()) return; try { await onReject(record._type.toLowerCase(), record.id, note.trim()); } catch (e) { alert(e.message); } }}>Reject</button>
+                    </>}
+                  </div>
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+    </div>
+    <div className="panel hos-approval-panel" id="hos-approval-queue">
+      <div className="panel-heading hos-approval-heading">
+        <div>
+          <h3>Requisition Approval Queue</h3>
+          <p>Every row comes from a Members of the organization. HOS does not create or edit record here.</p>
+        </div>
+        <div className="hos-filter-tabs">
+          {['All', 'Pending', 'Approved', 'Rejected'].map(filter => (
+            <button key={filter} type="button" className={approvalFilter === filter ? 'active' : ''} onClick={() => setApprovalFilter(filter)}>
+              {filter}
+            </button>
+          ))}
+        </div>
+      </div>
+      <div className="table-wrap hos-approval-table-wrap">
+        <table className="hos-approval-table">
+          <thead>
+            <tr>
+              <th>Request ID</th>
+              <th>Staff</th>
+              <th>Date</th>
+              <th>Status</th>
+              <th>Action</th>
+            </tr>
+          </thead>
+          <tbody>
+            {filteredRecords.length === 0 ? (
+              <tr><td colSpan="8" className="hos-empty-state">No Request Pending.</td></tr>
+            ) : filteredRecords.map(record => (
+              <tr key={`${record._type}-${record.id}`}>
                 <td><strong>{record._idLabel}</strong></td>
                 <td>
                   <div className="hos-solution-cell">
@@ -10496,7 +10829,6 @@ function UserManagement({
     </>
   );
 }
-
 function StaffInviteModal({ onInvite, onOpenEmail, onClose }) {
   const [emailValue, setEmailValue] = useState('');
   const [role, setRole] = useState('sales');
@@ -10585,7 +10917,6 @@ Thanks,`
     </div>
   );
 }
-
 function StaffInvitationsPanel({ invitations = [], onRevoke, actionId, onInvite }) {
   const status = invite => invite.revoked_at ? 'Revoked' : invite.accepted_at ? 'Accepted' : new Date(invite.expires_at) < new Date() ? 'Expired' : 'Pending';
   return (
@@ -10614,5 +10945,4 @@ function StaffInvitationsPanel({ invitations = [], onRevoke, actionId, onInvite 
     </div>
   );
 }
-
 export default App;
