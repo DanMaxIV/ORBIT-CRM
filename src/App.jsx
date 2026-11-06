@@ -321,11 +321,7 @@ function AuthScreen({ onGoogleSignIn, onMicrosoftSignIn, onEmailSignIn, onEmailS
             </label>
             <button type="submit" className="primary-btn" disabled={loading}>{loading ? 'Creating account…' : 'Create account'}</button>
           </form>
-          <div className="auth-divider"><span>or</span></div>
-          <button type="button" className="google-signin-btn" onClick={onGoogleSignIn} disabled={loading}>
-            Continue with Google
-          </button>
-          <p className="invite-expiry">Use the Google account matching the invited email address. This invitation expires {new Date(staffInvite.expires_at).toLocaleDateString()}.</p>
+          <p className="invite-expiry">This invitation expires {new Date(staffInvite.expires_at).toLocaleDateString()}.</p>
         </div>
       </div>
     );
@@ -1453,17 +1449,10 @@ function App() {
   // }
   async function oauthSignIn(provider, extraOptions = {}) {
     setAuthError('');
-    // Preserve a staff-invitation token across the OAuth round trip. Without
-    // this, Google returns to the app root and the invitation cannot be claimed.
-    const currentUrl = new URL(window.location.href);
-    const hasStaffInvite = Boolean(currentUrl.searchParams.get('staff_invite'));
-    const webRedirectTo = hasStaffInvite
-      ? `${window.location.origin}${currentUrl.pathname}${currentUrl.search}`
-      : window.location.origin;
     const { data, error } = await supabase.auth.signInWithOAuth({
       provider,
       options: {
-        redirectTo: IS_NATIVE ? NATIVE_REDIRECT : webRedirectTo,
+        redirectTo: IS_NATIVE ? NATIVE_REDIRECT : window.location.origin,
         skipBrowserRedirect: IS_NATIVE,
         ...extraOptions
       }
@@ -1547,17 +1536,17 @@ function App() {
       const newUser = authData?.user;
 
       if (newUser) {
-        // Email/password staff sign-ups are saved as pending. Google OAuth
-        // accounts without a row are provisioned by ensure_authorized_user
-        // after the user returns with an authenticated session.
+        // 2. Insert user into authorized_users as 'pending' for admin approval
         const { error: insertError } = await supabase
           .from('authorized_users')
-          .insert([{
-            user_id: newUser.id,
-            email: trimmedEmail,
-            role: DEFAULT_ROLE,
-            status: 'pending'
-          }]);
+          .insert([
+            {
+              user_id: newUser.id,
+              email: trimmedEmail,
+              role: DEFAULT_ROLE,
+              status: 'pending'
+            }
+          ]);
 
         if (insertError) {
           console.warn('Could not provision authorized_users entry:', insertError.message);
@@ -1642,7 +1631,10 @@ function App() {
         email: staffInviteInfo.email,
         password: invitePassword,
         options: {
-          emailRedirectTo: `${window.location.origin}${window.location.pathname}?staff_invite=${encodeURIComponent(staffInviteInfo.token)}`,
+          // Return to the CRM after email verification. The invitation token is
+          // also stored in auth user metadata, so the completion step can still
+          // validate it after the browser leaves the original invite URL.
+          emailRedirectTo: window.location.origin,
           data: { account_type: 'staff_invite', full_name: fullName.trim(), staff_invite_token: staffInviteInfo.token }
         }
       });
@@ -1699,15 +1691,10 @@ function App() {
     setPortalAccount(null);
     setPortalSetupPending(false);
 
-    const currentUser = currentSession.user;
-    const accountType = currentUser.user_metadata?.account_type || '';
-    const inviteToken = currentUser.user_metadata?.staff_invite_token ||
-      new URLSearchParams(window.location.search).get('staff_invite');
-
     let { data, error } = await supabase
       .from('authorized_users')
       .select('role, status')
-      .eq('user_id', currentUser.id)
+      .eq('user_id', currentSession.user.id)
       .maybeSingle();
 
     if (error) {
@@ -1719,89 +1706,79 @@ function App() {
       return;
     }
 
-    // Complete an invitation before ordinary internal-user provisioning.
-    // The RPC validates the token, invited email, expiry and invitation status.
-    // The token is read from either auth metadata or the preserved invite URL,
-    // so Google OAuth invitations work as well as email/password invitations.
-    if (
-      !data &&
-      accountType !== 'customer_portal' &&
-      inviteToken &&
-      currentUser.email_confirmed_at
-    ) {
-      try {
-        const { error: inviteCompletionError } = await supabase.rpc('complete_staff_invitation_signup', {
-          p_token: inviteToken,
-          p_full_name: currentUser.user_metadata?.full_name || null
-        });
-        if (inviteCompletionError) throw inviteCompletionError;
+    const accountType = currentSession.user.user_metadata?.account_type || '';
 
-        const refreshed = await supabase
-          .from('authorized_users')
-          .select('role, status')
-          .eq('user_id', currentUser.id)
-          .maybeSingle();
-        if (refreshed.error) throw refreshed.error;
-        data = refreshed.data;
-        if (!data) throw new Error('The invitation was processed, but no staff access record was created. Please contact your administrator.');
-        if (data.status === 'active') setShowStaffOnboarding(true);
-      } catch (staffInviteCompletionError) {
-        console.error('Staff invitation completion failed:', staffInviteCompletionError);
-        setAuthError(staffInviteCompletionError.message || 'Unable to complete your invited sign-up.');
+    // New Google/OAuth and email-authenticated internal users may not have an
+    // authorized_users row yet. Provision them through the SECURITY DEFINER RPC
+    // (never for customer-portal registrations or invitation sign-ups).
+    if (!data && accountType !== 'customer_portal' && accountType !== 'staff_invite') {
+      const { error: provisionError } = await supabase.rpc('ensure_authorized_user');
+      if (provisionError) {
+        console.error('Could not provision internal user:', provisionError);
+        setAuthError(provisionError.message || 'Unable to create your pending CRM access request.');
+        setAuthorized(false);
+        setAuthorizationProfile(null);
         setAuthorizationLoading(false);
-        await supabase.auth.signOut();
         return;
       }
+      const refreshedAuthorization = await supabase
+        .from('authorized_users')
+        .select('role, status')
+        .eq('user_id', currentSession.user.id)
+        .maybeSingle();
+      if (refreshedAuthorization.error) {
+        console.error('Authorization refresh failed:', refreshedAuthorization.error);
+        setAuthError('Your account was created, but its access status could not be checked.');
+        setAuthorized(false);
+        setAuthorizationProfile(null);
+        setAuthorizationLoading(false);
+        return;
+      }
+      data = refreshedAuthorization.data;
     }
 
-    // Internal authorization records take precedence over Customer Portal
-    // metadata. This permits an explicitly provisioned internal employee to
-    // use the CRM even if their Auth account has stale portal metadata.
-    if (data) {
-      if (data.status === 'active') {
-        setAuthorized(true);
-        setAuthorizationProfile(data);
-        setPortalAccount(null);
-        setPortalSetupPending(false);
-        setAuthorizationLoading(false);
-        return;
-      }
-
-      setAuthorized(false);
-      setAuthorizationProfile(null);
+    // Customer-portal metadata keeps portal registrations out of the CRM.
+    if (
+      data?.status === 'active' &&
+      currentSession.user.user_metadata?.account_type !== 'customer_portal'
+    ) {
+      setAuthorized(true);
+      setAuthorizationProfile(data);
+      setPortalAccount(null);
+      setPortalSetupPending(false);
       setAuthorizationLoading(false);
-      await supabase.auth.signOut();
-      if (!justSignedUp.current) {
-        setAuthError(data.status === 'pending'
-          ? 'Your internal CRM account is awaiting administrator approval.'
-          : 'Your internal CRM account is inactive. Please contact your administrator.');
-      }
       return;
     }
 
-    // Only explicitly registered Customer Portal accounts use this path.
-    // Customer Portal sign-ups are never inserted into authorized_users.
-    if (accountType === 'customer_portal') {
+    setAuthorized(false);
+    setAuthorizationProfile(null);
+
+    // Only accounts explicitly created for the customer portal may use this path.
+    // Ordinary internal CRM sign-ups continue to require staff approval.
+    if (currentSession.user.user_metadata?.account_type === 'customer_portal') {
       try {
         let { data: account, error: accountError } = await supabase
           .from('customer_portal_accounts')
           .select('user_id, customer_id, email, full_name, status, registration_source')
-          .eq('user_id', currentUser.id)
+          .eq('user_id', currentSession.user.id)
           .maybeSingle();
         if (accountError) throw accountError;
 
+        // Create/refresh the portal registration after email verification.
+        // The database function always leaves self-registrations pending; only
+        // an authorized CRM admin can approve access.
         if (
-          currentUser.email_confirmed_at &&
+          currentSession.user.email_confirmed_at &&
           (!account || account.registration_source === 'signup')
         ) {
           const { error: completionError } = await supabase.rpc('complete_customer_portal_signup', {
-            p_full_name: currentUser.user_metadata?.full_name || account?.full_name || portalSignUpName || null
+            p_full_name: currentSession.user.user_metadata?.full_name || account?.full_name || portalSignUpName || null
           });
           if (completionError) throw completionError;
           const refreshed = await supabase
             .from('customer_portal_accounts')
             .select('user_id, customer_id, email, full_name, status, registration_source')
-            .eq('user_id', currentUser.id)
+            .eq('user_id', currentSession.user.id)
             .maybeSingle();
           if (refreshed.error) throw refreshed.error;
           account = refreshed.data;
@@ -1810,7 +1787,7 @@ function App() {
         setPortalAccount(account || null);
         setPortalSetupPending(!account);
         setAuthorizationLoading(false);
-        if (!account) setAuthNotice('Please verify your email address. Once verified, your request will remain pending until a Storhet CRM admin approves it.');
+        if (!account) setAuthNotice('Please verify your email address. Once verified, your request will remain pending until an Storhet CRM admin approves it.');
         return;
       } catch (portalError) {
         console.error('Customer portal authorization check failed:', portalError);
@@ -1822,39 +1799,32 @@ function App() {
       }
     }
 
-    // Never turn an unconfirmed invitation into an ordinary Sales account.
-    if (inviteToken && accountType !== 'customer_portal' && !currentUser.email_confirmed_at) {
-      setAuthorizationLoading(false);
-      setAuthNotice('Please verify the invited email address before completing your staff invitation.');
-      await supabase.auth.signOut();
-      return;
-    }
-
-    // A normal internal Google/email login may already have a Supabase Auth
-    // identity but no authorized_users row. Provision it as Sales / Pending.
-    // The RPC excludes Customer Portal and staff-invitation identities again
-    // on the server, so this client-side check is not the security boundary.
-    if (accountType !== 'staff_invite') {
+    // An invited worker has no authorized_users row yet on their very first
+    // sign-in; this is the only time this branch runs, since every later
+    // login finds an active row and returns from the top of this function.
+    if (
+      !data &&
+      currentSession.user.user_metadata?.account_type === 'staff_invite' &&
+      currentSession.user.email_confirmed_at
+    ) {
       try {
-        const { error: provisionError } = await supabase.rpc('ensure_authorized_user');
-        if (provisionError) throw provisionError;
-        const refreshed = await supabase
-          .from('authorized_users')
-          .select('role, status')
-          .eq('user_id', currentUser.id)
-          .maybeSingle();
+        const { error: inviteCompletionError } = await supabase.rpc('complete_staff_invitation_signup', {
+          p_token: currentSession.user.user_metadata?.staff_invite_token,
+          p_full_name: currentSession.user.user_metadata?.full_name || null
+        });
+        if (inviteCompletionError) throw inviteCompletionError;
+        const refreshed = await supabase.from('authorized_users').select('role, status').eq('user_id', currentSession.user.id).maybeSingle();
         if (refreshed.error) throw refreshed.error;
-        data = refreshed.data;
-
-        if (data?.status === 'active') {
+        if (refreshed.data?.status === 'active') {
           setAuthorized(true);
-          setAuthorizationProfile(data);
+          setAuthorizationProfile(refreshed.data);
           setAuthorizationLoading(false);
+          setShowStaffOnboarding(true);
           return;
         }
-      } catch (provisionError) {
-        console.error('Internal account provisioning failed:', provisionError);
-        setAuthError(provisionError.message || 'Unable to create your internal CRM access request.');
+      } catch (staffInviteCompletionError) {
+        console.error('Staff invitation completion failed:', staffInviteCompletionError);
+        setAuthError(staffInviteCompletionError.message || 'Unable to complete your invited sign-up.');
         setAuthorizationLoading(false);
         await supabase.auth.signOut();
         return;
@@ -1864,7 +1834,7 @@ function App() {
     setAuthorizationLoading(false);
     await supabase.auth.signOut();
     if (!justSignedUp.current) {
-      setAuthError('Your internal CRM account is awaiting administrator approval. Please contact your administrator.');
+      setAuthError('Your internal CRM account has not been approved yet. Please contact your administrator.');
     }
   };
   const fetchCustomers = async () => {
