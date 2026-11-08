@@ -2299,7 +2299,30 @@ function App() {
       throw new Error(['42P01', 'PGRST205'].includes(error.code) ? 'Requisitions are not set up yet. Run the requisitions SQL file in Supabase.' : error.message);
     }
     setRequisitions(prev => [data, ...prev]);
-    showToast('Request submitted.');
+    showToast('Request submitted and sent to HR for approval.');
+  }
+
+  async function reviewRequisition(id, status) {
+    if (authorizationProfile?.role !== 'hr') {
+      throw new Error('Only HR can approve or reject requisitions.');
+    }
+    if (!['Approved', 'Rejected'].includes(status)) {
+      throw new Error('Invalid requisition decision.');
+    }
+    const { data, error } = await supabase
+      .from('requisitions')
+      .update({ status })
+      .eq('id', id)
+      .eq('status', 'Pending')
+      .select('*')
+      .maybeSingle();
+    if (error) {
+      console.error('Error reviewing requisition:', error);
+      throw new Error(error.message);
+    }
+    if (!data) throw new Error('This request is no longer pending, or you do not have permission to review it. Refresh and try again.');
+    setRequisitions(prev => prev.map(item => item.id === id ? data : item));
+    showToast(`Requisition ${status.toLowerCase()}.`);
   }
 
   function datasetLoaders(key) {
@@ -4627,7 +4650,7 @@ function App() {
             {page === 'Calendar' && <CalendarPage events={calendarEvents} customers={customers} onAdd={addCalendarEvent} onUpdate={updateCalendarEvent} onDelete={deleteCalendarEvent} onRefresh={fetchCalendarEvents} />}
             {page === 'Quotes' && <Quotes quotes={quotes} products={products} deals={deals} dealProducts={dealProducts} customers={customers} quoteItems={quoteItems} onLoadQuoteItems={loadQuoteItems} onAdd={addQuote} onUpdate={updateQuote} onDelete={deleteQuote} formatAmount={formatAmount} currentUserId={session.user.id} isAdmin={isAdminRole(authorizationProfile?.role)} role={authorizationProfile?.role} onSendToHOS={sendQuoteToHOS} initialDealId={commercialLaunch?.type === 'quote' ? commercialLaunch.dealId : ''} dealFilterId={commercialView?.type === 'quotes' ? commercialView.dealId : ''} onLaunchConsumed={() => setCommercialLaunch(null)} onCreateInvoice={launchInvoiceFromQuote} />}
             {page === 'Invoices' && <Invoices invoices={invoices} payments={payments} customers={customers} products={products} deals={deals} dealProducts={dealProducts} quotes={quotes} onAdd={addInvoice} onUpdate={updateInvoice} onDelete={deleteInvoice} onAddPayment={addPayment} formatAmount={formatAmount} currentUserId={session.user.id} isAdmin={isAdminRole(authorizationProfile?.role)} role={authorizationProfile?.role} onSendToHOS={sendInvoiceToHOS} onLoadInvoiceItems={loadInvoiceItems} onLoadQuoteItems={loadQuoteItems} initialDealId={commercialLaunch?.type === 'invoice' ? commercialLaunch.dealId : ''} initialQuoteId={commercialLaunch?.type === 'invoice' ? commercialLaunch.quoteId : ''} dealFilterId={commercialView?.type === 'invoices' ? commercialView.dealId : ''} onLaunchConsumed={() => setCommercialLaunch(null)} />}
-            {page === 'Requisition' && <Requisition requisitions={requisitions} error={requisitionError} currentUserId={session.user.id} role={authorizationProfile?.role} employeeName={displayUserName} employeeEmail={session.user.email} onSubmit={submitRequisition} />}
+            {page === 'Requisition' && <Requisition requisitions={requisitions} error={requisitionError} currentUserId={session.user.id} role={authorizationProfile?.role} employeeName={displayUserName} employeeEmail={session.user.email} onSubmit={submitRequisition} onReview={reviewRequisition} />}
             {page === 'Documents' && <Documents documents={documents} customers={customers} onUpload={uploadDocument} onDownload={downloadDocument} onDelete={deleteDocument} />}
             {page === 'Automation' && <Automation workflows={workflows} onAdd={addWorkflow} onUpdate={updateWorkflow} />}
             {page === 'Segments' && <Segments segments={segments} customers={customers} onAdd={addSegment} onUpdate={updateSegment} />}
@@ -5824,10 +5847,11 @@ const formatRequisitionDate = value => value
   : '—';
 const requisitionStatusClass = status => `requisition-status ${String(status || 'Pending').toLowerCase()}`;
 
-function Requisition({ requisitions, error, currentUserId, role, employeeName, employeeEmail, onSubmit }) {
-  const canSeeAll = ['manager', 'admin'].includes(role);
+function Requisition({ requisitions, error, currentUserId, role, employeeName, employeeEmail, onSubmit, onReview }) {
+  const canSeeAll = ['manager', 'admin', 'hr'].includes(role);
+  const canReview = role === 'hr';
   const [view, setView] = useState('dashboard'); // 'dashboard' | 'all' | 'new'
-  const [scope, setScope] = useState('mine'); // managers and admins can switch to everyone's requests
+  const [scope, setScope] = useState(role === 'hr' ? 'everyone' : 'mine'); // HR reviews company requests; managers/admins can inspect all
   const [statusFilter, setStatusFilter] = useState('All');
   const [department, setDepartment] = useState('');
   const [requestType, setRequestType] = useState('');
@@ -5921,7 +5945,7 @@ function Requisition({ requisitions, error, currentUserId, role, employeeName, e
 
   if (view === 'all') {
     return <>
-      <PageHeading eyebrow="REQUISITION" title="All Requests" description={scope === 'everyone' && canSeeAll ? 'Every request submitted in the company.' : 'Every request you have submitted.'} action="New Request" onAction={() => setView('new')} />
+      <PageHeading eyebrow="REQUISITION" title={canReview ? 'HR Approval Queue' : 'All Requests'} description={canReview ? 'Review and approve or reject employee requisitions.' : scope === 'everyone' && canSeeAll ? 'Every request submitted in the company.' : 'Every request you have submitted.'} action="New Request" onAction={() => setView('new')} />
       {error && <div className="form-error">{error}</div>}
       {scopeToggle}
       <div className="panel">
@@ -5936,7 +5960,7 @@ function Requisition({ requisitions, error, currentUserId, role, employeeName, e
           </div>
         </div>
         {listed.length === 0 ? <div className="empty-state"><p>No requests found.</p></div> : <div className="table-wrap"><table>
-          <thead><tr><th>Request ID</th><th>Employee</th><th>Department</th><th>Type</th><th>Dates</th><th>Description</th><th>Submitted</th><th>Status</th></tr></thead>
+          <thead><tr><th>Request ID</th><th>Employee</th><th>Department</th><th>Type</th><th>Dates</th><th>Description</th><th>Submitted</th><th>Status</th>{canReview && <th>HR Decision</th>}</tr></thead>
           <tbody>{listed.map(request => <tr key={request.id}>
             <td><strong>{requisitionNumber(request)}</strong></td>
             <td>{request.employee_name}<div className="deal-customer">{request.employee_email}</div></td>
@@ -5945,7 +5969,8 @@ function Requisition({ requisitions, error, currentUserId, role, employeeName, e
             <td>{formatRequisitionDate(request.start_date)} – {formatRequisitionDate(request.end_date)}</td>
             <td title={request.description} style={{ maxWidth: 260, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{request.description}</td>
             <td>{formatDate(request.created_at)}</td>
-            <td><span className={requisitionStatusClass(request.status)}>{request.status}</span></td>
+            <td><span className={requisitionStatusClass(request.status)}>{request.status || 'Pending'}</span></td>
+            {canReview && <td><div className="requisition-review-actions">{(request.status || 'Pending') === 'Pending' ? <><button type="button" className="secondary-btn" onClick={() => onReview(request.id, 'Approved').catch(e => alert(e.message))}>Approve</button><button type="button" className="secondary-btn requisition-reject-btn" onClick={() => { if (window.confirm('Reject this requisition?')) onReview(request.id, 'Rejected').catch(e => alert(e.message)); }}>Reject</button></> : <span className="deal-customer">Reviewed</span>}</div></td>}
           </tr>)}</tbody>
         </table></div>}
       </div>
@@ -5964,7 +5989,7 @@ function Requisition({ requisitions, error, currentUserId, role, employeeName, e
     </div>
     <div className="dashboard-grid">
       <div className="panel">
-        <div className="panel-heading"><div><h3>Recent Requests</h3></div><button type="button" className="text-btn" onClick={() => openAll('All')}>View all</button></div>
+        <div className="panel-heading"><div><h3>{canReview ? 'Company Requests' : 'Recent Requests'}</h3></div><button type="button" className="text-btn" onClick={() => openAll(canReview ? 'Pending' : 'All')}>{canReview ? 'Review pending' : 'View all'}</button></div>
         {scoped.length === 0 ? <div className="empty-state"><p>No requests yet.</p></div> : <div className="table-wrap"><table>
           <thead><tr><th>Request ID</th><th>Employee</th><th>Type</th><th>Status</th></tr></thead>
           <tbody>{scoped.slice(0, 5).map(request => <tr key={request.id}>
