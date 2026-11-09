@@ -12676,6 +12676,10 @@ select {
   display: block;
 }
 
+.panel{
+  margin-bottom: 20px;
+}
+
 .hr-work-table td small {
   display: block;
   margin-top: 3px;
@@ -14416,24 +14420,6 @@ select {
   white-space: nowrap;
 }
 
-
-.requisition-review-actions {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 6px;
-  align-items: center;
-}
-
-.requisition-review-actions .secondary-btn {
-  padding: 7px 10px;
-  font-size: 11px;
-}
-
-.requisition-review-actions .requisition-reject-btn {
-  color: #b42318;
-  border-color: #f2c5c5;
-}
-
 .requisition-status.pending {
   background: #fff4e0;
   color: #b45309;
@@ -14550,7 +14536,9 @@ select {
 }
 
 .requisition-form label > input {
-  cursor: not-allowed;
+  box-sizing: border-box;
+  width: 100%;
+  min-height: 42px;
   padding: 10px 12px;
   border: 1px solid #e4e7ee;
   border-radius: 10px;
@@ -14558,5 +14546,165 @@ select {
   color: #292d3d;
   font: inherit;
   font-size: 12px;
-  margin-left: 5px;
+  margin-left: 0;
+  cursor: text;
+}
+
+.requisition-form label > input[type="date"] {
+  cursor: pointer;
+  min-width: 0;
+  color-scheme: light;
+}
+
+.requisition-form label > input[readonly] {
+  cursor: not-allowed;
+}
+/* ---------------------------------------------------------------------
+   Documents: Files/Docs tabs and the Word-style editor
+   --------------------------------------------------------------------- */
+.doc-section-tabs { margin-bottom: 16px; }
+
+.doc-editor {
+  display: flex;
+  flex-direction: column;
+  height: calc(100vh - 32px);
+  margin: -8px;
+}
+.doc-editor-topbar {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 10px 14px;
+  background: #fff;
+  border-bottom: 1px solid #e7e9f0;
+  flex-wrap: wrap;
+}
+.doc-title-input {
+  flex: 1;
+  min-width: 160px;
+  border: 1px solid transparent;
+  background: transparent;
+  font-size: 16px;
+  font-weight: 700;
+  padding: 6px 8px;
+  border-radius: 6px;
+  color: #20212b;
+}
+.doc-title-input:hover, .doc-title-input:focus { border-color: #e5e6ed; background: #f7f8fb; outline: none; }
+.doc-customer-select {
+  font-size: 12.5px;
+  padding: 7px 8px;
+  border: 1px solid #e5e6ed;
+  border-radius: 7px;
+  background: #fff;
+  color: #5b6473;
+  max-width: 160px;
+}
+.doc-save-status { font-size: 12px; color: #9a9fb0; white-space: nowrap; min-width: 110px; }
+.doc-editor-error { margin: 0 14px; }
+
+.doc-ribbon {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  flex-wrap: wrap;
+  padding: 8px 14px;
+  background: #f7f8fb;
+  border-bottom: 1px solid #e7e9f0;
+}
+.doc-ribbon-select {
+  font-size: 12.5px;
+  padding: 6px 8px;
+  border: 1px solid #e5e6ed;
+  border-radius: 6px;
+  background: #fff;
+  color: #20212b;
+}
+.doc-ribbon-font { max-width: 130px; }
+.doc-ribbon-size { max-width: 90px; }
+.doc-ribbon-divider { width: 1px; align-self: stretch; background: #e1e3eb; margin: 2px 4px; }
+.doc-tb-btn {
+  min-width: 30px;
+  height: 30px;
+  padding: 0 7px;
+  border: 1px solid transparent;
+  border-radius: 6px;
+  background: transparent;
+  color: #3a3d4a;
+  font-size: 13px;
+  cursor: pointer;
+}
+.doc-tb-btn:hover { background: #ecedf4; }
+.doc-tb-btn.active { background: #e3e1fb; border-color: #c9c4f7; color: #5b48bb; }
+.doc-color-btn {
+  position: relative;
+  min-width: 30px;
+  height: 30px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 6px;
+  font-size: 13px;
+  font-weight: 700;
+  color: #3a3d4a;
+  cursor: pointer;
+}
+.doc-color-btn:hover { background: #ecedf4; }
+.doc-color-btn input[type="color"] {
+  position: absolute;
+  inset: 0;
+  opacity: 0;
+  cursor: pointer;
+  width: 100%;
+  height: 100%;
+}
+
+.doc-canvas {
+  flex: 1;
+  overflow-y: auto;
+  background: #e9eaf0;
+  padding: 32px 16px;
+  display: flex;
+  justify-content: center;
+}
+.doc-page {
+  width: 816px;
+  max-width: 100%;
+  min-height: 1056px;
+  background: #fff;
+  box-shadow: 0 1px 3px rgba(20, 22, 30, 0.08), 0 8px 24px rgba(20, 22, 30, 0.08);
+  padding: 96px 90px;
+  font-family: Calibri, Arial, sans-serif;
+  font-size: 15px;
+  line-height: 1.6;
+  color: #1f2430;
+  outline: none;
+}
+.doc-page h1 { font-size: 26px; margin: 0.6em 0 0.3em; }
+.doc-page h2 { font-size: 21px; margin: 0.6em 0 0.3em; }
+.doc-page h3 { font-size: 18px; margin: 0.6em 0 0.3em; }
+.doc-page p { margin: 0 0 0.8em; }
+.doc-page ul, .doc-page ol { margin: 0 0 0.8em 1.4em; }
+.doc-page a { color: #3f6fd8; }
+
+:root[data-theme="dark"] .doc-editor-topbar,
+:root[data-theme="dark"] .doc-ribbon { background: #171b26; border-color: #2a2e3a; }
+:root[data-theme="dark"] .doc-title-input { color: #d3d5e3; }
+:root[data-theme="dark"] .doc-title-input:hover, :root[data-theme="dark"] .doc-title-input:focus { background: #20242f; border-color: #30323c; }
+:root[data-theme="dark"] .doc-customer-select, :root[data-theme="dark"] .doc-ribbon-select { background: #20242f; border-color: #30323c; color: #d3d5e3; }
+:root[data-theme="dark"] .doc-tb-btn { color: #c7c9d6; }
+:root[data-theme="dark"] .doc-tb-btn:hover { background: #262b38; }
+:root[data-theme="dark"] .doc-canvas { background: #11141c; }
+
+@media (max-width: 760px) {
+  .doc-page { padding: 48px 28px; }
+  .doc-editor-topbar { gap: 8px; }
+  .doc-title-input { min-width: 100px; }
+}
+
+/* Printing a doc: show only the page content, nothing else */
+@media print {
+  body * { visibility: hidden; }
+  .doc-page, .doc-page * { visibility: visible; }
+  .doc-page { position: absolute; top: 0; left: 0; width: 100%; box-shadow: none; padding: 0.5in; }
 }

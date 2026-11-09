@@ -1094,7 +1094,7 @@ const PAGE_DATA = {
   Dashboard: ['customers', 'leads', 'deals', 'activities', 'tickets'],
   'MD Panel': ['deals', 'quotes', 'invoices', 'customers'],
   'HOS Panel': ['deals', 'quotes', 'invoices', 'tickets'],
-  'HR Panel': ['activities', 'customers', 'leads'],
+  'HR Panel': ['activities', 'customers', 'leads', 'requisitions'],
   'Technical Support Panel': ['tickets', 'customers'],
   Customers: ['customers', 'deals'],
   Products: ['products', 'support'],
@@ -1209,6 +1209,8 @@ function App() {
   const [fieldVisits, setFieldVisits] = useState([]);
   const [requisitions, setRequisitions] = useState([]);
   const [requisitionError, setRequisitionError] = useState('');
+  const [crmDocuments, setCrmDocuments] = useState([]);
+  const [crmDocumentError, setCrmDocumentError] = useState('');
   const [fieldVisitError, setFieldVisitError] = useState('');
   const [showActivityForm, setShowActivityForm] = useState(false);
   const [newActivity, setNewActivity] = useState({
@@ -2156,6 +2158,41 @@ function App() {
   }
   async function fetchInvoices() { const { data, error } = await fetchAllRows(() => supabase.from('invoices').select('*, customers(name,company)').order('created_at', { ascending: false })); if (error) { console.error('Error fetching invoices:', error); return; } setInvoices(data || []); }
   async function fetchPayments() { const { data, error } = await fetchAllRows(() => supabase.from('payments').select('*').order('paid_at', { ascending: false })); if (error) { console.error('Error fetching payments:', error); return; } setPayments(data || []); }
+  async function fetchCrmDocuments() {
+    const { data, error } = await fetchAllRows(() => supabase.from('crm_documents').select('*, customers(name,company)').order('updated_at', { ascending: false }));
+    if (error) {
+      const notSetUp = ['42P01', 'PGRST205'].includes(error.code);
+      if (!notSetUp) console.error('Error fetching documents:', error);
+      setCrmDocumentError(notSetUp ? 'Docs are not set up yet. Run crm_documents.sql in Supabase.' : error.message);
+      return;
+    }
+    setCrmDocumentError('');
+    setCrmDocuments(data || []);
+  }
+
+  // Creates a new doc (no id) or updates an existing one, in one call.
+  async function saveCrmDocument({ id, title, content, customer_id }) {
+    const payload = { title: title?.trim() || 'Untitled document', content: content || '', customer_id: customer_id || null };
+    if (id) {
+      const { data, error } = await supabase.from('crm_documents').update({ ...payload, updated_by: session.user.id, updated_at: new Date().toISOString() }).eq('id', id).select('*, customers(name,company)').single();
+      if (error) throw new Error(['42P01', 'PGRST205'].includes(error.code) ? 'Docs are not set up yet. Run crm_documents.sql in Supabase.' : error.message);
+      setCrmDocuments(prev => prev.map(d => d.id === id ? data : d));
+      return data;
+    }
+    const { data, error } = await supabase.from('crm_documents').insert([{ ...payload, created_by: session.user.id }]).select('*, customers(name,company)').single();
+    if (error) throw new Error(['42P01', 'PGRST205'].includes(error.code) ? 'Docs are not set up yet. Run crm_documents.sql in Supabase.' : error.message);
+    setCrmDocuments(prev => [data, ...prev]);
+    return data;
+  }
+
+  async function deleteCrmDocument(id) {
+    if (!window.confirm('Delete this document? This cannot be undone.')) return;
+    const { error } = await supabase.from('crm_documents').delete().eq('id', id);
+    if (error) { showToast(`Could not delete document: ${error.message}`); return; }
+    setCrmDocuments(prev => prev.filter(d => d.id !== id));
+    showToast('Document deleted.');
+  }
+
   async function fetchDocuments() { const { data, error } = await fetchAllRows(() => supabase.from('documents').select('*, customers(name,company)').order('created_at', { ascending: false })); if (error) { console.error('Error fetching documents:', error); return; } setDocuments(data || []); }
   async function fetchWorkflows() { const { data, error } = await fetchAllRows(() => supabase.from('workflows').select('*').order('created_at', { ascending: false })); if (error) { console.error('Error fetching workflows:', error); return; } setWorkflows(data || []); }
   async function fetchSegments() { const { data, error } = await fetchAllRows(() => supabase.from('customer_segments').select('*').order('created_at', { ascending: false })); if (error) { console.error('Error fetching segments:', error); return; } setSegments(data || []); }
@@ -2299,30 +2336,55 @@ function App() {
       throw new Error(['42P01', 'PGRST205'].includes(error.code) ? 'Requisitions are not set up yet. Run the requisitions SQL file in Supabase.' : error.message);
     }
     setRequisitions(prev => [data, ...prev]);
-    showToast('Request submitted and sent to HR for approval.');
+    // Requisition alerts go only to active HR, MD (manager), and Admin users.
+    await notifyRoles(
+      ['hr', 'manager', 'admin'],
+      'New requisition submitted',
+      `${displayUserName || session.user.email} submitted ${data.request_type || requestType} (${data.department || department}) for approval.`,
+      'HR Panel'
+    );
+    showToast('Request submitted. HR, MD and Admin have been notified.');
   }
 
-  async function reviewRequisition(id, status) {
+  async function deleteRequisition(id) {
+    if (authorizationProfile?.role !== 'hr') {
+      throw new Error('Only HR can delete requisitions.');
+    }
+    const request = requisitions.find(item => item.id === id);
+    if (!request) throw new Error('This requisition could not be found. Refresh and try again.');
+    const { error } = await supabase.from('requisitions').delete().eq('id', id);
+    if (error) throw error;
+    setRequisitions(prev => prev.filter(item => item.id !== id));
+    showToast(`${requisitionNumber(request)} deleted.`);
+  }
+
+  async function updateRequisitionStatus(id, status) {
     if (authorizationProfile?.role !== 'hr') {
       throw new Error('Only HR can approve or reject requisitions.');
     }
     if (!['Approved', 'Rejected'].includes(status)) {
       throw new Error('Invalid requisition decision.');
     }
+    const request = requisitions.find(item => item.id === id);
+    if (!request) throw new Error('This requisition could not be found. Refresh and try again.');
     const { data, error } = await supabase
       .from('requisitions')
       .update({ status })
       .eq('id', id)
-      .eq('status', 'Pending')
       .select('*')
-      .maybeSingle();
-    if (error) {
-      console.error('Error reviewing requisition:', error);
-      throw new Error(error.message);
-    }
-    if (!data) throw new Error('This request is no longer pending, or you do not have permission to review it. Refresh and try again.');
+      .single();
+    if (error) throw error;
     setRequisitions(prev => prev.map(item => item.id === id ? data : item));
+    if (request.requester_id && request.requester_id !== session.user.id) {
+      await notifyRolesByUser(
+        [request.requester_id],
+        `Requisition ${status.toLowerCase()}`,
+        `Your ${request.request_type || 'requisition'} (${requisitionNumber(request)}) has been ${status.toLowerCase()} by HR.`,
+        'Requisition'
+      );
+    }
     showToast(`Requisition ${status.toLowerCase()}.`);
+    return data;
   }
 
   function datasetLoaders(key) {
@@ -2339,7 +2401,7 @@ function App() {
       case 'dealProducts': return [fetchDealProducts()];
       case 'quotes': return [fetchQuotes(), fetchQuoteItems()];
       case 'invoices': return [fetchInvoices(), fetchPayments()];
-      case 'documents': return [fetchDocuments()];
+      case 'documents': return [fetchDocuments(), fetchCrmDocuments()];
       case 'workflows': return [fetchWorkflows()];
       case 'segments': return [fetchSegments()];
       case 'calendarEvents': return [fetchCalendarEvents()];
@@ -4623,7 +4685,7 @@ function App() {
             )}
             {page === 'MD Panel' && ['manager', 'admin'].includes(authorizationProfile?.role) && <MDPanel deals={deals} quotes={quotes} invoices={invoices} customers={customers} formatAmount={formatAmount} onApprove={approveCommercialRecord} onReject={rejectCommercialRecord} />}
             {page === 'HOS Panel' && authorizationProfile?.role === 'head_of_sales' && <HOSPanel deals={deals} quotes={quotes} invoices={invoices} quoteItems={quoteItems} tickets={tickets} ownerProfiles={ownerProfiles} formatAmount={formatAmount} currentUserId={session.user.id} role={authorizationProfile?.role} setPage={setPage} onApprove={approveCommercialRecord} onReject={rejectCommercialRecord} />}
-            {page === 'HR Panel' && authorizationProfile?.role === 'hr' && <HRPanel activities={activities} authorizedUsers={authorizedUsers} ownerProfiles={ownerProfiles} customers={customers} leads={leads} />}
+            {page === 'HR Panel' && authorizationProfile?.role === 'hr' && <HRPanel activities={activities} authorizedUsers={authorizedUsers} ownerProfiles={ownerProfiles} customers={customers} leads={leads} requisitions={requisitions} requisitionError={requisitionError} onUpdateRequisitionStatus={updateRequisitionStatus} onDeleteRequisition={deleteRequisition} />}
             {page === 'Technical Support Panel' && authorizationProfile?.role === 'technical_support' && <TechnicalSupportPanel tickets={tickets} customers={customers} formatAmount={formatAmount} currentUserId={session.user.id} ticketError={ticketError} onAddTicket={() => { setTicketError(''); setNewTicket(t => ({ ...t, customer_id: '' })); setShowTicketForm(true); }} onStatusChange={updateTicketStatus} onDeleteTicket={deleteTicket} onEditTicket={ticket => { setEditTicketError(''); setEditingTicket(ticket); }} onViewTicket={setSelectedTicket} isAdmin={isAdminRole(authorizationProfile?.role)} role={authorizationProfile?.role} canManage={canManageTicket} staffName={staffName} staffOptions={getStaffOptions()} onAssign={assignTicket} setPage={setPage} />}
             {page === 'Customers' && (
               <Customers customers={filteredCustomers}
@@ -4650,8 +4712,8 @@ function App() {
             {page === 'Calendar' && <CalendarPage events={calendarEvents} customers={customers} onAdd={addCalendarEvent} onUpdate={updateCalendarEvent} onDelete={deleteCalendarEvent} onRefresh={fetchCalendarEvents} />}
             {page === 'Quotes' && <Quotes quotes={quotes} products={products} deals={deals} dealProducts={dealProducts} customers={customers} quoteItems={quoteItems} onLoadQuoteItems={loadQuoteItems} onAdd={addQuote} onUpdate={updateQuote} onDelete={deleteQuote} formatAmount={formatAmount} currentUserId={session.user.id} isAdmin={isAdminRole(authorizationProfile?.role)} role={authorizationProfile?.role} onSendToHOS={sendQuoteToHOS} initialDealId={commercialLaunch?.type === 'quote' ? commercialLaunch.dealId : ''} dealFilterId={commercialView?.type === 'quotes' ? commercialView.dealId : ''} onLaunchConsumed={() => setCommercialLaunch(null)} onCreateInvoice={launchInvoiceFromQuote} />}
             {page === 'Invoices' && <Invoices invoices={invoices} payments={payments} customers={customers} products={products} deals={deals} dealProducts={dealProducts} quotes={quotes} onAdd={addInvoice} onUpdate={updateInvoice} onDelete={deleteInvoice} onAddPayment={addPayment} formatAmount={formatAmount} currentUserId={session.user.id} isAdmin={isAdminRole(authorizationProfile?.role)} role={authorizationProfile?.role} onSendToHOS={sendInvoiceToHOS} onLoadInvoiceItems={loadInvoiceItems} onLoadQuoteItems={loadQuoteItems} initialDealId={commercialLaunch?.type === 'invoice' ? commercialLaunch.dealId : ''} initialQuoteId={commercialLaunch?.type === 'invoice' ? commercialLaunch.quoteId : ''} dealFilterId={commercialView?.type === 'invoices' ? commercialView.dealId : ''} onLaunchConsumed={() => setCommercialLaunch(null)} />}
-            {page === 'Requisition' && <Requisition requisitions={requisitions} error={requisitionError} currentUserId={session.user.id} role={authorizationProfile?.role} employeeName={displayUserName} employeeEmail={session.user.email} onSubmit={submitRequisition} onReview={reviewRequisition} />}
-            {page === 'Documents' && <Documents documents={documents} customers={customers} onUpload={uploadDocument} onDownload={downloadDocument} onDelete={deleteDocument} />}
+            {page === 'Requisition' && <Requisition requisitions={requisitions} error={requisitionError} currentUserId={session.user.id} role={authorizationProfile?.role} employeeName={displayUserName} employeeEmail={session.user.email} onSubmit={submitRequisition} />}
+            {page === 'Documents' && <Documents documents={documents} customers={customers} onUpload={uploadDocument} onDownload={downloadDocument} onDelete={deleteDocument} crmDocuments={crmDocuments} crmDocumentError={crmDocumentError} onSaveDoc={saveCrmDocument} onDeleteDoc={deleteCrmDocument} />}
             {page === 'Automation' && <Automation workflows={workflows} onAdd={addWorkflow} onUpdate={updateWorkflow} />}
             {page === 'Segments' && <Segments segments={segments} customers={customers} onAdd={addSegment} onUpdate={updateSegment} />}
             {page === 'Forecast' && <Forecast deals={deals} formatAmount={formatAmount} />}
@@ -5847,11 +5909,10 @@ const formatRequisitionDate = value => value
   : '—';
 const requisitionStatusClass = status => `requisition-status ${String(status || 'Pending').toLowerCase()}`;
 
-function Requisition({ requisitions, error, currentUserId, role, employeeName, employeeEmail, onSubmit, onReview }) {
-  const canSeeAll = ['manager', 'admin', 'hr'].includes(role);
-  const canReview = role === 'hr';
+function Requisition({ requisitions, error, currentUserId, role, employeeName, employeeEmail, onDelete, onSubmit }) {
+  const canSeeAll = ['manager', 'admin'].includes(role);
   const [view, setView] = useState('dashboard'); // 'dashboard' | 'all' | 'new'
-  const [scope, setScope] = useState(role === 'hr' ? 'everyone' : 'mine'); // HR reviews company requests; managers/admins can inspect all
+  const [scope, setScope] = useState('mine'); // managers and admins can switch to everyone's requests
   const [statusFilter, setStatusFilter] = useState('All');
   const [department, setDepartment] = useState('');
   const [requestType, setRequestType] = useState('');
@@ -5924,10 +5985,25 @@ function Requisition({ requisitions, error, currentUserId, role, employeeName, e
             <textarea value={description} onChange={e => setDescription(e.target.value)} placeholder="Describe your request and provide any relevant details..." />
           </label>
           <label><span>Start Date <span className="required">*</span></span>
-            <input type="date" value={startDate} onChange={e => setStartDate(e.target.value)} />
+            <input
+              type="date"
+              value={startDate}
+              required
+              onChange={e => {
+                const nextStartDate = e.target.value;
+                setStartDate(nextStartDate);
+                if (endDate && nextStartDate && endDate < nextStartDate) setEndDate('');
+              }}
+            />
           </label>
           <label><span>End Date <span className="required">*</span></span>
-            <input type="date" value={endDate} min={startDate || undefined} onChange={e => setEndDate(e.target.value)} />
+            <input
+              type="date"
+              value={endDate}
+              min={startDate || undefined}
+              required
+              onChange={e => setEndDate(e.target.value)}
+            />
           </label>
         </div>
         <div className="requisition-actions">
@@ -5945,7 +6021,7 @@ function Requisition({ requisitions, error, currentUserId, role, employeeName, e
 
   if (view === 'all') {
     return <>
-      <PageHeading eyebrow="REQUISITION" title={canReview ? 'HR Approval Queue' : 'All Requests'} description={canReview ? 'Review and approve or reject employee requisitions.' : scope === 'everyone' && canSeeAll ? 'Every request submitted in the company.' : 'Every request you have submitted.'} action="New Request" onAction={() => setView('new')} />
+      <PageHeading eyebrow="REQUISITION" title="All Requests" description={scope === 'everyone' && canSeeAll ? 'Every request submitted in the company.' : 'Every request you have submitted.'} action="New Request" onAction={() => setView('new')} />
       {error && <div className="form-error">{error}</div>}
       {scopeToggle}
       <div className="panel">
@@ -5960,7 +6036,7 @@ function Requisition({ requisitions, error, currentUserId, role, employeeName, e
           </div>
         </div>
         {listed.length === 0 ? <div className="empty-state"><p>No requests found.</p></div> : <div className="table-wrap"><table>
-          <thead><tr><th>Request ID</th><th>Employee</th><th>Department</th><th>Type</th><th>Dates</th><th>Description</th><th>Submitted</th><th>Status</th>{canReview && <th>HR Decision</th>}</tr></thead>
+          <thead><tr><th>Request ID</th><th>Employee</th><th>Department</th><th>Type</th><th>Dates</th><th>Description</th><th>Submitted</th><th>Status</th></tr></thead>
           <tbody>{listed.map(request => <tr key={request.id}>
             <td><strong>{requisitionNumber(request)}</strong></td>
             <td>{request.employee_name}<div className="deal-customer">{request.employee_email}</div></td>
@@ -5969,8 +6045,7 @@ function Requisition({ requisitions, error, currentUserId, role, employeeName, e
             <td>{formatRequisitionDate(request.start_date)} – {formatRequisitionDate(request.end_date)}</td>
             <td title={request.description} style={{ maxWidth: 260, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{request.description}</td>
             <td>{formatDate(request.created_at)}</td>
-            <td><span className={requisitionStatusClass(request.status)}>{request.status || 'Pending'}</span></td>
-            {canReview && <td><div className="requisition-review-actions">{(request.status || 'Pending') === 'Pending' ? <><button type="button" className="secondary-btn" onClick={() => onReview(request.id, 'Approved').catch(e => alert(e.message))}>Approve</button><button type="button" className="secondary-btn requisition-reject-btn" onClick={() => { if (window.confirm('Reject this requisition?')) onReview(request.id, 'Rejected').catch(e => alert(e.message)); }}>Reject</button></> : <span className="deal-customer">Reviewed</span>}</div></td>}
+            <td><span className={requisitionStatusClass(request.status)}>{request.status}</span></td>
           </tr>)}</tbody>
         </table></div>}
       </div>
@@ -5989,15 +6064,25 @@ function Requisition({ requisitions, error, currentUserId, role, employeeName, e
     </div>
     <div className="dashboard-grid">
       <div className="panel">
-        <div className="panel-heading"><div><h3>{canReview ? 'Company Requests' : 'Recent Requests'}</h3></div><button type="button" className="text-btn" onClick={() => openAll(canReview ? 'Pending' : 'All')}>{canReview ? 'Review pending' : 'View all'}</button></div>
+        <div className="panel-heading"><div><h3>Recent Requests</h3></div><button type="button" className="text-btn" onClick={() => openAll('All')}>View all</button></div>
         {scoped.length === 0 ? <div className="empty-state"><p>No requests yet.</p></div> : <div className="table-wrap"><table>
-          <thead><tr><th>Request ID</th><th>Employee</th><th>Type</th><th>Status</th></tr></thead>
+          <thead>
+            <tr>
+              <th>Request ID</th>
+              <th>Employee</th>
+              <th>Type</th>
+              <th>Status</th>
+              <th>Actions</th>
+            </tr>
+          </thead>
           <tbody>{scoped.slice(0, 5).map(request => <tr key={request.id}>
             <td><strong>{requisitionNumber(request)}</strong></td>
             <td>{request.employee_name}</td>
             <td>{request.request_type}</td>
             <td><span className={requisitionStatusClass(request.status)}>{request.status}</span></td>
-          </tr>)}</tbody>
+            <td><button className="icon-btn" onClick={() => onDelete(d)}><X size={16} /></button></td>
+          </tr>)}
+          </tbody>
         </table></div>}
       </div>
       <div className="panel">
@@ -9025,7 +9110,213 @@ function Invoices({ invoices, payments, customers, products, deals = [], dealPro
     {preview && <div className="commercial-preview-backdrop" onClick={() => setPreview(null)}><div className="commercial-preview-shell" onClick={e => e.stopPropagation()}><div className="commercial-preview-toolbar"><div><strong>Invoice preview</strong><span>Commercial document</span></div><div className="toolbar-actions"><button type="button" className="secondary-btn" onClick={() => window.print()}>Print / Save PDF</button><button type="button" className="icon-btn" onClick={() => setPreview(null)}><X size={18} /></button></div></div><div className="commercial-print-sheet"><header className="commercial-document-header"><div><img src="/storhet-logo.png" alt="Storhet Solutions" className="invoice-company-logo" /><h2>STORHET SOLUTIONS</h2><p>Technology Solutions & Services</p></div><div className="commercial-document-title-block"><div className="commercial-document-title">INVOICE</div><span>{preview.status || 'Draft'}</span></div></header><div className="commercial-rule" /><section className="commercial-meta-grid"><div><span className="invoice-label">BILL TO</span><strong>{customerFor(preview)?.name || preview.title || 'Customer'}</strong><span>{customerFor(preview)?.company || ''}</span><span>{customerFor(preview)?.email || ''}</span></div><div className="commercial-details-box"><div><span>Invoice #</span><strong>{preview.invoice_number}</strong></div><div><span>Invoice Date</span><strong>{formatDate(preview.created_at || new Date().toISOString())}</strong></div><div><span>Due Date</span><strong>{preview.due_date ? formatDate(preview.due_date) : '—'}</strong></div><div><span>Currency</span><strong>{preview.currency_code || 'USD'}{preview.currency_code && preview.currency_code !== 'USD' ? ` · 1 ${preview.currency_code} = ${preview.exchange_rate || 1} USD` : ''}</strong></div></div></section><table className="commercial-document-table"><thead><tr><th>#</th><th>ITEM &amp; DESCRIPTION</th><th>QTY</th><th>PRICE</th><th>DISCOUNT</th><th>AMOUNT</th></tr></thead><tbody>{(preview.__items || []).map((item, idx) => <tr key={item.id || idx}><td>{idx + 1}</td><td><strong>{item.product_name || 'Solution'}</strong><span>{item.description || ''}</span></td><td>{item.quantity || 1}</td><td>{formatCommercialAmount(item.unit_price, preview.currency_code)}</td><td>{Number(item.discount_percent || 0).toFixed(2)}%</td><td>{formatCommercialAmount(Number(item.total || 0), preview.currency_code)}</td></tr>)}</tbody></table><section className="commercial-bottom-grid"><div><span className="invoice-label">NOTES</span><p>{preview.notes || 'Thank you for your business.'}</p><span className="invoice-label">PAYMENT TERMS</span><p>{preview.payment_terms || 'Due on receipt.'}</p></div><div className="commercial-totals-block"><div><span>Subtotal</span><strong>{formatCommercialAmount(preview.subtotal ?? preview.amount, preview.currency_code)}</strong></div><div><span>Discount</span><strong>- {formatCommercialAmount(preview.discount || 0, preview.currency_code)}</strong></div><div><span>VAT ({preview.vat_rate ?? 7.5}%)</span><strong>{formatCommercialAmount(preview.vat_amount || 0, preview.currency_code)}</strong></div><div><span>Manual tax</span><strong>{formatCommercialAmount(preview.manual_tax || 0, preview.currency_code)}</strong></div><div className="commercial-grand-total"><span>TOTAL</span><strong>{formatCommercialAmount(preview.amount, preview.currency_code)}</strong></div></div></section><footer className="commercial-document-footer"><div><strong>Payment / Terms</strong><p>{preview.payment_terms || 'Please make payment by the stated due date.'}</p></div><div>Thank you for doing business with<br /><strong>STORHET SOLUTIONS</strong>.</div></footer></div></div></div>}
   </>;
 }
-function Documents({ documents, customers, onUpload, onDownload, onDelete }) { const [customerId, setCustomerId] = useState(''); const upload = e => { const f = e.target.files?.[0]; if (!f) return; onUpload(f, customerId).catch(err => alert(err.message)); e.target.value = '' }; return <><PageHeading eyebrow="FILES" title="Documents" description="Store customer and CRM files in Supabase Storage." /><div className="panel"><div className="toolbar"><select value={customerId} onChange={e => setCustomerId(e.target.value)}><option value="">No customer link</option>{customers.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}</select><label className="secondary-btn" style={{ display: 'inline-flex', alignItems: 'center', gap: 8, cursor: 'pointer' }}><Upload size={15} /> Upload file<input type="file" hidden onChange={upload} /></label></div><div className="table-wrap"><table><thead><tr><th>File</th><th>Customer</th><th>Type</th><th>Size</th><th>Created</th><th>Actions</th></tr></thead><tbody>{documents.length === 0 ? <tr><td colSpan="6">No documents yet.</td></tr> : documents.map(d => <tr key={d.id}><td><strong>{d.name}</strong></td><td>{d.customers?.name || '—'}</td><td>{d.mime_type}</td><td>{Math.max(1, Math.round(Number(d.size_bytes || 0) / 1024))} KB</td><td>{formatDate(d.created_at)}</td><td><div className="toolbar-actions"><button className="secondary-btn" onClick={() => onDownload(d)}><Download size={14} /> Download</button><button className="icon-btn" onClick={() => onDelete(d)}><X size={16} /></button></div></td></tr>)}</tbody></table></div></div></> }
+// ---------------------------------------------------------------------
+// Word-style document editor
+// ---------------------------------------------------------------------
+const DOC_FONTS = ['Calibri, Arial, sans-serif', 'Georgia, serif', '"Times New Roman", serif', '"Courier New", monospace', 'Verdana, sans-serif'];
+const DOC_FONT_LABELS = { 'Calibri, Arial, sans-serif': 'Calibri', 'Georgia, serif': 'Georgia', '"Times New Roman", serif': 'Times New Roman', '"Courier New", monospace': 'Courier New', 'Verdana, sans-serif': 'Verdana' };
+
+function DocToolbarButton({ active, onClick, title, children }) {
+  return <button type="button" className={`doc-tb-btn${active ? ' active' : ''}`} title={title} onMouseDown={e => e.preventDefault()} onClick={onClick}>{children}</button>;
+}
+
+function DocEditor({ doc, customers, onSave, onClose }) {
+  const editorRef = useRef(null);
+  const saveTimer = useRef(null);
+  const [docId, setDocId] = useState(doc?.id || null);
+  const [title, setTitle] = useState(doc?.title || 'Untitled document');
+  const [customerId, setCustomerId] = useState(doc?.customer_id || '');
+  const [dirty, setDirty] = useState(false);
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState('');
+  const [lastSaved, setLastSaved] = useState(doc?.updated_at ? new Date(doc.updated_at) : null);
+  const [formats, setFormats] = useState({});
+
+  // Uncontrolled on purpose: a controlled contentEditable fights the
+  // browser's own cursor position on every keystroke. Content is read
+  // imperatively (editorRef.current.innerHTML) only when saving.
+  useEffect(() => {
+    if (editorRef.current) editorRef.current.innerHTML = doc?.content || '';
+  }, []);
+
+  function refreshActiveFormats() {
+    try {
+      setFormats({
+        bold: document.queryCommandState('bold'),
+        italic: document.queryCommandState('italic'),
+        underline: document.queryCommandState('underline'),
+        strike: document.queryCommandState('strikeThrough'),
+        ul: document.queryCommandState('insertUnorderedList'),
+        ol: document.queryCommandState('insertOrderedList'),
+        left: document.queryCommandState('justifyLeft'),
+        center: document.queryCommandState('justifyCenter'),
+        right: document.queryCommandState('justifyRight'),
+        full: document.queryCommandState('justifyFull')
+      });
+    } catch { /* queryCommandState can throw on some browsers; ignore */ }
+  }
+
+  function exec(command, value = null) {
+    editorRef.current?.focus();
+    try { document.execCommand(command, false, value); } catch { /* unsupported command; ignore */ }
+    setDirty(true);
+    refreshActiveFormats();
+  }
+
+  function insertLink() {
+    const url = window.prompt('Link URL');
+    if (!url) return;
+    exec('createLink', url);
+  }
+
+  async function save(silent = false) {
+    if (!silent) setSaving(true);
+    setError('');
+    try {
+      const html = editorRef.current?.innerHTML ?? '';
+      const saved = await onSave({ id: docId, title, content: html, customer_id: customerId || null });
+      if (!docId) setDocId(saved.id);
+      setDirty(false);
+      setLastSaved(new Date());
+    } catch (e) {
+      setError(e.message || 'Could not save this document.');
+    } finally {
+      if (!silent) setSaving(false);
+    }
+  }
+
+  // Autosave: a few seconds after the person stops typing.
+  useEffect(() => {
+    if (!dirty) return;
+    if (saveTimer.current) clearTimeout(saveTimer.current);
+    saveTimer.current = setTimeout(() => save(true), 2500);
+    return () => clearTimeout(saveTimer.current);
+  }, [dirty]);
+
+  // Keep toolbar buttons (Bold, Align, etc.) in sync with wherever the cursor actually is.
+  useEffect(() => {
+    document.addEventListener('selectionchange', refreshActiveFormats);
+    return () => document.removeEventListener('selectionchange', refreshActiveFormats);
+  }, []);
+
+  function closeEditor() {
+    if (dirty) { save(false).then(onClose); return; }
+    onClose();
+  }
+
+  return (
+    <div className="doc-editor">
+      <div className="doc-editor-topbar">
+        <button type="button" className="secondary-btn" onClick={closeEditor}><ArrowLeft size={15} /> Back to Docs</button>
+        <input className="doc-title-input" value={title} onChange={e => { setTitle(e.target.value); setDirty(true); }} placeholder="Untitled document" />
+        <select className="doc-customer-select" value={customerId} onChange={e => { setCustomerId(e.target.value); setDirty(true); }}>
+          <option value="">No customer link</option>
+          {customers.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
+        </select>
+        <span className="doc-save-status">{saving ? 'Saving…' : dirty ? 'Unsaved changes' : lastSaved ? `Saved ${lastSaved.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}` : ''}</span>
+        <button type="button" className="secondary-btn" onClick={() => window.print()}><FileText size={15} /> Print / Save PDF</button>
+        <button type="button" className="primary-btn" onClick={() => save(false)} disabled={saving}>
+          {saving && <span className="btn-spinner" aria-hidden="true" />}{saving ? 'Saving...' : 'Save'}
+        </button>
+      </div>
+      {error && <div className="form-error doc-editor-error">{error}</div>}
+
+      <div className="doc-ribbon">
+        <select className="doc-ribbon-select" onChange={e => exec('formatBlock', e.target.value)} defaultValue="P" title="Style">
+          <option value="P">Normal text</option>
+          <option value="H1">Heading 1</option>
+          <option value="H2">Heading 2</option>
+          <option value="H3">Heading 3</option>
+        </select>
+        <select className="doc-ribbon-select doc-ribbon-font" onChange={e => exec('fontName', e.target.value)} defaultValue={DOC_FONTS[0]} title="Font">
+          {DOC_FONTS.map(f => <option key={f} value={f}>{DOC_FONT_LABELS[f]}</option>)}
+        </select>
+        <select className="doc-ribbon-select doc-ribbon-size" onChange={e => exec('fontSize', e.target.value)} defaultValue="3" title="Size">
+          <option value="2">Small</option>
+          <option value="3">Normal</option>
+          <option value="5">Large</option>
+          <option value="7">Huge</option>
+        </select>
+        <span className="doc-ribbon-divider" />
+        <DocToolbarButton active={formats.bold} onClick={() => exec('bold')} title="Bold"><b>B</b></DocToolbarButton>
+        <DocToolbarButton active={formats.italic} onClick={() => exec('italic')} title="Italic"><i>I</i></DocToolbarButton>
+        <DocToolbarButton active={formats.underline} onClick={() => exec('underline')} title="Underline"><u>U</u></DocToolbarButton>
+        <DocToolbarButton active={formats.strike} onClick={() => exec('strikeThrough')} title="Strikethrough"><s>S</s></DocToolbarButton>
+        <label className="doc-color-btn" title="Text color">A<input type="color" onChange={e => exec('foreColor', e.target.value)} /></label>
+        <label className="doc-color-btn doc-color-highlight" title="Highlight">🖊<input type="color" defaultValue="#fff59d" onChange={e => exec('hiliteColor', e.target.value)} /></label>
+        <span className="doc-ribbon-divider" />
+        <DocToolbarButton active={formats.left} onClick={() => exec('justifyLeft')} title="Align left">⟸</DocToolbarButton>
+        <DocToolbarButton active={formats.center} onClick={() => exec('justifyCenter')} title="Align center">⟺</DocToolbarButton>
+        <DocToolbarButton active={formats.right} onClick={() => exec('justifyRight')} title="Align right">⟹</DocToolbarButton>
+        <DocToolbarButton active={formats.full} onClick={() => exec('justifyFull')} title="Justify">☰</DocToolbarButton>
+        <span className="doc-ribbon-divider" />
+        <DocToolbarButton active={formats.ul} onClick={() => exec('insertUnorderedList')} title="Bulleted list">• ≡</DocToolbarButton>
+        <DocToolbarButton active={formats.ol} onClick={() => exec('insertOrderedList')} title="Numbered list">1. ≡</DocToolbarButton>
+        <DocToolbarButton onClick={() => exec('outdent')} title="Decrease indent">⇤</DocToolbarButton>
+        <DocToolbarButton onClick={() => exec('indent')} title="Increase indent">⇥</DocToolbarButton>
+        <span className="doc-ribbon-divider" />
+        <DocToolbarButton onClick={insertLink} title="Insert link">🔗</DocToolbarButton>
+        <DocToolbarButton onClick={() => exec('removeFormat')} title="Clear formatting">✕A</DocToolbarButton>
+        <span className="doc-ribbon-divider" />
+        <DocToolbarButton onClick={() => exec('undo')} title="Undo">↶</DocToolbarButton>
+        <DocToolbarButton onClick={() => exec('redo')} title="Redo">↷</DocToolbarButton>
+      </div>
+
+      <div className="doc-canvas">
+        <div
+          ref={editorRef}
+          className="doc-page"
+          contentEditable
+          suppressContentEditableWarning
+          onInput={() => setDirty(true)}
+          onKeyUp={refreshActiveFormats}
+          onMouseUp={refreshActiveFormats}
+        />
+      </div>
+    </div>
+  );
+}
+
+function Documents({ documents, customers, onUpload, onDownload, onDelete, crmDocuments = [], crmDocumentError = '', onSaveDoc, onDeleteDoc }) {
+  const [customerId, setCustomerId] = useState('');
+  const [tab, setTab] = useState('files');
+  const [openDoc, setOpenDoc] = useState(null); // null = list view; {} = new doc; object = existing doc
+  const upload = e => { const f = e.target.files?.[0]; if (!f) return; onUpload(f, customerId).catch(err => alert(err.message)); e.target.value = '' };
+
+  if (openDoc !== null) {
+    return <DocEditor doc={openDoc.id ? openDoc : null} customers={customers} onSave={onSaveDoc} onClose={() => setOpenDoc(null)} />;
+  }
+
+  return <>
+    <PageHeading eyebrow="FILES" title="Documents" description="Store uploaded files, or create and edit documents right here." />
+    <div className="filter-tabs doc-section-tabs">
+      <button type="button" className={`filter-tab ${tab === 'files' ? 'active' : ''}`} onClick={() => setTab('files')}>Files</button>
+      <button type="button" className={`filter-tab ${tab === 'docs' ? 'active' : ''}`} onClick={() => setTab('docs')}>Docs ({crmDocuments.length})</button>
+    </div>
+
+    {tab === 'files' && <div className="panel"><div className="toolbar"><select value={customerId} onChange={e => setCustomerId(e.target.value)}><option value="">No customer link</option>{customers.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}</select><label className="secondary-btn" style={{ display: 'inline-flex', alignItems: 'center', gap: 8, cursor: 'pointer' }}><Upload size={15} /> Upload file<input type="file" hidden onChange={upload} /></label></div><div className="table-wrap"><table><thead><tr><th>File</th><th>Customer</th><th>Type</th><th>Size</th><th>Created</th><th>Actions</th></tr></thead><tbody>{documents.length === 0 ? <tr><td colSpan="6">No documents yet.</td></tr> : documents.map(d => <tr key={d.id}><td><strong>{d.name}</strong></td><td>{d.customers?.name || '—'}</td><td>{d.mime_type}</td><td>{Math.max(1, Math.round(Number(d.size_bytes || 0) / 1024))} KB</td><td>{formatDate(d.created_at)}</td><td><div className="toolbar-actions"><button className="secondary-btn" onClick={() => onDownload(d)}><Download size={14} /> Download</button><button className="icon-btn" onClick={() => onDelete(d)}><X size={16} /></button></div></td></tr>)}</tbody></table></div></div>}
+
+    {tab === 'docs' && <div className="panel">
+      <div className="panel-header">
+        <div><h3>Your documents</h3></div>
+        <button type="button" className="primary-btn" onClick={() => setOpenDoc({})}><Plus size={15} /> New document</button>
+      </div>
+      {crmDocumentError && <div className="form-error">{crmDocumentError}</div>}
+      {crmDocuments.length === 0 ? (
+        <div className="empty-state"><p>No documents yet.</p><button type="button" className="secondary-btn" onClick={() => setOpenDoc({})}>Create your first document</button></div>
+      ) : (
+        <div className="table-wrap"><table><thead><tr><th>Title</th><th>Customer</th><th>Last edited</th><th>Actions</th></tr></thead><tbody>
+          {crmDocuments.map(d => <tr key={d.id}>
+            <td><button type="button" className="text-btn" onClick={() => setOpenDoc(d)}><strong>{d.title || 'Untitled document'}</strong></button></td>
+            <td>{d.customers?.name || '—'}</td>
+            <td>{formatDate(d.updated_at || d.created_at)}</td>
+            <td><div className="toolbar-actions"><button className="secondary-btn" onClick={() => setOpenDoc(d)}>Open</button><button className="icon-btn" onClick={() => onDeleteDoc(d.id)}><X size={16} /></button></div></td>
+          </tr>)}
+        </tbody></table></div>
+      )}
+    </div>}
+  </>;
+}
 function Automation({ workflows, onAdd, onUpdate }) { const [show, setShow] = useState(false); const blank = { name: '', description: '', trigger_type: 'customer_created', action_type: 'create_notification', active: true, config: {} }; const [form, setForm] = useState(blank); const save = async e => { e.preventDefault(); try { await onAdd(form); setShow(false); setForm(blank) } catch (err) { alert(err.message) } }; return <><PageHeading eyebrow="AUTOMATION" title="Workflow automation" description="Define rules that turn CRM events into actions." action="New workflow" onAction={() => setShow(true)} /><div className="panel"><div className="table-wrap"><table><thead><tr><th>Workflow</th><th>Trigger</th><th>Action</th><th>Status</th><th>Created</th><th>Toggle</th></tr></thead><tbody>{workflows.length === 0 ? <tr><td colSpan="6">No workflows yet.</td></tr> : workflows.map(w => <tr key={w.id}><td><strong>{w.name}</strong><div className="deal-customer">{w.description}</div></td><td>{w.trigger_type}</td><td>{w.action_type}</td><td>{w.active ? 'Active' : 'Paused'}</td><td>{formatDate(w.created_at)}</td><td><button className="secondary-btn" onClick={() => onUpdate(w.id, { active: !w.active })}>{w.active ? 'Pause' : 'Activate'}</button></td></tr>)}</tbody></table></div></div>{show && <div className="modal-backdrop" onClick={() => setShow(false)}><form className="modal" onSubmit={save} onClick={e => e.stopPropagation()}><div className="modal-heading"><h2>New workflow</h2><button type="button" className="icon-btn" onClick={() => setShow(false)}><X size={18} /></button></div><label>Name<input required value={form.name} onChange={e => setForm({ ...form, name: e.target.value })} /></label><label>Description<input value={form.description} onChange={e => setForm({ ...form, description: e.target.value })} /></label><label>Trigger<select value={form.trigger_type} onChange={e => setForm({ ...form, trigger_type: e.target.value })}>{['customer_created', 'lead_created', 'deal_stage_changed', 'ticket_created', 'invoice_overdue', 'activity_due'].map(x => <option key={x}>{x}</option>)}</select></label><label>Action<select value={form.action_type} onChange={e => setForm({ ...form, action_type: e.target.value })}>{['create_notification', 'create_activity', 'log_event', 'send_email'].map(x => <option key={x}>{x}</option>)}</select></label><div className="modal-actions"><button type="button" className="secondary-btn" onClick={() => setShow(false)}>Cancel</button><button className="primary-btn">Create workflow</button></div></form></div>}</> }
 function Segments({ segments, customers, onAdd, onUpdate }) { const [show, setShow] = useState(false); const [form, setForm] = useState({ name: '', description: '', rule_json: { status: 'Active' }, active: true }); const [selected, setSelected] = useState(null); const save = async e => { e.preventDefault(); try { await onAdd(form); setShow(false) } catch (err) { alert(err.message) } }; const count = s => customers.filter(c => (c.status || 'Active') === (s.rule_json?.status || 'Active')).length; return <><PageHeading eyebrow="CUSTOMER INTELLIGENCE" title="Segments" description="Group customers for targeted follow-up and reporting." action="New segment" onAction={() => setShow(true)} /><div className="panel"><div className="table-wrap"><table><thead><tr><th>Segment</th><th>Rule</th><th>Customers</th><th>Status</th><th>Actions</th></tr></thead><tbody>{segments.length === 0 ? <tr><td colSpan="5">No segments yet.</td></tr> : segments.map(s => <tr key={s.id}><td><strong>{s.name}</strong><div className="deal-customer">{s.description}</div></td><td>Status = {s.rule_json?.status || 'Active'}</td><td>{count(s)}</td><td>{s.active ? 'Active' : 'Paused'}</td><td><button className="secondary-btn" onClick={() => onUpdate(s.id, { active: !s.active })}>{s.active ? 'Pause' : 'Activate'}</button></td></tr>)}</tbody></table></div></div>{show && <div className="modal-backdrop" onClick={() => setShow(false)}><form className="modal" onSubmit={save} onClick={e => e.stopPropagation()}><div className="modal-heading"><h2>New segment</h2><button type="button" className="icon-btn" onClick={() => setShow(false)}><X size={18} /></button></div><label>Name<input required value={form.name} onChange={e => setForm({ ...form, name: e.target.value })} /></label><label>Description<input value={form.description} onChange={e => setForm({ ...form, description: e.target.value })} /></label><label>Customer status<select value={form.rule_json.status} onChange={e => setForm({ ...form, rule_json: { ...form.rule_json, status: e.target.value } })}>{['Active', 'Inactive', 'Prospect', 'VIP'].map(x => <option key={x}>{x}</option>)}</select></label><div className="modal-actions"><button type="button" className="secondary-btn" onClick={() => setShow(false)}>Cancel</button><button className="primary-btn">Create segment</button></div></form></div>}</> }
 
@@ -9980,7 +10271,6 @@ function HOSPanel({
   invoices = [],
   quoteItems = [],
   tickets = [],
-  requisitions= [],
   ownerProfiles = {},
   formatAmount,
   onApprove,
@@ -10016,9 +10306,6 @@ function HOSPanel({
     ...invoices
       .filter(i => ['HOS_PENDING', 'APPROVED', 'REJECTED', 'MD_PENDING'].includes(i.approval_status))
       .map(i => ({ ...i, _type: 'Invoice', _amount: docAmountUsd(i, 'amount'), _idLabel: i.invoice_number || i.id })),
-    ...requisitions
-      .filter(request => ['HOS_PENDING', 'APPROVED', 'REJECTED', 'MD_PENDING'].includes(request.status))
-      .map(request => ({...request, _type: 'request', }))
   ].sort((a, b, c) => new Date(b.created_at || 0) - new Date(a.created_at || 0));
 
   const filteredRecords = approvalFilter === 'All'
@@ -10174,68 +10461,7 @@ function HOSPanel({
         </table>
       </div>
     </div>
-    <div className="panel hos-approval-panel" id="hos-approval-queue">
-      <div className="panel-heading hos-approval-heading">
-        <div>
-          <h3>Requisition Approval Queue</h3>
-          <p>Every row comes from a Members of the organization. HOS does not create or edit record here.</p>
-        </div>
-        <div className="hos-filter-tabs">
-          {['All', 'Pending', 'Approved', 'Rejected'].map(filter => (
-            <button key={filter} type="button" className={approvalFilter === filter ? 'active' : ''} onClick={() => setApprovalFilter(filter)}>
-              {filter}
-            </button>
-          ))}
-        </div>
-      </div>
-      <div className="table-wrap hos-approval-table-wrap">
-        <table className="hos-approval-table">
-          <thead>
-            <tr>
-              <th>Request ID</th>
-              <th>Staff</th>
-              <th>Date</th>
-              <th>Status</th>
-              <th>Action</th>
-            </tr>
-          </thead>
-          <tbody>
-            {filteredRecords.length === 0 ? (
-              <tr><td colSpan="8" className="hos-empty-state">No Request Pending.</td></tr>
-            ) : filteredRecords.map(record => (
-              <tr key={`${record._type}-${record.id}`}>
-                <td><strong>{record._idLabel}</strong></td>
-                <td>
-                  <div className="hos-solution-cell">
-                    <strong>{recordSolution(record)}</strong>
-                    {record._type === 'Quote' && record.title && record.title !== recordSolution(record) ? <small>{record.title}</small> : null}
-                  </div>
-                </td>
-                <td><strong>{formatAmount(record._amount)}</strong></td>
-                <td><span className={`hos-status-badge ${record.approval_status === 'REJECTED' ? 'is-rejected' : record.approval_status === 'HOS_PENDING' ? 'is-pending' : 'is-approved'}`}>{statusLabel(record)}</span></td>
-                <td>{repName(record)}</td>
-                <td>
-                  <div className="hos-company-cell">
-                    <strong>{companyName(record)}</strong>
-                    {record._type === 'Quote' && record.customer_name && record.company ? <small>{record.customer_name}</small> : null}
-                    {record._type === 'Invoice' && record.customers?.name && record.customers?.company ? <small>{record.customers.name}</small> : null}
-                  </div>
-                </td>
-                <td className="hos-action-cell">
-                  <div className="hos-action-buttons">
-                    <button type="button" className="secondary-btn" onClick={() => setViewRecord(record)}>View</button>
-                    {isPending(record) && <>
-                      <button type="button" className="primary-btn" onClick={async () => { try { await onApprove(record._type.toLowerCase(), record.id); } catch (e) { alert(e.message); } }}>Approve</button>
-                      <button type="button" className="secondary-btn" onClick={async () => { const note = window.prompt('Why is this quote/invoice being rejected?'); if (!note?.trim()) return; try { await onReject(record._type.toLowerCase(), record.id, note.trim()); } catch (e) { alert(e.message); } }}>Reject</button>
-                    </>}
-                  </div>
-                </td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
-      </div>
-    </div>
+
 
     {viewRecord && (
       <div className="modal-backdrop" onClick={() => setViewRecord(null)}>
@@ -10267,7 +10493,8 @@ function HOSPanel({
     )}
   </>;
 }
-function HRPanel({ activities = [], authorizedUsers = [], ownerProfiles = {}, customers = [], leads = [] }) {
+function HRPanel({ activities = [], authorizedUsers = [], ownerProfiles = {}, customers = [], leads = [], requisitions = [], requisitionError = '', onUpdateRequisitionStatus, onDeleteRequisition }) {
+  const [viewRequisition, setViewRequisition] = useState(null);
   const activeEmployees = authorizedUsers.filter(user => user.is_active !== false).length;
   const openWork = activities.filter(activity => isOpenActivity(activity) && !isOverdue(activity));
   const overdueWork = activities.filter(activity => isOverdue(activity));
@@ -10321,6 +10548,63 @@ function HRPanel({ activities = [], authorizedUsers = [], ownerProfiles = {}, cu
       )}
     </div>
 
+    <div className="panel hr-requisition-panel" id="hr-requisition-approvals">
+      <div className="panel-heading">
+        <div><h3>Requisition Approval Queue</h3><p>Review staff requests and approve or reject them here.</p></div>
+        <span className="count-badge">{requisitions.filter(request => (request.status || 'Pending') === 'Pending').length} pending</span>
+      </div>
+      {requisitionError && <div className="form-error">{requisitionError}</div>}
+      <div className="table-wrap">
+        <table className="hr-work-table">
+          <thead><tr><th>Request ID</th><th>Employee</th><th>Department</th><th>Request</th><th>Period</th><th>Description</th><th>Status</th><th>Actions</th></tr></thead>
+          <tbody>
+            {requisitions.length === 0 ? <tr><td colSpan="8"><div className="empty-state"><p>No requisitions have been submitted.</p></div></td></tr> : [...requisitions].map(request => (
+              <tr key={request.id}>
+                <td><strong>{requisitionNumber(request)}</strong></td>
+                <td><strong>{request.employee_name || 'Staff member'}</strong><small>{request.employee_email || ''}</small></td>
+                <td>{request.department || '—'}</td>
+                <td>{request.request_type || '—'}</td>
+                <td>{formatRequisitionDate(request.start_date)} – {formatRequisitionDate(request.end_date)}</td>
+                <td style={{ maxWidth: 240, whiteSpace: 'normal' }}>{request.description || '—'}</td>
+                <td><span className={requisitionStatusClass(request.status)}>{request.status || 'Pending'}</span></td>
+                <td>
+                  <div className="toolbar-actions" style={{ flexWrap: 'wrap' }}>
+                    <button type="button" className="secondary-btn" onClick={() => setViewRequisition(request)}>View</button>
+                    {(request.status || 'Pending') === 'Pending' && <>
+                      <button type="button" className="primary-btn" onClick={async () => { try { await onUpdateRequisitionStatus(request.id, 'Approved'); } catch (e) { alert(e.message || 'Unable to approve requisition.'); } }}>Approve</button>
+                      <button type="button" className="secondary-btn" onClick={async () => { if (!window.confirm(`Reject ${requisitionNumber(request)}?`)) return; try { await onUpdateRequisitionStatus(request.id, 'Rejected'); } catch (e) { alert(e.message || 'Unable to reject requisition.'); } }}>Reject</button>
+                    </>}
+                    <button type="button" className="secondary-btn" style={{ color: '#dc2626', borderColor: '#dc2626' }} onClick={async () => { if (!window.confirm(`Delete ${requisitionNumber(request)}? This action cannot be undone.`)) return; try { await onDeleteRequisition(request.id); } catch (e) { alert(e.message || 'Unable to delete requisition.'); } }}>Delete</button>
+                  </div>
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+    </div>
+
+    {viewRequisition && <div className="modal-backdrop" onClick={() => setViewRequisition(null)}>
+      <div className="modal" onClick={e => e.stopPropagation()}>
+        <div className="modal-heading">
+          <div><h2>{requisitionNumber(viewRequisition)}</h2><p>Requisition details</p></div>
+          <button type="button" className="icon-btn" onClick={() => setViewRequisition(null)} aria-label="Close"><X size={18} /></button>
+        </div>
+        <div className="detail-grid">
+          <div><small>Employee</small><p>{viewRequisition.employee_name || '—'}</p></div>
+          <div><small>Email</small><p>{viewRequisition.employee_email || '—'}</p></div>
+          <div><small>Department</small><p>{viewRequisition.department || '—'}</p></div>
+          <div><small>Request type</small><p>{viewRequisition.request_type || '—'}</p></div>
+          <div><small>Start date</small><p>{formatRequisitionDate(viewRequisition.start_date)}</p></div>
+          <div><small>End date</small><p>{formatRequisitionDate(viewRequisition.end_date)}</p></div>
+          <div><small>Status</small><p>{viewRequisition.status || 'Pending'}</p></div>
+          <div><small>Submitted</small><p>{formatDate(viewRequisition.created_at)}</p></div>
+        </div>
+        <div style={{ marginBottom: 16 }}><small>Description</small><p style={{ whiteSpace: 'pre-wrap', marginTop: 5 }}>{viewRequisition.description || '—'}</p></div>
+        <div className="modal-actions"><button type="button" className="secondary-btn" onClick={() => setViewRequisition(null)}>Close</button></div>
+      </div>
+    </div>}
+
     <div className="panel hr-work-operations" id="hr-work-operations">
       <div className="panel-heading">
         <div><h3>Work Operations</h3><p>See the current work assigned across the organization.</p></div>
@@ -10345,10 +10629,10 @@ function HRPanel({ activities = [], authorizedUsers = [], ownerProfiles = {}, cu
       </div>
     </div>
 
-    <div className="panel role-panel-summary">
+    {/* <div className="panel role-panel-summary">
       <h3>HR scope</h3>
       <p>HR manages people and work operations. Commercial approvals, pricing, sales ownership and financial records remain outside the HR role.</p>
-    </div>
+    </div> */}
   </>;
 }
 
