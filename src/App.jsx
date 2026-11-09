@@ -4383,6 +4383,24 @@ function App() {
       prev.filter((activity) => activity.id !== id)
     );
   }
+  async function deleteRequisitions(id) {
+    const confirmed = window.confirm(
+      'Are you sure you want to delete this request?'
+    );
+    if (!confirmed) return;
+    const { error } = await supabase
+      .from('requisitions')
+      .delete()
+      .eq('id', id);
+    if (error) {
+      console.error('Error deleting request:', error);
+      alert(error.message);
+      return;
+    }
+    setRequisitions((prev) => 
+      prev.filter((requisition) => request.id !== id )
+    );
+  }
   async function addTicket(e) {
     e.preventDefault();
     setTicketError('');
@@ -4712,7 +4730,7 @@ function App() {
             {page === 'Calendar' && <CalendarPage events={calendarEvents} customers={customers} onAdd={addCalendarEvent} onUpdate={updateCalendarEvent} onDelete={deleteCalendarEvent} onRefresh={fetchCalendarEvents} />}
             {page === 'Quotes' && <Quotes quotes={quotes} products={products} deals={deals} dealProducts={dealProducts} customers={customers} quoteItems={quoteItems} onLoadQuoteItems={loadQuoteItems} onAdd={addQuote} onUpdate={updateQuote} onDelete={deleteQuote} formatAmount={formatAmount} currentUserId={session.user.id} isAdmin={isAdminRole(authorizationProfile?.role)} role={authorizationProfile?.role} onSendToHOS={sendQuoteToHOS} initialDealId={commercialLaunch?.type === 'quote' ? commercialLaunch.dealId : ''} dealFilterId={commercialView?.type === 'quotes' ? commercialView.dealId : ''} onLaunchConsumed={() => setCommercialLaunch(null)} onCreateInvoice={launchInvoiceFromQuote} />}
             {page === 'Invoices' && <Invoices invoices={invoices} payments={payments} customers={customers} products={products} deals={deals} dealProducts={dealProducts} quotes={quotes} onAdd={addInvoice} onUpdate={updateInvoice} onDelete={deleteInvoice} onAddPayment={addPayment} formatAmount={formatAmount} currentUserId={session.user.id} isAdmin={isAdminRole(authorizationProfile?.role)} role={authorizationProfile?.role} onSendToHOS={sendInvoiceToHOS} onLoadInvoiceItems={loadInvoiceItems} onLoadQuoteItems={loadQuoteItems} initialDealId={commercialLaunch?.type === 'invoice' ? commercialLaunch.dealId : ''} initialQuoteId={commercialLaunch?.type === 'invoice' ? commercialLaunch.quoteId : ''} dealFilterId={commercialView?.type === 'invoices' ? commercialView.dealId : ''} onLaunchConsumed={() => setCommercialLaunch(null)} />}
-            {page === 'Requisition' && <Requisition requisitions={requisitions} error={requisitionError} currentUserId={session.user.id} role={authorizationProfile?.role} employeeName={displayUserName} employeeEmail={session.user.email} onSubmit={submitRequisition} />}
+            {page === 'Requisition' && <Requisition requisitions={requisitions} error={requisitionError} currentUserId={session.user.id} role={authorizationProfile?.role} employeeName={displayUserName} employeeEmail={session.user.email} onDelete={deleteRequisitions} onSubmit={submitRequisition} />}
             {page === 'Documents' && <Documents documents={documents} customers={customers} onUpload={uploadDocument} onDownload={downloadDocument} onDelete={deleteDocument} crmDocuments={crmDocuments} crmDocumentError={crmDocumentError} onSaveDoc={saveCrmDocument} onDeleteDoc={deleteCrmDocument} />}
             {page === 'Automation' && <Automation workflows={workflows} onAdd={addWorkflow} onUpdate={updateWorkflow} />}
             {page === 'Segments' && <Segments segments={segments} customers={customers} onAdd={addSegment} onUpdate={updateSegment} />}
@@ -5909,7 +5927,7 @@ const formatRequisitionDate = value => value
   : '—';
 const requisitionStatusClass = status => `requisition-status ${String(status || 'Pending').toLowerCase()}`;
 
-function Requisition({ requisitions, error, currentUserId, role, employeeName, employeeEmail, onDelete, onSubmit }) {
+function Requisition({ requisitions, error, currentUserId, role, employeeName, employeeEmail, deleteRequisitions, onSubmit }) {
   const canSeeAll = ['manager', 'admin'].includes(role);
   const [view, setView] = useState('dashboard'); // 'dashboard' | 'all' | 'new'
   const [scope, setScope] = useState('mine'); // managers and admins can switch to everyone's requests
@@ -6080,7 +6098,7 @@ function Requisition({ requisitions, error, currentUserId, role, employeeName, e
             <td>{request.employee_name}</td>
             <td>{request.request_type}</td>
             <td><span className={requisitionStatusClass(request.status)}>{request.status}</span></td>
-            <td><button className="icon-btn" onClick={() => onDelete(d)}><X size={16} /></button></td>
+            <td><button className="icon-btn" onClick={deleteRequisitions}><X size={16} /></button></td>
           </tr>)}
           </tbody>
         </table></div>}
