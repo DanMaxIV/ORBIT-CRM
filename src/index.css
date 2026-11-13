@@ -14708,3 +14708,22 @@ select {
   .doc-page, .doc-page * { visibility: visible; }
   .doc-page { position: absolute; top: 0; left: 0; width: 100%; box-shadow: none; padding: 0.5in; }
 }
+.doc-find-bar { display: flex; gap: 8px; align-items: center; padding: 8px 16px; border-bottom: 1px solid rgba(0,0,0,.08); flex-wrap: wrap; }
+.doc-find-bar input { min-width: 140px; padding: 6px 10px; border-radius: 8px; border: 1px solid rgba(0,0,0,.18); }
+.doc-tiptap .tiptap { outline: none; min-height: 60vh; }
+.doc-tiptap .tiptap p.is-editor-empty:first-child::before { content: attr(data-placeholder); color: #9aa0a6; float: left; height: 0; pointer-events: none; }
+.doc-tiptap table { border-collapse: collapse; width: 100%; margin: 12px 0; }
+.doc-tiptap th, .doc-tiptap td { border: 1px solid #d0d3d8; padding: 6px 10px; min-width: 80px; }
+.doc-tiptap th { background: rgba(0,0,0,.05); text-align: left; }
+.doc-tiptap .selectedCell { background: rgba(115, 87, 240, .12); }
+.doc-tiptap img { max-width: 100%; height: auto; }
+.doc-color-btn { color: inherit; }
+.doc-color-btn svg { pointer-events: none; }
+.ocr-pick-row { display: flex; gap: 10px; flex-wrap: wrap; margin-bottom: 14px; }
+.ocr-work-area { display: flex; gap: 14px; align-items: flex-start; }
+.ocr-preview { flex: 1; border: 1px solid rgba(0,0,0,.12); border-radius: 8px; overflow: hidden; max-height: 240px; }
+.ocr-preview img { display: block; width: 100%; max-height: 240px; object-fit: contain; }
+.ocr-side { flex: 1; display: flex; flex-direction: column; gap: 10px; }
+.ocr-progress { height: 8px; border-radius: 999px; background: rgba(0,0,0,.1); overflow: hidden; }
+.ocr-progress span { display: block; height: 100%; background: #7357f0; transition: width .3s; }
+.ocr-work-area + label { margin-top: 14px; }
