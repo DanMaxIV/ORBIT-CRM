@@ -1,3 +1,4 @@
+
 import { createContext, useContext, useEffect, useMemo, useState, useRef } from 'react';
 import { supabase } from './lib/supabase';
 import { Capacitor } from '@capacitor/core';
@@ -11,7 +12,29 @@ import timeGridPlugin from '@fullcalendar/react/timegrid';
 import listPlugin from '@fullcalendar/react/list';
 import interactionPlugin from '@fullcalendar/react/interaction';
 import '@fullcalendar/react/skeleton.css';
-import { LayoutDashboard, Users, Kanban, CalendarCheck, BarChart3, Settings, Bell, Search, Plus, ArrowUpRight, MoreHorizontal, Menu, X, UserRound, Pencil, Receipt, LogOut, UserCog, MessageCircle, UserPlus, Mail, CalendarDays, FileText, Workflow, TrendingUp, Tags, DollarSign, CreditCard, Upload, Download, Play, Target, CheckCircle2, ArrowLeft, ChevronRight, Building2, RefreshCw, GripVertical, MapPin, ClipboardList } from 'lucide-react';
+import {
+  LayoutDashboard, Users, Kanban, CalendarCheck, BarChart3, Settings, Bell, Search, Plus, ArrowUpRight, MoreHorizontal, Menu, X, UserRound, Pencil, Receipt, LogOut, UserCog, MessageCircle, UserPlus, Mail,
+  CalendarDays, FileText, Workflow, TrendingUp, Tags, DollarSign, CreditCard, Upload,
+  Download, Play, Target, CheckCircle2, ArrowLeft, ChevronRight, Building2, RefreshCw, GripVertical,
+  MapPin, ClipboardList, ScanText, Camera, ImageUp, Copy, Highlighter, ImagePlus, Undo2, Redo2, AlignLeft, AlignCenter, AlignRight, AlignJustify, List,
+  ListOrdered, IndentIncrease, IndentDecrease, Link2, RemoveFormatting,
+  Grid3x3, TableCellsMerge, TableCellsSplit, Trash2, Bold, Italic, Underline, Strikethrough, Type, Minus, Bot
+} from 'lucide-react';
+import { useEditor, EditorContent } from '@tiptap/react';
+import { StarterKit } from '@tiptap/starter-kit';
+import { TextStyleKit } from '@tiptap/extension-text-style';
+import { Highlight } from '@tiptap/extension-highlight';
+import { TextAlign } from '@tiptap/extension-text-align';
+import { Image as TiptapImage } from '@tiptap/extension-image';
+import { TableKit } from '@tiptap/extension-table';
+import { Placeholder, CharacterCount } from '@tiptap/extensions';
+import FindAndReplace from '@tiptap/extension-find-and-replace';
+import { asBlob as htmlToDocxBlob } from 'html-docx-js-typescript';
+import Tesseract from 'tesseract.js';
+
+
+
+
 
 
 const IS_NATIVE = Capacitor.isNativePlatform();
@@ -1033,9 +1056,10 @@ function CustomerPortalHome({ user, account, onSignOut }) {
 const navSections = [
   { title: 'Overview', items: [['Dashboard', LayoutDashboard], ['Reports', BarChart3]] },
   { title: 'Customers & Sales', items: [['Customers', Users], ['Leads', UserPlus], ['Pipeline', Kanban], ['Products', FileText], ['Quotes', FileText], ['Invoices', CreditCard], ['Forecast', TrendingUp]] },
-  { title: 'Work & Support', items: [['Activities', CalendarCheck], ['Field Visits', MapPin], ['Calendar', CalendarDays], ['Technical Support', UserCog], ['Tickets', Receipt], ['Documents', FileText], ['Requisition', ClipboardList]] },
+  { title: 'Work & Support', items: [['Activities', CalendarCheck], ['Field Visits', MapPin], ['Calendar', CalendarDays], ['Technical Support', UserCog],
+     ['Tickets', Receipt], ['Documents', FileText], ['Requisition', ClipboardList], ['Storhet AI', Bot]]},
   { title: 'Communication', items: [['Email', Mail], ['Chat', MessageCircle]] },
-  { title: 'Automation & Insights', items: [['Automation', Workflow], ['Segments', Tags]] },
+  { title: 'Automation & Insights', items: [['Automation', Workflow], ['Segments', Tags]]},
   { title: 'System', items: [['Settings', Settings]] }
 ];
 
@@ -9134,12 +9158,118 @@ function Invoices({ invoices, payments, customers, products, deals = [], dealPro
 const DOC_FONTS = ['Calibri, Arial, sans-serif', 'Georgia, serif', '"Times New Roman", serif', '"Courier New", monospace', 'Verdana, sans-serif'];
 const DOC_FONT_LABELS = { 'Calibri, Arial, sans-serif': 'Calibri', 'Georgia, serif': 'Georgia', '"Times New Roman", serif': 'Times New Roman', '"Courier New", monospace': 'Courier New', 'Verdana, sans-serif': 'Verdana' };
 
+// ── OCR: image → text (Tesseract.js, runs in the browser) ──────────────────
+// Escapes OCR'd text and turns it into clean paragraphs for the editor.
+function ocrTextToHtml(raw) {
+  const escape = s => s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+  return escape(String(raw || '').trim())
+    .split(/\n{2,}/)
+    .filter(Boolean)
+    .map(p => `<p>${p.replace(/\n/g, '<br>')}</p>`)
+    .join('');
+}
+
+function OcrModal({ onInsert, onClose }) {
+  const [image, setImage] = useState(null); // { file, previewUrl }
+  const [running, setRunning] = useState(false);
+  const [progress, setProgress] = useState(0);
+  const [text, setText] = useState('');
+  const [error, setError] = useState('');
+
+  useEffect(() => () => { if (image?.previewUrl) URL.revokeObjectURL(image.previewUrl); }, [image?.previewUrl]);
+
+  const pickFile = event => {
+    const file = event.target.files?.[0];
+    event.target.value = '';
+    if (!file || !file.type.startsWith('image/')) return;
+    setError(''); setText('');
+    setImage(prev => {
+      if (prev?.previewUrl) URL.revokeObjectURL(prev.previewUrl);
+      return { file, previewUrl: URL.createObjectURL(file) };
+    });
+  };
+
+  async function run() {
+    if (!image || running) return;
+    setRunning(true); setError(''); setProgress(0);
+    try {
+      const result = await Tesseract.recognize(image.file, 'eng', {
+        logger: m => { if (m.status === 'recognizing text') setProgress(m.progress); }
+      });
+      setText(result.data.text.trim());
+      if (!result.data.text.trim()) setError('No readable text was found in this image.');
+    } catch (e) {
+      setError(e.message || 'The image could not be processed. Try a sharper photo.');
+    } finally {
+      setRunning(false);
+    }
+  }
+
+  const copy = async () => {
+    try { await navigator.clipboard.writeText(text); }
+    catch { window.prompt('Copy the extracted text:', text); }
+  };
+
+  return (
+    <div className="modal-backdrop" onClick={() => !running && onClose()}>
+      <div className="modal modal-wide" onClick={e => e.stopPropagation()}>
+        <div className="modal-heading">
+          <div><h2>Image to text (OCR)</h2><p>Take a photo or pick an image — readable text is extracted right here, no upload to any server.</p></div>
+          <button type="button" className="icon-btn" onClick={() => !running && onClose()} aria-label="Close"><X size={18} /></button>
+        </div>
+        {error && <div className="form-error">{error}</div>}
+
+        <div className="ocr-pick-row">
+          <label className="secondary-btn" style={{ display: 'inline-flex', alignItems: 'center', gap: 6, cursor: 'pointer' }}>
+            <Upload size={15} /> Choose image
+            <input type="file" accept="image/*" hidden onChange={pickFile} />
+          </label>
+          <label className="secondary-btn" style={{ display: 'inline-flex', alignItems: 'center', gap: 6, cursor: 'pointer' }}>
+            <MapPin size={15} /> Take photo
+            <input type="file" accept="image/*" capture="environment" hidden onChange={pickFile} />
+          </label>
+          {image && <small style={{ alignSelf: 'center' }}>{image.file.name}</small>}
+        </div>
+
+        {image && (
+          <div className="ocr-work-area">
+            <div className="ocr-preview"><img src={image.previewUrl} alt="Selected for OCR" /></div>
+            <div className="ocr-side">
+              <button type="button" className="primary-btn" onClick={run} disabled={running}>
+                {running ? `Reading… ${Math.round(progress * 100)}%` : 'Extract text'}
+              </button>
+              {running && (
+                <div className="ocr-progress" role="progressbar" aria-label="OCR progress">
+                  <span style={{ width: `${progress * 100}%` }} />
+                </div>
+              )}
+              {!running && <small>First scan on this device downloads the English model once (~2 MB); after that it works offline.</small>}
+            </div>
+          </div>
+        )}
+
+        {text && (
+          <>
+            <label>Extracted text (edit before using)
+              <textarea rows="8" value={text} onChange={e => setText(e.target.value)} />
+            </label>
+            <div className="modal-actions">
+              <button type="button" className="secondary-btn" onClick={copy}>Copy</button>
+              <button type="button" className="primary-btn" onClick={() => { onInsert(text); onClose(); }}>Insert</button>
+            </div>
+          </>
+        )}
+      </div>
+    </div>
+  );
+}
+
+
 function DocToolbarButton({ active, onClick, title, children }) {
   return <button type="button" className={`doc-tb-btn${active ? ' active' : ''}`} title={title} onMouseDown={e => e.preventDefault()} onClick={onClick}>{children}</button>;
 }
 
 function DocEditor({ doc, customers, onSave, onClose }) {
-  const editorRef = useRef(null);
   const saveTimer = useRef(null);
   const [docId, setDocId] = useState(doc?.id || null);
   const [title, setTitle] = useState(doc?.title || 'Untitled document');
@@ -9148,50 +9278,87 @@ function DocEditor({ doc, customers, onSave, onClose }) {
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
   const [lastSaved, setLastSaved] = useState(doc?.updated_at ? new Date(doc.updated_at) : null);
-  const [formats, setFormats] = useState({});
+  const [stats, setStats] = useState({ words: 0, chars: 0 });
+  const [findOpen, setFindOpen] = useState(false);
+  const [showOcr, setShowOcr] = useState(false);
+  const [findTerm, setFindTerm] = useState('');
+  const [replaceTerm, setReplaceTerm] = useState('');
 
-  // Uncontrolled on purpose: a controlled contentEditable fights the
-  // browser's own cursor position on every keystroke. Content is read
-  // imperatively (editorRef.current.innerHTML) only when saving.
-  useEffect(() => {
-    if (editorRef.current) editorRef.current.innerHTML = doc?.content || '';
-  }, []);
+  const editor = useEditor({
+    extensions: [
+      StarterKit.configure({
+        heading: { levels: [1, 2, 3] },
+        link: { openOnClick: false, autolink: true }
+      }),
+      TextStyleKit,
+      Highlight.configure({ multicolor: true }),
+      TextAlign.configure({ types: ['heading', 'paragraph'] }),
+      TiptapImage.configure({ inline: false, allowBase64: true }),
+      TableKit.configure({ table: { resizable: true } }),
+      Placeholder.configure({ placeholder: 'Start writing your document…' }),
+      CharacterCount,
+      FindAndReplace
+    ],
+    content: doc?.content || '',
+    // Paste or drop an image straight into the document.
+    editorProps: {
+      handlePaste: (view, event) => {
+        const file = Array.from(event.clipboardData?.files || [])[0];
+        if (file && file.type.startsWith('image/')) {
+          event.preventDefault();
+          const reader = new FileReader();
+          reader.onload = () => editor?.chain().focus().setImage({ src: reader.result }).run();
+          reader.readAsDataURL(file);
+          return true;
+        }
+        return false;
+      },
+      handleDrop: (view, event, _slice, moved) => {
+        if (moved) return false;
+        const file = Array.from(event.dataTransfer?.files || [])[0];
+        if (file && file.type.startsWith('image/')) {
+          event.preventDefault();
+          const reader = new FileReader();
+          reader.onload = () => editor?.chain().focus().setImage({ src: reader.result }).run();
+          reader.readAsDataURL(file);
+          return true;
+        }
+        return false;
+      }
+    },
+    onUpdate: ({ editor: e }) => {
+      setDirty(true);
+      setStats({ words: e.storage.characterCount.words(), chars: e.storage.characterCount.characters() });
+    },
+    onCreate: ({ editor: e }) => setStats({ words: e.storage.characterCount.words(), chars: e.storage.characterCount.characters() })
+  });
 
-  function refreshActiveFormats() {
-    try {
-      setFormats({
-        bold: document.queryCommandState('bold'),
-        italic: document.queryCommandState('italic'),
-        underline: document.queryCommandState('underline'),
-        strike: document.queryCommandState('strikeThrough'),
-        ul: document.queryCommandState('insertUnorderedList'),
-        ol: document.queryCommandState('insertOrderedList'),
-        left: document.queryCommandState('justifyLeft'),
-        center: document.queryCommandState('justifyCenter'),
-        right: document.queryCommandState('justifyRight'),
-        full: document.queryCommandState('justifyFull')
-      });
-    } catch { /* queryCommandState can throw on some browsers; ignore */ }
-  }
+  const exec = (command, value = null) => editor?.chain().focus()[command](value).run();
+  const insertLink = () => {
+    const previous = editor?.getAttributes('link').href || '';
+    const url = window.prompt('Link URL (leave empty to remove)', previous);
+    if (url === null) return;
+    if (url) exec('extendMarkRange', 'link').toggleLink({ href: url });
+    else exec('unsetLink');
+  };
+  const insertImageFromFile = file => {
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = () => editor?.chain().focus().setImage({ src: reader.result }).run();
+    reader.readAsDataURL(file);
+  };
+  const insertOcrText = rawText => {
+    const html = ocrTextToHtml(rawText);
+    if (html) editor?.chain().focus().insertContent(html).run();
+    setShowOcr(false);
+  };
 
-  function exec(command, value = null) {
-    editorRef.current?.focus();
-    try { document.execCommand(command, false, value); } catch { /* unsupported command; ignore */ }
-    setDirty(true);
-    refreshActiveFormats();
-  }
-
-  function insertLink() {
-    const url = window.prompt('Link URL');
-    if (!url) return;
-    exec('createLink', url);
-  }
 
   async function save(silent = false) {
     if (!silent) setSaving(true);
     setError('');
     try {
-      const html = editorRef.current?.innerHTML ?? '';
+      const html = editor?.getHTML() ?? '';
       const saved = await onSave({ id: docId, title, content: html, customer_id: customerId || null });
       if (!docId) setDocId(saved.id);
       setDirty(false);
@@ -9203,24 +9370,44 @@ function DocEditor({ doc, customers, onSave, onClose }) {
     }
   }
 
-  // Autosave: a few seconds after the person stops typing.
+  // Autosave 2.5s after typing stops (same behaviour as the old editor).
   useEffect(() => {
     if (!dirty) return;
     if (saveTimer.current) clearTimeout(saveTimer.current);
     saveTimer.current = setTimeout(() => save(true), 2500);
     return () => clearTimeout(saveTimer.current);
-  }, [dirty]);
+  }, [dirty, title, customerId]);
 
-  // Keep toolbar buttons (Bold, Align, etc.) in sync with wherever the cursor actually is.
-  useEffect(() => {
-    document.addEventListener('selectionchange', refreshActiveFormats);
-    return () => document.removeEventListener('selectionchange', refreshActiveFormats);
-  }, []);
+  async function downloadDocx() {
+    try {
+      const body = editor?.getHTML() ?? '';
+      const html = `<html><head><meta charset="utf-8"></head><body style="font-family:Calibri, Arial, sans-serif">${body}</body></html>`;
+      const blob = await htmlToDocxBlob(html);
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement('a');
+      link.href = url;
+      link.download = `${title.replace(/[^\w\s.-]+/g, '').trim() || 'document'}.docx`;
+      link.click();
+      URL.revokeObjectURL(url);
+    } catch (e) {
+      alert(`Could not export to Word: ${e.message}`);
+    }
+  }
 
   function closeEditor() {
     if (dirty) { save(false).then(onClose); return; }
     onClose();
   }
+
+  if (!editor) return null;
+  const active = {
+    bold: editor.isActive('bold'), italic: editor.isActive('italic'),
+    underline: editor.isActive('underline'), strike: editor.isActive('strike'),
+    link: editor.isActive('link'),
+    ul: editor.isActive('bulletList'), ol: editor.isActive('orderedList'),
+    left: editor.isActive({ textAlign: 'left' }), center: editor.isActive({ textAlign: 'center' }),
+    right: editor.isActive({ textAlign: 'right' }), full: editor.isActive({ textAlign: 'justify' })
+  };
 
   return (
     <div className="doc-editor">
@@ -9232,78 +9419,265 @@ function DocEditor({ doc, customers, onSave, onClose }) {
           {customers.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
         </select>
         <span className="doc-save-status">{saving ? 'Saving…' : dirty ? 'Unsaved changes' : lastSaved ? `Saved ${lastSaved.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}` : ''}</span>
+        <span className="doc-save-status" title={`${stats.chars} characters`}>{stats.words} words</span>
+        <button type="button" className="secondary-btn" onClick={downloadDocx}><Download size={15} /> Download .docx</button>
         <button type="button" className="secondary-btn" onClick={() => window.print()}><FileText size={15} /> Print / Save PDF</button>
         <button type="button" className="primary-btn" onClick={() => save(false)} disabled={saving}>
-          {saving && <span className="btn-spinner" aria-hidden="true" />}{saving ? 'Saving...' : 'Save'}
+          {saving ? 'Saving...' : 'Save'}
         </button>
       </div>
       {error && <div className="form-error doc-editor-error">{error}</div>}
 
       <div className="doc-ribbon">
-        <select className="doc-ribbon-select" onChange={e => exec('formatBlock', e.target.value)} defaultValue="P" title="Style">
+        <select className="doc-ribbon-select" onChange={e => {
+          const value = e.target.value;
+          e.target.value = value; // keep the dropdown position for repeated use
+          if (value.startsWith('H')) exec('toggleHeading', { level: Number(value[1]) });
+          else if (value === 'CODE') exec('toggleCodeBlock');
+          else if (value === 'QUOTE') exec('toggleBlockquote');
+          else exec('setParagraph');
+        }} defaultValue="P" title="Style">
           <option value="P">Normal text</option>
           <option value="H1">Heading 1</option>
           <option value="H2">Heading 2</option>
           <option value="H3">Heading 3</option>
+          <option value="QUOTE">Quote</option>
+          <option value="CODE">Code block</option>
         </select>
-        <select className="doc-ribbon-select doc-ribbon-font" onChange={e => exec('fontName', e.target.value)} defaultValue={DOC_FONTS[0]} title="Font">
+        <select className="doc-ribbon-select doc-ribbon-font" onChange={e => exec('setFontFamily', e.target.value)} defaultValue={DOC_FONTS[0]} title="Font">
           {DOC_FONTS.map(f => <option key={f} value={f}>{DOC_FONT_LABELS[f]}</option>)}
         </select>
-        <select className="doc-ribbon-select doc-ribbon-size" onChange={e => exec('fontSize', e.target.value)} defaultValue="3" title="Size">
-          <option value="2">Small</option>
-          <option value="3">Normal</option>
-          <option value="5">Large</option>
-          <option value="7">Huge</option>
+        <select className="doc-ribbon-select doc-ribbon-size" onChange={e => exec('setFontSize', e.target.value)} defaultValue="16px" title="Size">
+          {['10px', '12px', '14px', '16px', '18px', '24px', '32px'].map(size => <option key={size} value={size}>{size.replace('px', '')}</option>)}
         </select>
         <span className="doc-ribbon-divider" />
-        <DocToolbarButton active={formats.bold} onClick={() => exec('bold')} title="Bold"><b>B</b></DocToolbarButton>
-        <DocToolbarButton active={formats.italic} onClick={() => exec('italic')} title="Italic"><i>I</i></DocToolbarButton>
-        <DocToolbarButton active={formats.underline} onClick={() => exec('underline')} title="Underline"><u>U</u></DocToolbarButton>
-        <DocToolbarButton active={formats.strike} onClick={() => exec('strikeThrough')} title="Strikethrough"><s>S</s></DocToolbarButton>
-        <label className="doc-color-btn" title="Text color">A<input type="color" onChange={e => exec('foreColor', e.target.value)} /></label>
-        <label className="doc-color-btn doc-color-highlight" title="Highlight">🖊<input type="color" defaultValue="#fff59d" onChange={e => exec('hiliteColor', e.target.value)} /></label>
+        <DocToolbarButton active={active.bold} onClick={() => exec('toggleBold')} title="Bold"><Bold size={15} /></DocToolbarButton>
+        <DocToolbarButton active={active.italic} onClick={() => exec('toggleItalic')} title="Italic"><Italic size={15} /></DocToolbarButton>
+        <DocToolbarButton active={active.underline} onClick={() => exec('toggleUnderline')} title="Underline"><Underline size={15} /></DocToolbarButton>
+        <DocToolbarButton active={active.strike} onClick={() => exec('toggleStrike')} title="Strikethrough"><Strikethrough size={15} /></DocToolbarButton>
+        <label className="doc-color-btn" title="Text color"><Type size={15} /><input type="color" onChange={e => exec('setColor', e.target.value)} /></label>
+        <label className="doc-color-btn doc-color-highlight" title="Highlight"><Highlighter size={15} /><input type="color" defaultValue="#fff59d" onChange={e => exec('toggleHighlight', { color: e.target.value })} /></label>
+        <DocToolbarButton active={active.link} onClick={insertLink} title="Insert link"><Link2 size={15} /></DocToolbarButton>
+        <DocToolbarButton onClick={() => exec('unsetAllMarks')} title="Clear formatting"><RemoveFormatting size={15} /></DocToolbarButton>
         <span className="doc-ribbon-divider" />
-        <DocToolbarButton active={formats.left} onClick={() => exec('justifyLeft')} title="Align left">⟸</DocToolbarButton>
-        <DocToolbarButton active={formats.center} onClick={() => exec('justifyCenter')} title="Align center">⟺</DocToolbarButton>
-        <DocToolbarButton active={formats.right} onClick={() => exec('justifyRight')} title="Align right">⟹</DocToolbarButton>
-        <DocToolbarButton active={formats.full} onClick={() => exec('justifyFull')} title="Justify">☰</DocToolbarButton>
+        <DocToolbarButton active={active.left} onClick={() => exec('setTextAlign', 'left')} title="Align left"><AlignLeft size={15} /></DocToolbarButton>
+        <DocToolbarButton active={active.center} onClick={() => exec('setTextAlign', 'center')} title="Align center"><AlignCenter size={15} /></DocToolbarButton>
+        <DocToolbarButton active={active.right} onClick={() => exec('setTextAlign', 'right')} title="Align right"><AlignRight size={15} /></DocToolbarButton>
+        <DocToolbarButton active={active.full} onClick={() => exec('setTextAlign', 'justify')} title="Justify"><AlignJustify size={15} /></DocToolbarButton>
         <span className="doc-ribbon-divider" />
-        <DocToolbarButton active={formats.ul} onClick={() => exec('insertUnorderedList')} title="Bulleted list">• ≡</DocToolbarButton>
-        <DocToolbarButton active={formats.ol} onClick={() => exec('insertOrderedList')} title="Numbered list">1. ≡</DocToolbarButton>
-        <DocToolbarButton onClick={() => exec('outdent')} title="Decrease indent">⇤</DocToolbarButton>
-        <DocToolbarButton onClick={() => exec('indent')} title="Increase indent">⇥</DocToolbarButton>
+        <DocToolbarButton active={active.ul} onClick={() => exec('toggleBulletList')} title="Bulleted list"><List size={15} /></DocToolbarButton>
+        <DocToolbarButton active={active.ol} onClick={() => exec('toggleOrderedList')} title="Numbered list"><ListOrdered size={15} /></DocToolbarButton>
+        <DocToolbarButton onClick={() => exec('sinkListItem', 'listItem')} title="Increase indent"><IndentIncrease size={15} /></DocToolbarButton>
+        <DocToolbarButton onClick={() => exec('liftListItem', 'listItem')} title="Decrease indent"><IndentDecrease size={15} /></DocToolbarButton>
         <span className="doc-ribbon-divider" />
-        <DocToolbarButton onClick={insertLink} title="Insert link">🔗</DocToolbarButton>
-        <DocToolbarButton onClick={() => exec('removeFormat')} title="Clear formatting">✕A</DocToolbarButton>
+        <DocToolbarButton onClick={() => exec('insertTable', { rows: 3, cols: 3, withHeaderRow: true })} title="Insert table"><Grid3x3 size={15} /></DocToolbarButton>
+        <DocToolbarButton onClick={() => exec('addRowAfter')} title="Add row"><Plus size={15} /></DocToolbarButton>
+        <DocToolbarButton onClick={() => exec('addColumnAfter')} title="Add column"><Plus size={15} /></DocToolbarButton>
+        <DocToolbarButton onClick={() => exec('deleteRow')} title="Delete row"><Minus size={15} /></DocToolbarButton>
+        <DocToolbarButton onClick={() => exec('deleteColumn')} title="Delete column"><Minus size={15} /></DocToolbarButton>
+        <DocToolbarButton onClick={() => exec('mergeOrSplit')} title="Merge / split cells"><TableCellsMerge size={15} /></DocToolbarButton>
+        <DocToolbarButton onClick={() => exec('deleteTable')} title="Delete table"><Trash2 size={15} /></DocToolbarButton>
         <span className="doc-ribbon-divider" />
-        <DocToolbarButton onClick={() => exec('undo')} title="Undo">↶</DocToolbarButton>
-        <DocToolbarButton onClick={() => exec('redo')} title="Redo">↷</DocToolbarButton>
+        <label className="secondary-btn" style={{ display: 'inline-flex', alignItems: 'center', gap: 4, cursor: 'pointer' }} title="Insert image"><ImagePlus size={15} /><input type="file" accept="image/*" hidden onChange={e => { insertImageFromFile(e.target.files?.[0]); e.target.value = ''; }} /></label>
+        <DocToolbarButton onClick={() => setShowOcr(true)} title="Image to text (OCR)"><ScanText size={15} /></DocToolbarButton>
+        <DocToolbarButton onClick={() => setFindOpen(v => !v)} title="Find & replace"><Search size={15} /></DocToolbarButton>
+        <span className="doc-ribbon-divider" />
+        <DocToolbarButton onClick={() => exec('undo')} title="Undo"><Undo2 size={15} /></DocToolbarButton>
+        <DocToolbarButton onClick={() => exec('redo')} title="Redo"><Redo2 size={15} /></DocToolbarButton>
+
       </div>
 
+      {findOpen && (
+        <div className="doc-find-bar">
+          <input placeholder="Find" value={findTerm} onChange={e => { setFindTerm(e.target.value); editor.commands.setSearchTerm(e.target.value); }} />
+          <input placeholder="Replace with" value={replaceTerm} onChange={e => { setReplaceTerm(e.target.value); editor.commands.setReplaceTerm(e.target.value); }} />
+          <button type="button" className="secondary-btn" onClick={() => editor.commands.prev()}>Prev</button>
+          <button type="button" className="secondary-btn" onClick={() => editor.commands.next()}>Next</button>
+          <button type="button" className="secondary-btn" onClick={() => editor.commands.replace()}>Replace</button>
+          <button type="button" className="secondary-btn" onClick={() => editor.commands.replaceAll()}>Replace all</button>
+          <button type="button" className="icon-btn" title="Close find & replace" onClick={() => { setFindOpen(false); editor.commands.setSearchTerm(''); }}><X size={16} /></button>
+        </div>
+      )}
+      {showOcr && <OcrModal onInsert={insertOcrText} onClose={() => setShowOcr(false)} />}
+
+
       <div className="doc-canvas">
-        <div
-          ref={editorRef}
-          className="doc-page"
-          contentEditable
-          suppressContentEditableWarning
-          onInput={() => setDirty(true)}
-          onKeyUp={refreshActiveFormats}
-          onMouseUp={refreshActiveFormats}
-        />
+        <EditorContent editor={editor} className="doc-page doc-tiptap" />
       </div>
     </div>
   );
 }
 
+
+// function DocEditor({ doc, customers, onSave, onClose }) {
+//   const editorRef = useRef(null);
+//   const saveTimer = useRef(null);
+//   const [docId, setDocId] = useState(doc?.id || null);
+//   const [title, setTitle] = useState(doc?.title || 'Untitled document');
+//   const [customerId, setCustomerId] = useState(doc?.customer_id || '');
+//   const [dirty, setDirty] = useState(false);
+//   const [saving, setSaving] = useState(false);
+//   const [error, setError] = useState('');
+//   const [lastSaved, setLastSaved] = useState(doc?.updated_at ? new Date(doc.updated_at) : null);
+//   const [formats, setFormats] = useState({});
+
+//   // Uncontrolled on purpose: a controlled contentEditable fights the
+//   // browser's own cursor position on every keystroke. Content is read
+//   // imperatively (editorRef.current.innerHTML) only when saving.
+//   useEffect(() => {
+//     if (editorRef.current) editorRef.current.innerHTML = doc?.content || '';
+//   }, []);
+
+//   function refreshActiveFormats() {
+//     try {
+//       setFormats({
+//         bold: document.queryCommandState('bold'),
+//         italic: document.queryCommandState('italic'),
+//         underline: document.queryCommandState('underline'),
+//         strike: document.queryCommandState('strikeThrough'),
+//         ul: document.queryCommandState('insertUnorderedList'),
+//         ol: document.queryCommandState('insertOrderedList'),
+//         left: document.queryCommandState('justifyLeft'),
+//         center: document.queryCommandState('justifyCenter'),
+//         right: document.queryCommandState('justifyRight'),
+//         full: document.queryCommandState('justifyFull')
+//       });
+//     } catch { /* queryCommandState can throw on some browsers; ignore */ }
+//   }
+
+//   function exec(command, value = null) {
+//     editorRef.current?.focus();
+//     try { document.execCommand(command, false, value); } catch { /* unsupported command; ignore */ }
+//     setDirty(true);
+//     refreshActiveFormats();
+//   }
+
+//   function insertLink() {
+//     const url = window.prompt('Link URL');
+//     if (!url) return;
+//     exec('createLink', url);
+//   }
+
+//   async function save(silent = false) {
+//     if (!silent) setSaving(true);
+//     setError('');
+//     try {
+//       const html = editorRef.current?.innerHTML ?? '';
+//       const saved = await onSave({ id: docId, title, content: html, customer_id: customerId || null });
+//       if (!docId) setDocId(saved.id);
+//       setDirty(false);
+//       setLastSaved(new Date());
+//     } catch (e) {
+//       setError(e.message || 'Could not save this document.');
+//     } finally {
+//       if (!silent) setSaving(false);
+//     }
+//   }
+
+//   // Autosave: a few seconds after the person stops typing.
+//   useEffect(() => {
+//     if (!dirty) return;
+//     if (saveTimer.current) clearTimeout(saveTimer.current);
+//     saveTimer.current = setTimeout(() => save(true), 2500);
+//     return () => clearTimeout(saveTimer.current);
+//   }, [dirty]);
+
+//   // Keep toolbar buttons (Bold, Align, etc.) in sync with wherever the cursor actually is.
+//   useEffect(() => {
+//     document.addEventListener('selectionchange', refreshActiveFormats);
+//     return () => document.removeEventListener('selectionchange', refreshActiveFormats);
+//   }, []);
+
+//   function closeEditor() {
+//     if (dirty) { save(false).then(onClose); return; }
+//     onClose();
+//   }
+
+//   return (
+//     <div className="doc-editor">
+//       <div className="doc-editor-topbar">
+//         <button type="button" className="secondary-btn" onClick={closeEditor}><ArrowLeft size={15} /> Back to Docs</button>
+//         <input className="doc-title-input" value={title} onChange={e => { setTitle(e.target.value); setDirty(true); }} placeholder="Untitled document" />
+//         <select className="doc-customer-select" value={customerId} onChange={e => { setCustomerId(e.target.value); setDirty(true); }}>
+//           <option value="">No customer link</option>
+//           {customers.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
+//         </select>
+//         <span className="doc-save-status">{saving ? 'Saving…' : dirty ? 'Unsaved changes' : lastSaved ? `Saved ${lastSaved.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}` : ''}</span>
+//         <button type="button" className="secondary-btn" onClick={() => window.print()}><FileText size={15} /> Print / Save PDF</button>
+//         <button type="button" className="primary-btn" onClick={() => save(false)} disabled={saving}>
+//           {saving && <span className="btn-spinner" aria-hidden="true" />}{saving ? 'Saving...' : 'Save'}
+//         </button>
+//       </div>
+//       {error && <div className="form-error doc-editor-error">{error}</div>}
+
+//       <div className="doc-ribbon">
+//         <select className="doc-ribbon-select" onChange={e => exec('formatBlock', e.target.value)} defaultValue="P" title="Style">
+//           <option value="P">Normal text</option>
+//           <option value="H1">Heading 1</option>
+//           <option value="H2">Heading 2</option>
+//           <option value="H3">Heading 3</option>
+//         </select>
+//         <select className="doc-ribbon-select doc-ribbon-font" onChange={e => exec('fontName', e.target.value)} defaultValue={DOC_FONTS[0]} title="Font">
+//           {DOC_FONTS.map(f => <option key={f} value={f}>{DOC_FONT_LABELS[f]}</option>)}
+//         </select>
+//         <select className="doc-ribbon-select doc-ribbon-size" onChange={e => exec('fontSize', e.target.value)} defaultValue="3" title="Size">
+//           <option value="2">Small</option>
+//           <option value="3">Normal</option>
+//           <option value="5">Large</option>
+//           <option value="7">Huge</option>
+//         </select>
+//         <span className="doc-ribbon-divider" />
+//         <DocToolbarButton active={formats.bold} onClick={() => exec('bold')} title="Bold"><b>B</b></DocToolbarButton>
+//         <DocToolbarButton active={formats.italic} onClick={() => exec('italic')} title="Italic"><i>I</i></DocToolbarButton>
+//         <DocToolbarButton active={formats.underline} onClick={() => exec('underline')} title="Underline"><u>U</u></DocToolbarButton>
+//         <DocToolbarButton active={formats.strike} onClick={() => exec('strikeThrough')} title="Strikethrough"><s>S</s></DocToolbarButton>
+//         <label className="doc-color-btn" title="Text color">A<input type="color" onChange={e => exec('foreColor', e.target.value)} /></label>
+//         <label className="doc-color-btn doc-color-highlight" title="Highlight">🖊<input type="color" defaultValue="#fff59d" onChange={e => exec('hiliteColor', e.target.value)} /></label>
+//         <span className="doc-ribbon-divider" />
+//         <DocToolbarButton active={formats.left} onClick={() => exec('justifyLeft')} title="Align left">⟸</DocToolbarButton>
+//         <DocToolbarButton active={formats.center} onClick={() => exec('justifyCenter')} title="Align center">⟺</DocToolbarButton>
+//         <DocToolbarButton active={formats.right} onClick={() => exec('justifyRight')} title="Align right">⟹</DocToolbarButton>
+//         <DocToolbarButton active={formats.full} onClick={() => exec('justifyFull')} title="Justify">☰</DocToolbarButton>
+//         <span className="doc-ribbon-divider" />
+//         <DocToolbarButton active={formats.ul} onClick={() => exec('insertUnorderedList')} title="Bulleted list">• ≡</DocToolbarButton>
+//         <DocToolbarButton active={formats.ol} onClick={() => exec('insertOrderedList')} title="Numbered list">1. ≡</DocToolbarButton>
+//         <DocToolbarButton onClick={() => exec('outdent')} title="Decrease indent">⇤</DocToolbarButton>
+//         <DocToolbarButton onClick={() => exec('indent')} title="Increase indent">⇥</DocToolbarButton>
+//         <span className="doc-ribbon-divider" />
+//         <DocToolbarButton onClick={insertLink} title="Insert link">🔗</DocToolbarButton>
+//         <DocToolbarButton onClick={() => exec('removeFormat')} title="Clear formatting">✕A</DocToolbarButton>
+//         <span className="doc-ribbon-divider" />
+//         <DocToolbarButton onClick={() => exec('undo')} title="Undo">↶</DocToolbarButton>
+//         <DocToolbarButton onClick={() => exec('redo')} title="Redo">↷</DocToolbarButton>
+//       </div>
+
+//       <div className="doc-canvas">
+//         <div
+//           ref={editorRef}
+//           className="doc-page"
+//           contentEditable
+//           suppressContentEditableWarning
+//           onInput={() => setDirty(true)}
+//           onKeyUp={refreshActiveFormats}
+//           onMouseUp={refreshActiveFormats}
+//         />
+//       </div>
+//     </div>
+//   );
+// }
+
 function Documents({ documents, customers, onUpload, onDownload, onDelete, crmDocuments = [], crmDocumentError = '', onSaveDoc, onDeleteDoc }) {
   const [customerId, setCustomerId] = useState('');
   const [tab, setTab] = useState('files');
   const [openDoc, setOpenDoc] = useState(null); // null = list view; {} = new doc; object = existing doc
+  const [showOcr, setShowOcr] = useState(false);
   const upload = e => { const f = e.target.files?.[0]; if (!f) return; onUpload(f, customerId).catch(err => alert(err.message)); e.target.value = '' };
 
   if (openDoc !== null) {
-    return <DocEditor doc={openDoc.id ? openDoc : null} customers={customers} onSave={onSaveDoc} onClose={() => setOpenDoc(null)} />;
+    return <DocEditor key={openDoc?.id || 'new'} doc={openDoc.id ? openDoc : null} customers={customers} onSave={onSaveDoc} onClose={() => setOpenDoc(null)} />;
   }
+
+
 
   return <>
     <PageHeading eyebrow="FILES" title="Documents" description="Store uploaded files, or create and edit documents right here." />
@@ -9312,7 +9686,13 @@ function Documents({ documents, customers, onUpload, onDownload, onDelete, crmDo
       <button type="button" className={`filter-tab ${tab === 'docs' ? 'active' : ''}`} onClick={() => setTab('docs')}>Docs ({crmDocuments.length})</button>
     </div>
 
-    {tab === 'files' && <div className="panel"><div className="toolbar"><select value={customerId} onChange={e => setCustomerId(e.target.value)}><option value="">No customer link</option>{customers.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}</select><label className="secondary-btn" style={{ display: 'inline-flex', alignItems: 'center', gap: 8, cursor: 'pointer' }}><Upload size={15} /> Upload file<input type="file" hidden onChange={upload} /></label></div><div className="table-wrap"><table><thead><tr><th>File</th><th>Customer</th><th>Type</th><th>Size</th><th>Created</th><th>Actions</th></tr></thead><tbody>{documents.length === 0 ? <tr><td colSpan="6">No documents yet.</td></tr> : documents.map(d => <tr key={d.id}><td><strong>{d.name}</strong></td><td>{d.customers?.name || '—'}</td><td>{d.mime_type}</td><td>{Math.max(1, Math.round(Number(d.size_bytes || 0) / 1024))} KB</td><td>{formatDate(d.created_at)}</td><td><div className="toolbar-actions"><button className="secondary-btn" onClick={() => onDownload(d)}><Download size={14} /> Download</button><button className="icon-btn" onClick={() => onDelete(d)}><X size={16} /></button></div></td></tr>)}</tbody></table></div></div>}
+    {tab === 'files' && <div className="panel"><div className="toolbar"><select value={customerId} onChange={e => setCustomerId(e.target.value)}>
+      <option value="">No customer link</option>{customers.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}</select>
+      <label className="secondary-btn" style={{ display: 'inline-flex', alignItems: 'center', gap: 8, cursor: 'pointer' }}>
+        <Upload size={15} /> Upload file<input type="file" hidden onChange={upload} />
+      </label>
+      <button type="button" className="secondary-btn" onClick={() => setShowOcr(true)}><Upload size={15} /> Image to text</button>
+    </div><div className="table-wrap"><table><thead><tr><th>File</th><th>Customer</th><th>Type</th><th>Size</th><th>Created</th><th>Actions</th></tr></thead><tbody>{documents.length === 0 ? <tr><td colSpan="6">No documents yet.</td></tr> : documents.map(d => <tr key={d.id}><td><strong>{d.name}</strong></td><td>{d.customers?.name || '—'}</td><td>{d.mime_type}</td><td>{Math.max(1, Math.round(Number(d.size_bytes || 0) / 1024))} KB</td><td>{formatDate(d.created_at)}</td><td><div className="toolbar-actions"><button className="secondary-btn" onClick={() => onDownload(d)}><Download size={14} /> Download</button><button className="icon-btn" onClick={() => onDelete(d)}><X size={16} /></button></div></td></tr>)}</tbody></table></div></div>}
 
     {tab === 'docs' && <div className="panel">
       <div className="panel-header">
@@ -9333,6 +9713,24 @@ function Documents({ documents, customers, onUpload, onDownload, onDelete, crmDo
         </tbody></table></div>
       )}
     </div>}
+
+    {showOcr && <OcrModal
+      onInsert={async rawText => {
+        try {
+          const saved = await onSaveDoc({
+            title: `Scanned ${new Date().toLocaleDateString()}`,
+            content: ocrTextToHtml(rawText),
+            customer_id: customerId || null
+          });
+          setShowOcr(false);
+          if (saved) setOpenDoc(saved); // open the new doc straight in the editor
+        } catch (e) {
+          alert(e.message || 'Could not save the scanned text as a document.');
+        }
+      }}
+      onClose={() => setShowOcr(false)}
+    />}
+
   </>;
 }
 function Automation({ workflows, onAdd, onUpdate }) { const [show, setShow] = useState(false); const blank = { name: '', description: '', trigger_type: 'customer_created', action_type: 'create_notification', active: true, config: {} }; const [form, setForm] = useState(blank); const save = async e => { e.preventDefault(); try { await onAdd(form); setShow(false); setForm(blank) } catch (err) { alert(err.message) } }; return <><PageHeading eyebrow="AUTOMATION" title="Workflow automation" description="Define rules that turn CRM events into actions." action="New workflow" onAction={() => setShow(true)} /><div className="panel"><div className="table-wrap"><table><thead><tr><th>Workflow</th><th>Trigger</th><th>Action</th><th>Status</th><th>Created</th><th>Toggle</th></tr></thead><tbody>{workflows.length === 0 ? <tr><td colSpan="6">No workflows yet.</td></tr> : workflows.map(w => <tr key={w.id}><td><strong>{w.name}</strong><div className="deal-customer">{w.description}</div></td><td>{w.trigger_type}</td><td>{w.action_type}</td><td>{w.active ? 'Active' : 'Paused'}</td><td>{formatDate(w.created_at)}</td><td><button className="secondary-btn" onClick={() => onUpdate(w.id, { active: !w.active })}>{w.active ? 'Pause' : 'Activate'}</button></td></tr>)}</tbody></table></div></div>{show && <div className="modal-backdrop" onClick={() => setShow(false)}><form className="modal" onSubmit={save} onClick={e => e.stopPropagation()}><div className="modal-heading"><h2>New workflow</h2><button type="button" className="icon-btn" onClick={() => setShow(false)}><X size={18} /></button></div><label>Name<input required value={form.name} onChange={e => setForm({ ...form, name: e.target.value })} /></label><label>Description<input value={form.description} onChange={e => setForm({ ...form, description: e.target.value })} /></label><label>Trigger<select value={form.trigger_type} onChange={e => setForm({ ...form, trigger_type: e.target.value })}>{['customer_created', 'lead_created', 'deal_stage_changed', 'ticket_created', 'invoice_overdue', 'activity_due'].map(x => <option key={x}>{x}</option>)}</select></label><label>Action<select value={form.action_type} onChange={e => setForm({ ...form, action_type: e.target.value })}>{['create_notification', 'create_activity', 'log_event', 'send_email'].map(x => <option key={x}>{x}</option>)}</select></label><div className="modal-actions"><button type="button" className="secondary-btn" onClick={() => setShow(false)}>Cancel</button><button className="primary-btn">Create workflow</button></div></form></div>}</> }
@@ -10533,7 +10931,7 @@ function HRPanel({ activities = [], authorizedUsers = [], ownerProfiles = {}, cu
   return <>
     <PageHeading eyebrow="PEOPLE & SUPERVISION" title="HR Panel" description="People and work operations across the organization." />
     <div className="stats-grid">
-      <StatCard label="Employees" value={activeEmployees} hint="Active staff" tone="green" icon="E" />
+      <StatCard label="Employees" value={activeEmployees} hint="Active staff" tone="green" icon={<Users size={15} />} />
       <StatCard label="Pending work" value={openWork.length} hint="Open activities" tone="orange" icon="!" onClick={() => document.getElementById('hr-work-operations')?.scrollIntoView({ behavior: 'smooth', block: 'start' })} />
       <StatCard label="Overdue work" value={overdueWork.length} hint="Past their due date" tone="red" icon="!" onClick={() => document.getElementById('hr-work-operations')?.scrollIntoView({ behavior: 'smooth', block: 'start' })} />
       <StatCard label="Completed work" value={completedWork.length} hint="Completed activities" tone="blue" icon="✓" onClick={() => document.getElementById('hr-work-operations')?.scrollIntoView({ behavior: 'smooth', block: 'start' })} />
@@ -10574,7 +10972,8 @@ function HRPanel({ activities = [], authorizedUsers = [], ownerProfiles = {}, cu
       {requisitionError && <div className="form-error">{requisitionError}</div>}
       <div className="table-wrap">
         <table className="hr-work-table">
-          <thead><tr><th>Request ID</th><th>Employee</th><th>Department</th><th>Request</th><th>Period</th><th>Description</th><th>Status</th><th>Actions</th></tr></thead>
+          <thead>
+            <tr onClick={() => viewRequisition(request)} style={{ cursor: setViewRequisition ? 'pointer' : 'default' }}><th>Request ID</th><th>Employee</th><th>Department</th><th>Request</th><th>Period</th><th>Description</th><th>Status</th><th>Actions</th></tr></thead>
           <tbody>
             {requisitions.length === 0 ? <tr><td colSpan="8"><div className="empty-state"><p>No requisitions have been submitted.</p></div></td></tr> : [...requisitions].map(request => (
               <tr key={request.id}>
