@@ -4421,9 +4421,8 @@ function App() {
       alert(error.message);
       return;
     }
-    setRequisitions((prev) => 
-      prev.filter((requisition) => request.id !== id )
-    );
+        setRequisitions(prev => prev.filter(requisition => requisition.id !== id));
+
   }
   async function addTicket(e) {
     e.preventDefault();
@@ -4821,6 +4820,7 @@ function App() {
               />
             )}
             {page === 'Chat' && <Chat />}
+            {page === 'Storhet AI' && <StorhetAIChat />}
             {page === 'Reports' && <AdvancedReports customers={customers} deals={deals} activities={activities} tickets={tickets} leads={leads} quotes={quotes} invoices={invoices} payments={payments} formatAmount={formatAmount} />}
             {page === 'Email Logs' && <EmailLogs emailLogs={emailLogs} customers={customers} onAdd={addEmailLog} />}
             {page === 'UserManagement' && isAdminRole(authorizationProfile?.role) && <UserManagement users={authorizedUsers} loading={usersLoading} error={usersError} onRefresh={fetchAuthorizedUsers} onUpdateUser={updateAuthorizedUser} currentUserId={session?.user?.id} pendingPortalAccounts={pendingPortalAccounts} portalRequestsLoading={portalRequestsLoading} portalRequestsError={portalRequestsError} portalRequestsNotice={portalRequestsNotice} onRefreshPortalRequests={fetchPendingPortalAccounts} onReviewPortalRequest={reviewPortalRequest} portalRequestActionId={portalRequestActionId} onInviteStaff={inviteStaffWorker} onOpenInviteEmail={openCompose} staffInvitations={staffInvitations} onRevokeStaffInvitation={revokeStaffInvitation} staffInvitationActionId={staffInvitationActionId} />}
@@ -6122,7 +6122,8 @@ function Requisition({ requisitions, error, currentUserId, role, employeeName, e
             <td>{request.employee_name}</td>
             <td>{request.request_type}</td>
             <td><span className={requisitionStatusClass(request.status)}>{request.status}</span></td>
-            <td><button className="icon-btn" onClick={deleteRequisitions}><X size={16} /></button></td>
+            <td><button className="icon-btn" title="Delete request" onClick={() => deleteRequisitions(request.id)}><X size={16} /></button></td>
+
           </tr>)}
           </tbody>
         </table></div>}
@@ -10251,426 +10252,147 @@ function SettingsPage({ currency, setCurrency, theme, setTheme }) {
     </>
   );
 }
-function Chat() {
-  const [users, setUsers] = useState([]);
-  const [selectedUser, setSelectedUser] = useState(null);
-  const [conversation, setConversation] = useState(null);
+// ── Storhet AI — internal AI assistant (Phase 1: read-only tools) ──────────
+function StorhetAIChat() {
+  const [conversations, setConversations] = useState([]);
+  const [activeId, setActiveId] = useState(null);
   const [messages, setMessages] = useState([]);
-  const [messageText, setMessageText] = useState('');
-  const [loadingUsers, setLoadingUsers] = useState(true);
-  const [loadingMessages, setLoadingMessages] = useState(false);
+  const [input, setInput] = useState('');
   const [sending, setSending] = useState(false);
   const [error, setError] = useState('');
-  const [searchQuery, setSearchQuery] = useState('');
-  const [selectedMessageId, setSelectedMessageId] = useState(null);
+  const endRef = useRef(null);
 
-  const [currentUserId, setCurrentUserId] = useState(null);
-  const messagesEndRef = useRef(null);
-
-  useEffect(() => {
-    loadCurrentUser();
-  }, []);
-
-  async function loadCurrentUser() {
-    const {
-      data: { user },
-      error
-    } = await supabase.auth.getUser();
-
-    if (error) {
-      console.error('Could not get current user:', error);
-      setError(error.message);
-      return;
-    }
-
-    setCurrentUserId(user?.id || null);
-
-    if (user?.id) {
-      fetchUsers(user.id);
-    }
+async function loadConversations() {
+    const { data } = await supabase
+      .from('ai_conversations')
+      .select('id,title,updated_at')
+      .order('updated_at', { ascending: false })
+      .limit(50);
+    setConversations(data || []);
   }
 
-  async function fetchUsers(myUserId) {
-    setLoadingUsers(true);
+async function openConversation(id) {
+    setActiveId(id);
     setError('');
-
-    const { data, error } = await supabase
-      .from('authorized_users')
-      .select('user_id, email, role, status')
-      .eq('status', 'active')
-      .neq('user_id', myUserId)
-      .order('email', { ascending: true });
-
-    if (error) {
-      console.error('Failed to load chat users:', error);
-      setError('Unable to load users.');
-      setUsers([]);
-    } else {
-      setUsers(data || []);
-    }
-
-    setLoadingUsers(false);
-  }
-
-  async function openConversation(user) {
-    if (!currentUserId || !user?.user_id) return;
-
-    setSelectedUser(user);
-    setMessages([]);
-    setLoadingMessages(true);
-    setError('');
-
-    const { data, error } = await supabase
-      .from('chat_conversations')
-      .select('*')
-      .or(
-        `and(user_one.eq.${currentUserId},user_two.eq.${user.user_id}),and(user_one.eq.${user.user_id},user_two.eq.${currentUserId})`
-      )
-      .limit(1)
-      .maybeSingle();
-
-    if (error) {
-      console.error('Failed to find conversation:', error);
-      setError('Unable to open conversation.');
-      setLoadingMessages(false);
-      return;
-    }
-
-    let activeConversation = data;
-
-    if (!activeConversation) {
-      const { data: newConversation, error: createError } = await supabase
-        .from('chat_conversations')
-        .insert({
-          user_one: currentUserId,
-          user_two: user.user_id
-        })
-        .select()
-        .single();
-
-      if (createError) {
-        console.error('Failed to create conversation:', createError);
-        setError(createError.message);
-        setLoadingMessages(false);
-        return;
-      }
-
-      activeConversation = newConversation;
-    }
-
-    setConversation(activeConversation);
-    await fetchMessages(activeConversation.id);
-    setLoadingMessages(false);
-  }
-
-  async function fetchMessages(conversationId) {
-    const { data, error } = await supabase
-      .from('chat_messages')
-      .select('*')
-      .eq('conversation_id', conversationId)
+    const { data } = await supabase
+      .from('ai_messages')
+      .select('role,content,tool_calls,created_at')
+      .eq('conversation_id', id)
       .order('created_at', { ascending: true });
-
-    if (error) {
-      console.error('Failed to load messages:', error);
-      setError('Unable to load messages.');
-      return;
-    }
-
     setMessages(data || []);
   }
 
-  async function sendMessage(event) {
+function newConversation() {
+    setActiveId(null);
+    setMessages([]);
+    setError('');
+  }
+
+useEffect(() => { loadConversations(); }, []);
+  useEffect(() => { endRef.current?.scrollIntoView({ behavior: 'smooth', block: 'nearest' }); }, [messages.length, sending]);
+
+async function send(event) {
     event.preventDefault();
-    const body = messageText.trim();
-
-    if (!body || !conversation || !currentUserId || sending) {
-      return;
-    }
-
+    const text = input.trim();
+    if (!text || sending) return;
     setSending(true);
     setError('');
+    setInput('');
+    setMessages(prev => [...prev, { role: 'user', content: text }]);
 
-    const { data, error } = await supabase
-      .from('chat_messages')
-      .insert({
-        conversation_id: conversation.id,
-        sender_id: currentUserId,
-        body
-      })
-      .select()
-      .single();
+try {
+      const { data, error: fnError } = await supabase.functions.invoke('storhet-ai-chat', {
+        body: { message: text, conversation_id: activeId },
+      });
+      if (fnError) throw new Error(fnError.message);
+      if (data?.error) throw new Error(data.error);
+      setActiveId(data.conversation_id);
+      setMessages(prev => [...prev, { role: 'assistant', content: data.reply, tool_calls: data.tool_calls || [] }]);
+      loadConversations();
+    } catch (e) {
+      let message = e.message || 'Storhet AI could not be reached.';
+      try { const details = await e.context?.json(); if (details?.error) message = details.error; } catch { /* keep default message */ }
+      setError(message);
+    } finally {
 
-    if (error) {
-      console.error('Failed to send message:', error);
-      setError(error.message);
       setSending(false);
-      return;
     }
-
-    setMessages(prev => {
-      if (prev.some(message => message.id === data.id)) {
-        return prev;
-      }
-
-      return [...prev, data];
-    });
-    const recipientId =
-      conversation.user_one === currentUserId
-        ? conversation.user_two
-        : conversation.user_one;
-
-    if (recipientId !== currentUserId) {
-      const { error: notificationError } = await supabase
-        .from('notifications')
-        .insert({
-          user_id: recipientId,
-          type: 'new_chat',
-          title: 'New chat message',
-          message: body,
-          link: 'Chat'
-        });
-
-      if (notificationError) {
-        console.error(
-          'Failed to create chat notification:',
-          notificationError
-        );
-      }
-    }
-    setMessageText('');
-    setSending(false);
-  }
-  async function deleteMessage(messageId) {
-    if (!messageId) return;
-
-    const { error } = await supabase
-      .from('chat_messages')
-      .delete()
-      .eq('id', messageId)
-      .eq('sender_id', currentUserId);
-
-    if (error) {
-      console.error('Failed to delete message:', error);
-      setError(error.message);
-      return;
-    }
-
-    setMessages(prev =>
-      prev.filter(message => message.id !== messageId)
-    );
   }
 
-  const scrollToBottom = () => {
-    messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
-  };
-
-  useEffect(() => {
-    scrollToBottom();
-  }, [messages]);
-
-  useEffect(() => {
-    if (!conversation?.id) return;
-
-    const channel = supabase
-      .channel(`chat-${conversation.id}`)
-      .on(
-        'postgres_changes',
-        {
-          event: 'INSERT',
-          schema: 'public',
-          table: 'chat_messages',
-          filter: `conversation_id=eq.${conversation.id}`
-        },
-        payload => {
-          const newMessage = payload.new;
-
-          setMessages(prev => {
-            if (prev.some(message => message.id === newMessage.id)) {
-              return prev;
-            }
-            return [...prev, newMessage];
-          });
-        }
-      )
-      .subscribe();
-
-    return () => {
-      supabase.removeChannel(channel);
-    };
-  }, [conversation?.id]);
-
-  const filteredUsers = users.filter(u =>
-    u.email.toLowerCase().includes(searchQuery.toLowerCase())
-  );
-
-  return (
-    <div className={`wa-layout ${selectedUser ? 'has-active-chat' : ''}`}>
-
-      <div className="wa-sidebar">
-        <div className="wa-sidebar-header">
-          <div className="wa-avatar">
-            {currentUserId ? 'U' : '?'}
-          </div>
-          <div className="wa-header-actions">
-            <button className="wa-icon-btn" title="New Chat"><MessageCircle size={18} /></button>
-            <button className="wa-icon-btn" title="Menu"><MoreHorizontal size={18} /></button>
-          </div>
+return <>
+    <PageHeading
+      eyebrow="STORHET AI"
+      title="Storhet AI"
+      description="Your internal AI assistant. It answers using live CRM data within your permissions — every lookup is logged for audit."
+      action="New conversation"
+      onAction={newConversation}
+    />
+    <div className="ai-chat-layout">
+      <aside className="ai-conversation-list panel">
+        <div className="ai-conversation-head">
+          <strong>Conversations</strong>
+          <button type="button" className="icon-btn" onClick={loadConversations} title="Refresh"><RefreshCw size={15} /></button>
         </div>
+        {conversations.length === 0 ? (
+          <p className="ai-conversation-empty">No conversations yet.</p>
+        ) : conversations.map(conv => (
+          <button key={conv.id} type="button" className={`ai-conversation-item ${activeId === conv.id ? 'active' : ''}`} onClick={() => openConversation(conv.id)}>
+            <Bot size={14} />
+            <span>{conv.title}</span>
+          </button>
+        ))}
+      </aside>
 
-        <div className="wa-search-bar">
-          <div className="wa-search-input">
-            <Search size={15} />
-            <input
-              type="text"
-              placeholder="Search contacts..."
-              value={searchQuery}
-              onChange={(e) => setSearchQuery(e.target.value)}
-            />
-          </div>
-        </div>
-
-        <div className="wa-contacts-list">
-          {loadingUsers ? (
-            <div className="wa-empty-state">Loading users...</div>
-          ) : filteredUsers.length === 0 ? (
-            <div className="wa-empty-state">No contacts found</div>
-          ) : (
-            filteredUsers.map(user => (
-              <div
-                key={user.user_id}
-                className={`wa-contact-tile ${selectedUser?.user_id === user.user_id ? 'active' : ''}`}
-                onClick={() => openConversation(user)}
-              >
-                <div className="wa-avatar">
-                  {(user.email || '?').charAt(0).toUpperCase()}
-                </div>
-                <div className="wa-contact-body">
-                  <div className="wa-contact-top">
-                    <span className="wa-contact-name">{user.email.split('@')[0]}</span>
-                  </div>
-                  <div className="wa-contact-bottom">
-                    <span className="wa-last-msg">{user.email}</span>
-                    <span className="wa-role-tag">{roleLabel(user.role)}</span>
-                  </div>
-                </div>
-              </div>
-            ))
-          )}
-        </div>
-      </div>
-
-      <div className="wa-chat-panel">
-        {!selectedUser ? (
-          <div className="wa-welcome-screen">
-            <div className="wa-welcome-content">
-              <MessageCircle size={48} />
-              <h2>Select a contact</h2>
-              <p>Choose a conversation from the left to start messaging.</p>
-            </div>
+<section className="ai-chat-main panel">
+        {messages.length === 0 && !sending ? (
+          <div className="ai-welcome">
+            <Bot size={34} />
+            <h3>Ask Storhet AI anything about your CRM</h3>
+            <p>Try: "Find customers at Zenith Bank", "What Utimaco solutions do we sell?", or paste a deal ID and ask about it.</p>
           </div>
         ) : (
-          <>
-            <div className="wa-chat-header">
-              <button
-                className="wa-back-btn"
-                onClick={() => setSelectedUser(null)}
-                title="Back to contacts"
-              >
-                ←
-              </button>
-
-              <div className="wa-avatar">
-                {(selectedUser.email || '?').charAt(0).toUpperCase()}
-              </div>
-
-              <div className="wa-chat-info">
-                <strong>{selectedUser.email.split('@')[0]}</strong>
-                <span>Active now · {roleLabel(selectedUser.role)}</span>
-              </div>
-
-              <div className="wa-header-actions">
-                <button className="wa-icon-btn"><Search size={18} /></button>
-                <button className="wa-icon-btn"><MoreHorizontal size={18} /></button>
-              </div>
-            </div>
-
-            <div className="wa-chat-messages">
-              {loadingMessages ? (
-                <div className="wa-empty-state">Loading messages...</div>
-              ) : messages.length === 0 ? (
-                <div className="wa-empty-state">
-                  <span>No messages yet. Send a message to start the conversation.</span>
-                </div>
-              ) : (
-                messages.map(message => {
-                  const mine = message.sender_id === currentUserId;
-                  return (
-                    <div
-                      key={message.id}
-                      className={`wa-msg-row ${mine ? 'mine' : 'theirs'} ${selectedMessageId === message.id ? 'selected' : ''
-                        }`}
-                      onClick={() => setSelectedMessageId(message.id)}
-                    >
-                      <div className="wa-msg-bubble">
-                        <div className="wa-msg-text">{message.body}</div>
-                        {mine && selectedMessageId === message.id && (
-                          <button
-                            type="button"
-                            className="wa-msg-delete"
-                            onClick={(e) => {
-                              e.stopPropagation();
-                              deleteMessage(message.id);
-                              setSelectedMessageId(null);
-                            }}
-                            title="Delete message"
-                          >
-                            Delete
-                          </button>
-                        )}
-                        <div className="wa-msg-meta">
-                          <span className="wa-msg-time">
-                            {message.created_at
-                              ? new Date(message.created_at).toLocaleTimeString([], {
-                                hour: '2-digit',
-                                minute: '2-digit'
-                              })
-                              : ''}
-                          </span>
-                          {mine && <span className="wa-msg-status">✓✓</span>}
-                        </div>
-                      </div>
+          <div className="ai-messages">
+            {messages.map((m, i) => (
+              <div key={i} className={`ai-msg-row ${m.role === 'user' ? 'mine' : 'ai'}`}>
+                <div className="ai-msg-bubble">
+                  <p>{m.content}</p>
+                  {m.tool_calls?.length > 0 && (
+                    <div className="ai-tool-row">
+                      <span className="ai-tool-label">Used tools:</span>
+                      {m.tool_calls.map((c, idx) => (
+                        <span key={idx} className={`ai-tool-badge ${c.status === 'ok' ? 'ok' : 'fail'}`}>{c.name}</span>
+                      ))}
                     </div>
-                  );
-                })
-              )}
-              <div ref={messagesEndRef} />
-            </div>
-
-            <form className="wa-input-area" onSubmit={sendMessage}>
-              <button type="button" className="wa-icon-btn" title="Emoji">😊</button>
-              <button type="button" className="wa-icon-btn" title="Attach">📎</button>
-              <input
-                type="text"
-                placeholder="Type a message..."
-                value={messageText}
-                onChange={e => setMessageText(e.target.value)}
-                disabled={sending}
-              />
-              <button
-                type="submit"
-                className="wa-send-btn"
-                disabled={sending || !messageText.trim()}
-              >
-                Send
-              </button>
-            </form>
-          </>
+                  )}
+                </div>
+              </div>
+            ))}
+            {sending && (
+              <div className="ai-msg-row ai">
+                <div className="ai-msg-bubble ai-thinking"><span /><span /><span /></div>
+              </div>
+            )}
+            <div ref={endRef} />
+          </div>
         )}
-      </div>
-      {error && <div className="wa-error-toast">{error}</div>}
+
+{error && <div className="form-error" role="alert">{error}</div>}
+
+<form className="ai-input-area" onSubmit={send}>
+          <input
+            value={input}
+            onChange={e => setInput(e.target.value)}
+            placeholder="Ask about customers, deals or solutions…"
+            disabled={sending}
+            maxLength={2000}
+          />
+          <button type="submit" className="ai-send-btn" disabled={sending || !input.trim()}>Send</button>
+        </form>
+      </section>
     </div>
-  );
+  </>;
 }
+
 function MDPanel({ deals = [], quotes = [], invoices = [], customers = [], formatAmount, onApprove, onReject, onInviteStaff, onOpenInviteEmail, staffInvitations = [], onRevokeStaffInvitation, staffInvitationActionId }) {
   const [showStaffInvite, setShowStaffInvite] = useState(false);
   // Deals are not commercial approval records; only quotes and invoices can reach MD.
@@ -10972,8 +10694,9 @@ function HRPanel({ activities = [], authorizedUsers = [], ownerProfiles = {}, cu
       {requisitionError && <div className="form-error">{requisitionError}</div>}
       <div className="table-wrap">
         <table className="hr-work-table">
-          <thead>
-            <tr onClick={() => viewRequisition(request)} style={{ cursor: setViewRequisition ? 'pointer' : 'default' }}><th>Request ID</th><th>Employee</th><th>Department</th><th>Request</th><th>Period</th><th>Description</th><th>Status</th><th>Actions</th></tr></thead>
+           <thead><tr><th>Request ID</th><th>Employee</th><th>Department</th><th>Request</th><th>Period</th><th>Description</th><th>Status</th><th>Actions</th></tr>
+           </thead>
+
           <tbody>
             {requisitions.length === 0 ? <tr><td colSpan="8"><div className="empty-state"><p>No requisitions have been submitted.</p></div></td></tr> : [...requisitions].map(request => (
               <tr key={request.id}>
