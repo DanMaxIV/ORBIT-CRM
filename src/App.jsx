@@ -18,7 +18,7 @@ import {
   Download, Play, Target, CheckCircle2, ArrowLeft, ChevronRight, Building2, RefreshCw, GripVertical,
   MapPin, ClipboardList, ScanText, Camera, ImageUp, Copy, Highlighter, ImagePlus, Undo2, Redo2, AlignLeft, AlignCenter, AlignRight, AlignJustify, List,
   ListOrdered, IndentIncrease, IndentDecrease, Link2, RemoveFormatting,
-  Grid3x3, TableCellsMerge, TableCellsSplit, Trash2, Bold, Italic, Underline, Strikethrough, Type, Minus, Bot
+  Grid3x3, TableCellsMerge, TableCellsSplit, Trash2, Bold, Italic, Underline, Strikethrough, Type, Minus, Bot, Sparkles, MicVocal
 } from 'lucide-react';
 import { useEditor, EditorContent } from '@tiptap/react';
 import { StarterKit } from '@tiptap/starter-kit';
@@ -1056,10 +1056,12 @@ function CustomerPortalHome({ user, account, onSignOut }) {
 const navSections = [
   { title: 'Overview', items: [['Dashboard', LayoutDashboard], ['Reports', BarChart3]] },
   { title: 'Customers & Sales', items: [['Customers', Users], ['Leads', UserPlus], ['Pipeline', Kanban], ['Products', FileText], ['Quotes', FileText], ['Invoices', CreditCard], ['Forecast', TrendingUp]] },
-  { title: 'Work & Support', items: [['Activities', CalendarCheck], ['Field Visits', MapPin], ['Calendar', CalendarDays], ['Technical Support', UserCog],
-     ['Tickets', Receipt], ['Documents', FileText], ['Requisition', ClipboardList], ['Storhet AI', Bot]]},
+  {
+    title: 'Work & Support', items: [['Activities', CalendarCheck], ['Field Visits', MapPin], ['Calendar', CalendarDays], ['Technical Support', UserCog],
+    ['Tickets', Receipt], ['Documents', FileText], ['Requisition', ClipboardList], ['Storhet AI', Bot]]
+  },
   { title: 'Communication', items: [['Email', Mail], ['Chat', MessageCircle]] },
-  { title: 'Automation & Insights', items: [['Automation', Workflow], ['Segments', Tags]]},
+  { title: 'Automation & Insights', items: [['Automation', Workflow], ['Segments', Tags]] },
   { title: 'System', items: [['Settings', Settings]] }
 ];
 
@@ -1265,6 +1267,7 @@ function App() {
   const [phase2Error, setPhase2Error] = useState('');
   const [emailIntegrations, setEmailIntegrations] = useState([]);
   const [composeDraft, setComposeDraft] = useState(null);
+  const [voiceNoteTarget, setVoiceNoteTarget] = useState(null); // 'new' | 'edit'
   const [emailIntegrationLoading, setEmailIntegrationLoading] = useState(false);
   const [emailIntegrationError, setEmailIntegrationError] = useState('');
   const [showTicketForm, setShowTicketForm] = useState(false);
@@ -4421,7 +4424,7 @@ function App() {
       alert(error.message);
       return;
     }
-        setRequisitions(prev => prev.filter(requisition => requisition.id !== id));
+    setRequisitions(prev => prev.filter(requisition => requisition.id !== id));
 
   }
   async function addTicket(e) {
@@ -4724,7 +4727,8 @@ function App() {
             {page === 'Dashboard' && (
               <Dashboard revenue={revenue} customers={customers} leads={leads} deals={deals} activities={activities} tickets={tickets} setPage={setPage} formatAmount={formatAmount} onSelectCustomer={setSelectedCustomer} onEditCustomer={setEditingCustomer} onDeleteCustomer={deleteCustomer} currentUserId={session.user.id} role={authorizationProfile?.role} />
             )}
-            {page === 'MD Panel' && ['manager', 'admin'].includes(authorizationProfile?.role) && <MDPanel deals={deals} quotes={quotes} invoices={invoices} customers={customers} formatAmount={formatAmount} onApprove={approveCommercialRecord} onReject={rejectCommercialRecord} />}
+            {page === 'MD Panel' && ['manager', 'admin'].includes(authorizationProfile?.role) && <MDPanel deals={deals} quotes={quotes} invoices={invoices} customers={customers} formatAmount={formatAmount} onApprove={approveCommercialRecord} onReject={rejectCommercialRecord} onInviteStaff={inviteStaffWorker} onOpenInviteEmail={openCompose} staffInvitations={staffInvitations} onRevokeStaffInvitation={revokeStaffInvitation} staffInvitationActionId={staffInvitationActionId} setPage={setPage} />}
+
             {page === 'HOS Panel' && authorizationProfile?.role === 'head_of_sales' && <HOSPanel deals={deals} quotes={quotes} invoices={invoices} quoteItems={quoteItems} tickets={tickets} ownerProfiles={ownerProfiles} formatAmount={formatAmount} currentUserId={session.user.id} role={authorizationProfile?.role} setPage={setPage} onApprove={approveCommercialRecord} onReject={rejectCommercialRecord} />}
             {page === 'HR Panel' && authorizationProfile?.role === 'hr' && <HRPanel activities={activities} authorizedUsers={authorizedUsers} ownerProfiles={ownerProfiles} customers={customers} leads={leads} requisitions={requisitions} requisitionError={requisitionError} onUpdateRequisitionStatus={updateRequisitionStatus} onDeleteRequisition={deleteRequisition} />}
             {page === 'Technical Support Panel' && authorizationProfile?.role === 'technical_support' && <TechnicalSupportPanel tickets={tickets} customers={customers} formatAmount={formatAmount} currentUserId={session.user.id} ticketError={ticketError} onAddTicket={() => { setTicketError(''); setNewTicket(t => ({ ...t, customer_id: '' })); setShowTicketForm(true); }} onStatusChange={updateTicketStatus} onDeleteTicket={deleteTicket} onEditTicket={ticket => { setEditTicketError(''); setEditingTicket(ticket); }} onViewTicket={setSelectedTicket} isAdmin={isAdminRole(authorizationProfile?.role)} role={authorizationProfile?.role} canManage={canManageTicket} staffName={staffName} staffOptions={getStaffOptions()} onAssign={assignTicket} setPage={setPage} />}
@@ -5579,7 +5583,7 @@ function App() {
                 rows="4"
               />
             </label>
-
+            <button type="button" className="secondary-btn" onClick={() => setVoiceNoteTarget('new')}><MicVocal /> Voice note</button>
             <label>
               Status
               <select
@@ -5624,8 +5628,18 @@ function App() {
       </div>
     )}
     {selectedActivity && <ActivityDetail activity={selectedActivity} customer={customers.find(c => c.id === selectedActivity.customer_id)} ownerProfiles={ownerProfiles} currentUserEmail={session?.user?.email} onClose={() => setSelectedActivity(null)} onEdit={activity => { setSelectedActivity(null); setEditActivityError(''); setEditingActivity({ ...activity, activity_date: formatDateTimeLocal(activity.activity_date) }); }} />}
-    {editingActivity && <div className="modal-backdrop" onClick={() => setEditingActivity(null)}><form className="modal" onSubmit={updateActivity} onClick={e => e.stopPropagation()}><div className="modal-heading"><h2>Edit Activity</h2><button type="button" className="icon-btn" onClick={() => setEditingActivity(null)}><X size={18} /></button></div>{editActivityError && <p className="form-error">{editActivityError}</p>}<label>Activity title<input type="text" value={editingActivity.title || ''} onChange={e => setEditingActivity({ ...editingActivity, title: e.target.value })} required /></label><label>Activity type<select value={editingActivity.type || 'Task'} onChange={e => setEditingActivity({ ...editingActivity, type: e.target.value })}><option value="Task">Task</option><option value="Call">Call</option><option value="Meeting">Meeting</option><option value="Email">Email</option><option value="Follow-up">Follow-up</option></select></label><label>Due date and time<input type="datetime-local" value={editingActivity.activity_date || ''} onChange={e => setEditingActivity({ ...editingActivity, activity_date: e.target.value })} /></label><div className="activity-form-grid"><label>Priority<select value={editingActivity.priority || 'Medium'} onChange={e => setEditingActivity({ ...editingActivity, priority: e.target.value })}><option value="Low">Low</option><option value="Medium">Medium</option><option value="High">High</option><option value="Urgent">Urgent</option></select></label><label>Assign to<select value={editingActivity.assigned_to || session.user.id} onChange={e => setEditingActivity({ ...editingActivity, assigned_to: e.target.value })}><option value={session.user.id}>{profileName.trim() || session.user.email || 'Me'} (me)</option>{Object.entries(ownerProfiles).filter(([id, name]) => id !== session.user.id).map(([id, name]) => <option key={id} value={id}>{name || 'Team member'}</option>)}</select></label></div><label>Customer<select value={editingActivity.customer_id || ''} onChange={e => setEditingActivity({ ...editingActivity, customer_id: e.target.value })}><option value="">No customer selected</option>{customers.map(customer => <option key={customer.id} value={customer.id}>{customer.name}{customer.company ? ` — ${customer.company}` : ''}</option>)}</select></label><label>Notes<textarea value={editingActivity.notes || ''} onChange={e => setEditingActivity({ ...editingActivity, notes: e.target.value })} rows="4" /></label><label>Status<select value={editingActivity.status || 'Scheduled'} onChange={e => setEditingActivity({ ...editingActivity, status: e.target.value })}><option value="Scheduled">Scheduled</option><option value="In Progress">In Progress</option><option value="Completed">Completed</option><option value="Cancelled">Cancelled</option></select></label><div className="modal-actions"><button type="button" className="secondary-btn" onClick={() => setEditingActivity(null)}>Cancel</button><button type="submit" className="primary-btn" disabled={editActivitySaving}>{editActivitySaving ? 'Saving...' : 'Save changes'}</button></div></form></div>}
+    {editingActivity && <div className="modal-backdrop" onClick={() => setEditingActivity(null)}><form className="modal" onSubmit={updateActivity} onClick={e => e.stopPropagation()}><div className="modal-heading"><h2>Edit Activity</h2><button type="button" className="icon-btn" onClick={() => setEditingActivity(null)}><X size={18} /></button></div>{editActivityError && <p className="form-error">{editActivityError}</p>}<label>Activity title<input type="text" value={editingActivity.title || ''} onChange={e => setEditingActivity({ ...editingActivity, title: e.target.value })} required /></label><label>Activity type<select value={editingActivity.type || 'Task'} onChange={e => setEditingActivity({ ...editingActivity, type: e.target.value })}><option value="Task">Task</option><option value="Call">Call</option><option value="Meeting">Meeting</option><option value="Email">Email</option><option value="Follow-up">Follow-up</option></select></label><label>Due date and time<input type="datetime-local" value={editingActivity.activity_date || ''} onChange={e => setEditingActivity({ ...editingActivity, activity_date: e.target.value })} /></label><div className="activity-form-grid"><label>Priority<select value={editingActivity.priority || 'Medium'} onChange={e => setEditingActivity({ ...editingActivity, priority: e.target.value })}><option value="Low">Low</option><option value="Medium">Medium</option><option value="High">High</option><option value="Urgent">Urgent</option></select></label><label>Assign to<select value={editingActivity.assigned_to || session.user.id} onChange={e => setEditingActivity({ ...editingActivity, assigned_to: e.target.value })}><option value={session.user.id}>{profileName.trim() || session.user.email || 'Me'} (me)</option>{Object.entries(ownerProfiles).filter(([id, name]) => id !== session.user.id).map(([id, name]) => <option key={id} value={id}>{name || 'Team member'}</option>)}</select></label></div><label>Customer<select value={editingActivity.customer_id || ''} onChange={e => setEditingActivity({ ...editingActivity, customer_id: e.target.value })}><option value="">No customer selected</option>{customers.map(customer => <option key={customer.id} value={customer.id}>{customer.name}{customer.company ? ` — ${customer.company}` : ''}</option>)}</select></label>
+      <label>Notes<textarea value={editingActivity.notes || ''} onChange={e => setEditingActivity({ ...editingActivity, notes: e.target.value })} rows="4" /></label>
+      <button type="button" className="secondary-btn" onClick={() => setVoiceNoteTarget('edit')}><MicVocal /> Voice note</button>
+      <label>Status<select value={editingActivity.status || 'Scheduled'} onChange={e => setEditingActivity({ ...editingActivity, status: e.target.value })}><option value="Scheduled">Scheduled</option><option value="In Progress">In Progress</option><option value="Completed">Completed</option><option value="Cancelled">Cancelled</option></select></label><div className="modal-actions"><button type="button" className="secondary-btn" onClick={() => setEditingActivity(null)}>Cancel</button><button type="submit" className="primary-btn" disabled={editActivitySaving}>{editActivitySaving ? 'Saving...' : 'Save changes'}</button></div>
+    </form>
+    </div>}
     {composeDraft && <ComposeEmailModal integrations={emailIntegrations} customers={customers} defaults={composeDraft} userId={session.user.id} onSend={sendEmail} onClose={() => setComposeDraft(null)} />}
+    {voiceNoteTarget && <VoiceNoteModal
+      onInsert={t => voiceNoteTarget === 'new' ? setNewActivity(a => ({ ...a, notes: a.notes ? `${a.notes.trim()} ${t}` : t })) : setEditingActivity(a => ({ ...a, notes: a.notes ? `${a.notes.trim()} ${t}` : t }))}
+      onClose={() => setVoiceNoteTarget(null)}
+    />}
+
     {selectedTicket && <TicketDetail ticket={tickets.find(t => t.id === selectedTicket.id) || selectedTicket} onRefresh={fetchTickets} staffName={staffName} staffOptions={getStaffOptions()} currentUserId={session.user.id} canManage={canManageTicket} onStatusChange={updateTicketStatus} onAssign={assignTicket} onClose={() => setSelectedTicket(null)} onEdit={ticket => { setSelectedTicket(null); setEditTicketError(''); setEditingTicket(ticket); }} />}
     {editingTicket && <div className="modal-backdrop" onClick={() => setEditingTicket(null)}><form className="modal" onSubmit={updateTicket} onClick={e => e.stopPropagation()}><div className="modal-heading"><h2>Edit Ticket</h2><button type="button" className="icon-btn" onClick={() => setEditingTicket(null)}><X size={18} /></button></div>{editTicketError && <p className="form-error">{editTicketError}</p>}<label>Ticket title<input type="text" value={editingTicket.title || ''} onChange={e => setEditingTicket({ ...editingTicket, title: e.target.value })} required /></label><label>Description<textarea value={editingTicket.description || ''} onChange={e => setEditingTicket({ ...editingTicket, description: e.target.value })} rows="4" /></label><label>Customer<select value={editingTicket.customer_id || ''} onChange={e => setEditingTicket({ ...editingTicket, customer_id: e.target.value })}><option value="">No customer selected</option>{customers.map(customer => <option key={customer.id} value={customer.id}>{customer.name}{customer.company ? ` — ${customer.company}` : ''}</option>)}</select></label><label>Assign to<select value={editingTicket.assigned_to || ''} onChange={e => setEditingTicket({ ...editingTicket, assigned_to: e.target.value })}><option value="">Unassigned</option>{getStaffOptions().map(u => <option key={u.user_id} value={u.user_id}>{staffName(u.user_id)}</option>)}</select></label>{editingTicket.source !== 'portal' && <label className="portal-check-row"><input type="checkbox" checked={!!editingTicket.portal_visible} onChange={e => setEditingTicket({ ...editingTicket, portal_visible: e.target.checked })} />Show this ticket in the customer's portal (needs a linked customer)</label>}<label>Category<select value={editingTicket.category || 'General'} onChange={e => setEditingTicket({ ...editingTicket, category: e.target.value })}><option value="General">General</option><option value="Technical">Technical</option><option value="Billing">Billing</option><option value="Account">Account</option><option value="Feature Request">Feature Request</option></select></label><label>Priority<select value={editingTicket.priority || 'Medium'} onChange={e => setEditingTicket({ ...editingTicket, priority: e.target.value })}><option value="Low">Low</option><option value="Medium">Medium</option><option value="High">High</option><option value="Urgent">Urgent</option></select></label><label>Status<select value={editingTicket.status || 'Open'} onChange={e => setEditingTicket({ ...editingTicket, status: e.target.value })}><option value="Open">Open</option><option value="In Progress">In Progress</option><option value="Resolved">Resolved</option><option value="Closed">Closed</option></select></label><div className="modal-actions"><button type="button" className="secondary-btn" onClick={() => setEditingTicket(null)}>Cancel</button><button type="submit" className="primary-btn" disabled={editTicketSaving}>{editTicketSaving ? 'Saving...' : 'Save changes'}</button></div></form></div>}
     {showTicketForm && (
@@ -9170,12 +9184,215 @@ function ocrTextToHtml(raw) {
     .join('');
 }
 
+// ── AI OCR enhancement helpers ──────────────────────────────────────────
+// Downscale before sending to Gemini: ~1568px is its sweet spot, keeps
+// the upload fast on mobile data and free-tier usage low.
+async function resizeImageForAI(file, maxDim = 1568) {
+  const bitmap = await createImageBitmap(file);
+  const scale = Math.min(1, maxDim / Math.max(bitmap.width, bitmap.height));
+  const w = Math.round(bitmap.width * scale);
+  const h = Math.round(bitmap.height * scale);
+  const canvas = document.createElement('canvas');
+  canvas.width = w; canvas.height = h;
+  canvas.getContext('2d').drawImage(bitmap, 0, 0, w, h);
+  bitmap.close();
+  const blob = await new Promise(r => canvas.toBlob(r, 'image/jpeg', 0.85));
+  return new File([blob], 'capture.jpg', { type: 'image/jpeg' });
+}
+
+function fileToBase64(file) {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(String(reader.result).split(',')[1]); // strip data-URL prefix
+    reader.onerror = reject;
+    reader.readAsDataURL(file);
+  });
+}
+
+// ── Voice notes: one decode, two engines ──────────────────────────────────
+// Every recording becomes mono 16 kHz samples. Whisper eats the Float32
+// directly (offline, free); Gemini gets the same samples wrapped as a small WAV.
+async function blobToPcm16k(blob) {
+  const decoded = await (new AudioContext()).decodeAudioData(await blob.arrayBuffer());
+  const rate = 16000;
+  const length = Math.ceil(decoded.duration * rate);
+  const offline = new OfflineAudioContext(1, length, rate);
+  const source = offline.createBufferSource();
+  source.buffer = decoded;
+  source.connect(offline.destination);
+  source.start();
+  return (await offline.startRendering()).getChannelData(0);
+}
+
+function pcm16kToWavBlob(samples) {
+  const buffer = new ArrayBuffer(44 + samples.length * 2);
+  const view = new DataView(buffer);
+  const writeString = (o, s) => { for (let i = 0; i < s.length; i++) view.setUint8(o + i, s.charCodeAt(i)); };
+  writeString(0, 'RIFF'); view.setUint32(4, 36 + samples.length * 2, true);
+  writeString(8, 'WAVE'); writeString(12, 'fmt '); view.setUint32(16, 16, true);
+  view.setUint16(20, 1, true); view.setUint16(22, 1, true);
+  view.setUint32(24, 16000, true); view.setUint32(28, 32000, true);
+  view.setUint16(32, 2, true); view.setUint16(34, 16, true);
+  writeString(36, 'data'); view.setUint32(40, samples.length * 2, true);
+  let o = 44;
+  for (let i = 0; i < samples.length; i++, o += 2) {
+    const s = Math.max(-1, Math.min(1, samples[i]));
+    view.setInt16(o, s < 0 ? s * 0x8000 : s * 0x7fff, true);
+  }
+  return new Blob([buffer], { type: 'audio/wav' });
+}
+
+// Whisper is heavy — load it only on first voice-note use, then cache forever.
+let whisperPipelinePromise = null;
+function getWhisper(onProgress) {
+  if (!whisperPipelinePromise) {
+    whisperPipelinePromise = (async () => {
+      const { pipeline, env } = await import('@xenova/transformers');
+      env.allowLocalModels = false;
+      return pipeline('automatic-speech-recognition', 'Xenova/whisper-tiny.en', {
+        dtype: 'q8',
+        progress_callback: p => { if (p?.status === 'progress' && onProgress) onProgress(p.progress || 0); }
+      });
+    })().catch(e => { whisperPipelinePromise = null; throw e; });
+  }
+  return whisperPipelinePromise;
+}
+
+function VoiceNoteModal({ onInsert, onClose }) {
+  const [recording, setRecording] = useState(false);
+  const [busy, setBusy] = useState(false);              // decoding / offline transcription
+  const [downloadPct, setDownloadPct] = useState(null); // first-time model download only
+  const [text, setText] = useState('');                 // editable working transcript
+  const [aiText, setAiText] = useState('');
+  const [aiBusy, setAiBusy] = useState(false);
+  const [error, setError] = useState('');
+  const recorderRef = useRef(null);
+  const chunksRef = useRef([]);
+  const samplesRef = useRef(null);
+
+  useEffect(() => () => recorderRef.current?.stream?.getTracks().forEach(t => t.stop()), []);
+
+  async function start() {
+    setError(''); setText(''); setAiText('');
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      chunksRef.current = [];
+      const recorder = new MediaRecorder(stream);
+      recorder.ondataavailable = e => chunksRef.current.push(e.data);
+      recorder.onstop = handleStop;
+      recorder.start();
+      recorderRef.current = recorder;
+      setRecording(true);
+    } catch {
+      setError('Microphone access was blocked. Allow microphone permission and try again.');
+    }
+  }
+
+  async function handleStop() {
+    recorderRef.current?.stream.getTracks().forEach(t => t.stop());
+    setRecording(false);
+    setBusy(true);
+    try {
+      samplesRef.current = await blobToPcm16k(new Blob(chunksRef.current, { type: recorderRef.current.mimeType || 'audio/webm' }));
+      // Engine 1 — offline Whisper ($0, no quota, works offline after first download).
+      try {
+        setDownloadPct(0);
+        const transcriber = await getWhisper(setDownloadPct);
+        setDownloadPct(null);
+        const output = await transcriber(samplesRef.current, { chunk_length_s: 30, stride_length_s: 5 });
+        setText(String(output?.text || '').trim());
+        if (!String(output?.text || '').trim()) setError('No speech was detected in the recording.');
+      } catch (e) {
+        setDownloadPct(null);
+        console.warn('Offline transcription unavailable:', e);
+        setError('Offline transcript unavailable (the first model download needs internet). You can still use ✨ Enhance with AI below.');
+      }
+    } catch {
+      setError('The recording could not be processed. Try again.');
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  // Engine 2 — Gemini via storhet-ai-ocr transcribe mode (same key, free tier).
+  async function enhance() {
+    if (!samplesRef.current || aiBusy) return;
+    setAiBusy(true); setAiText(''); setError('');
+    try {
+      const base64 = await fileToBase64(pcm16kToWavBlob(samplesRef.current));
+      const { data, error: fnError } = await supabase.functions.invoke('storhet-ai-ocr', {
+        body: { mode: 'transcribe', audio_base64: base64, mime_type: 'audio/wav' }
+      });
+      if (fnError) throw new Error(fnError.message);
+      if (data?.error) throw new Error(data.error);
+      if (!data?.text?.trim()) throw new Error('No speech was detected.');
+      setAiText(data.text.trim());
+    } catch (e) {
+      let message = e.message || 'AI transcription failed — the offline transcript is still available.';
+      try { const details = await e.context?.json(); if (details?.error) message = details.error; } catch { /* keep default */ }
+      setError(message);
+    } finally {
+      setAiBusy(false);
+    }
+  }
+
+  return (
+    <div className="modal-backdrop" onClick={() => !recording && !busy && !aiBusy && onClose()}>
+      <div className="modal" onClick={e => e.stopPropagation()}>
+        <div className="modal-heading">
+          <div><h2>Voice note</h2><p>Record, transcribe on this device, then optionally refine with AI.</p></div>
+          <button type="button" className="icon-btn" onClick={() => !recording && !busy && !aiBusy && onClose()} aria-label="Close"><X size={18} /></button>
+        </div>
+        {error && <div className="form-error">{error}</div>}
+
+        {!recording && !busy && samplesRef.current == null && (
+          <button type="button" className="primary-btn" onClick={start}>🎤 Start recording</button>
+        )}
+        {recording && (
+          <button type="button" className="primary-btn" style={{ background: '#dc2626' }} onClick={() => recorderRef.current?.stop()}>⏹ Stop recording</button>
+        )}
+        {downloadPct != null && <small style={{ display: 'block', marginTop: 8 }}>One-time offline model download: {Math.round(downloadPct)}% — cached for offline use afterwards.</small>}
+        {busy && <p style={{ marginTop: 8 }}>Transcribing on this device…</p>}
+
+        {aiText && (
+          <div style={{ marginTop: 12 }}>
+            <label>AI transcript (Gemini)
+              <textarea rows="4" readOnly value={aiText} />
+            </label>
+            <div className="modal-actions" style={{ marginBottom: 12 }}>
+              <button type="button" className="primary-btn" onClick={() => { setText(aiText); setAiText(''); }}>Use AI text</button>
+              <button type="button" className="secondary-btn" onClick={() => setAiText('')}>Keep offline text</button>
+            </div>
+          </div>
+        )}
+
+        {text && !recording && !busy && (
+          <>
+            <label>Transcript (edit before inserting)
+              <textarea rows="5" value={text} onChange={e => setText(e.target.value)} />
+            </label>
+            <div className="modal-actions">
+              <button type="button" className="secondary-btn" onClick={enhance} disabled={aiBusy}>
+                <Sparkles size={15} /> {aiBusy ? 'Transcribing with AI…' : 'Enhance with AI'}
+              </button>
+              <button type="button" className="primary-btn" onClick={() => { onInsert(text); onClose(); }}>Insert into notes</button>
+            </div>
+          </>
+        )}
+      </div>
+    </div>
+  );
+}
+
 function OcrModal({ onInsert, onClose }) {
   const [image, setImage] = useState(null); // { file, previewUrl }
   const [running, setRunning] = useState(false);
   const [progress, setProgress] = useState(0);
   const [text, setText] = useState('');
   const [error, setError] = useState('');
+  const [enhancing, setEnhancing] = useState(false);
+  const [aiText, setAiText] = useState('');
+  const [enhanceError, setEnhanceError] = useState('');
 
   useEffect(() => () => { if (image?.previewUrl) URL.revokeObjectURL(image.previewUrl); }, [image?.previewUrl]);
 
@@ -9183,7 +9400,7 @@ function OcrModal({ onInsert, onClose }) {
     const file = event.target.files?.[0];
     event.target.value = '';
     if (!file || !file.type.startsWith('image/')) return;
-    setError(''); setText('');
+    setError(''); setText(''); setAiText(''); setEnhanceError('');
     setImage(prev => {
       if (prev?.previewUrl) URL.revokeObjectURL(prev.previewUrl);
       return { file, previewUrl: URL.createObjectURL(file) };
@@ -9192,7 +9409,7 @@ function OcrModal({ onInsert, onClose }) {
 
   async function run() {
     if (!image || running) return;
-    setRunning(true); setError(''); setProgress(0);
+    setRunning(true); setError(''); setProgress(0); setAiText(''); setEnhanceError('');
     try {
       const result = await Tesseract.recognize(image.file, 'eng', {
         logger: m => { if (m.status === 'recognizing text') setProgress(m.progress); }
@@ -9206,17 +9423,39 @@ function OcrModal({ onInsert, onClose }) {
     }
   }
 
+  async function enhance() {
+    if (!image || enhancing) return;
+    setEnhancing(true); setAiText(''); setEnhanceError('');
+    try {
+      const resized = await resizeImageForAI(image.file);
+      const base64 = await fileToBase64(resized);
+      const { data, error: fnError } = await supabase.functions.invoke('storhet-ai-ocr', {
+        body: { mode: 'vision', image_base64: base64, mime_type: 'image/jpeg' }
+      });
+      if (fnError) throw new Error(fnError.message);
+      if (data?.error) throw new Error(data.error);
+      if (!data?.text?.trim()) throw new Error('The AI could not read any text in this image.');
+      setAiText(data.text.trim());
+    } catch (e) {
+      let message = e.message || 'Enhance failed — check your connection. The extracted text is still available.';
+      try { const details = await e.context?.json(); if (details?.error) message = details.error; } catch { /* keep default */ }
+      setEnhanceError(message);
+    } finally {
+      setEnhancing(false);
+    }
+  }
+
   const copy = async () => {
     try { await navigator.clipboard.writeText(text); }
     catch { window.prompt('Copy the extracted text:', text); }
   };
 
   return (
-    <div className="modal-backdrop" onClick={() => !running && onClose()}>
+    <div className="modal-backdrop" onClick={() => !running && !enhancing && onClose()}>
       <div className="modal modal-wide" onClick={e => e.stopPropagation()}>
         <div className="modal-heading">
-          <div><h2>Image to text (OCR)</h2><p>Take a photo or pick an image — readable text is extracted right here, no upload to any server.</p></div>
-          <button type="button" className="icon-btn" onClick={() => !running && onClose()} aria-label="Close"><X size={18} /></button>
+          <div><h2>Image to text (OCR)</h2><p>Take a photo or pick an image — readable text is extracted on this device. You can then optionally enhance it with AI.</p></div>
+          <button type="button" className="icon-btn" onClick={() => !running && !enhancing && onClose()} aria-label="Close"><X size={18} /></button>
         </div>
         {error && <div className="form-error">{error}</div>}
 
@@ -9236,7 +9475,7 @@ function OcrModal({ onInsert, onClose }) {
           <div className="ocr-work-area">
             <div className="ocr-preview"><img src={image.previewUrl} alt="Selected for OCR" /></div>
             <div className="ocr-side">
-              <button type="button" className="primary-btn" onClick={run} disabled={running}>
+              <button type="button" className="primary-btn" onClick={run} disabled={running || enhancing}>
                 {running ? `Reading… ${Math.round(progress * 100)}%` : 'Extract text'}
               </button>
               {running && (
@@ -9245,6 +9484,29 @@ function OcrModal({ onInsert, onClose }) {
                 </div>
               )}
               {!running && <small>First scan on this device downloads the English model once (~2 MB); after that it works offline.</small>}
+
+              {!running && (
+                <>
+                  <button type="button" className="secondary-btn" onClick={enhance} disabled={enhancing}>
+                    <Sparkles size={15} /> {enhancing ? 'Enhancing with AI…' : 'Enhance with AI'}
+                  </button>
+                  <small>Sends the image to Google AI for a more accurate read (best for handwriting, receipts and skewed photos).</small>
+                </>
+              )}
+            </div>
+          </div>
+        )}
+
+        {enhanceError && <div className="form-error">{enhanceError}</div>}
+
+        {aiText && (
+          <div style={{ marginTop: 12 }}>
+            <label>AI-enhanced text
+              <textarea rows="8" readOnly value={aiText} />
+            </label>
+            <div className="modal-actions" style={{ marginBottom: 12 }}>
+              <button type="button" className="primary-btn" onClick={() => { setText(aiText); setAiText(''); }}>Use AI text</button>
+              <button type="button" className="secondary-btn" onClick={() => setAiText('')}>Keep Tesseract text</button>
             </div>
           </div>
         )}
@@ -9264,6 +9526,7 @@ function OcrModal({ onInsert, onClose }) {
     </div>
   );
 }
+
 
 
 function DocToolbarButton({ active, onClick, title, children }) {
@@ -10262,7 +10525,7 @@ function StorhetAIChat() {
   const [error, setError] = useState('');
   const endRef = useRef(null);
 
-async function loadConversations() {
+  async function loadConversations() {
     const { data } = await supabase
       .from('ai_conversations')
       .select('id,title,updated_at')
@@ -10271,7 +10534,7 @@ async function loadConversations() {
     setConversations(data || []);
   }
 
-async function openConversation(id) {
+  async function openConversation(id) {
     setActiveId(id);
     setError('');
     const { data } = await supabase
@@ -10282,16 +10545,16 @@ async function openConversation(id) {
     setMessages(data || []);
   }
 
-function newConversation() {
+  function newConversation() {
     setActiveId(null);
     setMessages([]);
     setError('');
   }
 
-useEffect(() => { loadConversations(); }, []);
+  useEffect(() => { loadConversations(); }, []);
   useEffect(() => { endRef.current?.scrollIntoView({ behavior: 'smooth', block: 'nearest' }); }, [messages.length, sending]);
 
-async function send(event) {
+  async function send(event) {
     event.preventDefault();
     const text = input.trim();
     if (!text || sending) return;
@@ -10300,7 +10563,7 @@ async function send(event) {
     setInput('');
     setMessages(prev => [...prev, { role: 'user', content: text }]);
 
-try {
+    try {
       const { data, error: fnError } = await supabase.functions.invoke('storhet-ai-chat', {
         body: { message: text, conversation_id: activeId },
       });
@@ -10319,7 +10582,7 @@ try {
     }
   }
 
-return <>
+  return <>
     <PageHeading
       eyebrow="STORHET AI"
       title="Storhet AI"
@@ -10343,7 +10606,7 @@ return <>
         ))}
       </aside>
 
-<section className="ai-chat-main panel">
+      <section className="ai-chat-main panel">
         {messages.length === 0 && !sending ? (
           <div className="ai-welcome">
             <Bot size={34} />
@@ -10376,9 +10639,9 @@ return <>
           </div>
         )}
 
-{error && <div className="form-error" role="alert">{error}</div>}
+        {error && <div className="form-error" role="alert">{error}</div>}
 
-<form className="ai-input-area" onSubmit={send}>
+        <form className="ai-input-area" onSubmit={send}>
           <input
             value={input}
             onChange={e => setInput(e.target.value)}
@@ -10393,7 +10656,7 @@ return <>
   </>;
 }
 
-function MDPanel({ deals = [], quotes = [], invoices = [], customers = [], formatAmount, onApprove, onReject, onInviteStaff, onOpenInviteEmail, staffInvitations = [], onRevokeStaffInvitation, staffInvitationActionId }) {
+function MDPanel({ deals = [], quotes = [], invoices = [], customers = [], formatAmount, onApprove, onReject, onInviteStaff, onOpenInviteEmail, staffInvitations = [], onRevokeStaffInvitation, staffInvitationActionId, setPage }) {
   const [showStaffInvite, setShowStaffInvite] = useState(false);
   // Deals are not commercial approval records; only quotes and invoices can reach MD.
   const approvals = [...quotes.map(x => ({ ...x, _type: 'quote' })), ...invoices.map(x => ({ ...x, _type: 'invoice' }))].filter(item => item.approval_status === 'MD_PENDING');
@@ -10694,8 +10957,8 @@ function HRPanel({ activities = [], authorizedUsers = [], ownerProfiles = {}, cu
       {requisitionError && <div className="form-error">{requisitionError}</div>}
       <div className="table-wrap">
         <table className="hr-work-table">
-           <thead><tr><th>Request ID</th><th>Employee</th><th>Department</th><th>Request</th><th>Period</th><th>Description</th><th>Status</th><th>Actions</th></tr>
-           </thead>
+          <thead><tr><th>Request ID</th><th>Employee</th><th>Department</th><th>Request</th><th>Period</th><th>Description</th><th>Status</th><th>Actions</th></tr>
+          </thead>
 
           <tbody>
             {requisitions.length === 0 ? <tr><td colSpan="8"><div className="empty-state"><p>No requisitions have been submitted.</p></div></td></tr> : [...requisitions].map(request => (
