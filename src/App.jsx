@@ -1,4 +1,3 @@
-
 import { createContext, useContext, useEffect, useMemo, useState, useRef } from 'react';
 import { supabase } from './lib/supabase';
 import { Capacitor } from '@capacitor/core';
@@ -1206,6 +1205,7 @@ function App() {
   const [dealSupport, setDealSupport] = useState([]);
   const [notifications, setNotifications] = useState([]);
   const [unreadNotificationCount, setUnreadNotificationCount] = useState(0);
+  const markingChatReadRef = useRef(false);
   const [showNotifications, setShowNotifications] = useState(false);
   const notificationAudioContextRef = useRef(null);
   const notificationAudioUnlockedRef = useRef(false);
@@ -1357,6 +1357,33 @@ function App() {
   };
 
   const pageDataReady = (PAGE_DATA[page] || []).every(key => readyDatasets.has(key));
+
+  // Unread chat messages, shown as a badge on the sidebar's Chat item.
+  const unreadChatCount = useMemo(
+    () => notifications.filter(n => n.type === 'new_chat' && !n.read).length,
+    [notifications]
+  );
+
+  // While the Chat page is open, incoming chat notifications count as seen.
+  useEffect(() => {
+    if (page !== 'Chat' || unreadChatCount === 0 || !session?.user?.id || markingChatReadRef.current) return;
+    markingChatReadRef.current = true;
+    (async () => {
+      const { error } = await supabase
+        .from('notifications')
+        .update({ read: true })
+        .eq('user_id', session.user.id)
+        .eq('type', 'new_chat')
+        .eq('read', false);
+      if (!error) {
+        setNotifications(prev => prev.map(n => (n.type === 'new_chat' ? { ...n, read: true } : n)));
+        setUnreadNotificationCount(prev => Math.max(0, prev - unreadChatCount));
+      } else {
+        console.error('Could not mark chat notifications as read:', error);
+      }
+      markingChatReadRef.current = false;
+    })();
+  }, [page, unreadChatCount, session?.user?.id]);
 
   const formatAmount = (amountInUSD) => {
     const numericAmount = Number(amountInUSD) || 0;
@@ -4603,6 +4630,14 @@ function App() {
             {section.items.filter(([label]) => !(authorizationProfile?.role === 'technical_support' && label === 'Tickets') && !(label === 'Field Visits' && !['sales', 'head_of_sales', 'manager', 'admin'].includes(authorizationProfile?.role))).map(([label, Icon]) => (
               <button key={label} className={`nav-item ${page === label ? 'active' : ''}`} onClick={() => { setPage(label); setSidebarOpen(false); }}>
                 <Icon size={18} /><span>{label}</span>
+                {label === 'Chat' && unreadChatCount > 0 && (
+                  <span
+                    aria-label={`${unreadChatCount} unread chat messages`}
+                    style={{ marginLeft: 'auto', minWidth: 20, height: 20, padding: '0 6px', borderRadius: 999, background: '#ef4444', color: '#fff', fontSize: 11, fontWeight: 700, display: 'inline-flex', alignItems: 'center', justifyContent: 'center', lineHeight: 1 }}
+                  >
+                    {unreadChatCount > 99 ? '99+' : unreadChatCount}
+                  </span>
+                )}
               </button>
             ))}
           </div>
@@ -6641,6 +6676,63 @@ function BirthdayReminders({ customers = [], leads = [] }) {
     ))}
   </div>;
 }
+// ── Team chat: attachments + emoji ─────────────────────────────────────────
+const CHAT_ATTACHMENT_BUCKET = 'chat-attachments';
+const CHAT_MAX_FILE_BYTES = 10 * 1024 * 1024; // 10 MB
+const CHAT_EMOJI_GROUPS = [
+  { label: 'Smileys', icon: '😊', emojis: Array.from('😀😃😄😁😆😅😂🤣😊😇🙂😉😍🥰😘😋😎🤩🥳😏😌😴🤔🤗🤫😬🙄😢😭😤😡🥺😱🤯😷🤒') },
+  { label: 'Gestures', icon: '👍', emojis: Array.from('👍👎👌✌️🤞🤝🙏👏🙌👋🤙💪👀🫡🫶❤️🧡💛💚💙💜🖤💔🔥✨⭐💯✅❌⚠️❓❗') },
+  { label: 'Work', icon: '💼', emojis: Array.from('💼📊📈📉📅📌📎📝📄📁📧📞💻📱🖥️🔒🔑💡🎯🏆🚀⏰⌛💰💵🧾🤝📣🔔') },
+  { label: 'Fun', icon: '🎉', emojis: Array.from('🎉🎊🎁🎂🍕🍔🍟🍩☕🍺🥂⚽🏀🎵🎶🎮🌍🌞🌧️🌈🐶🐱🦁🌹🌴🚗✈️🏠') }
+];
+const formatChatFileSize = bytes => {
+  const n = Number(bytes) || 0;
+  if (n < 1024) return `${n} B`;
+  if (n < 1024 * 1024) return `${(n / 1024).toFixed(1)} KB`;
+  return `${(n / (1024 * 1024)).toFixed(1)} MB`;
+};
+
+function ChatAttachment({ message }) {
+  const [url, setUrl] = useState('');
+  const [failed, setFailed] = useState(false);
+  const isImage = String(message.attachment_type || '').startsWith('image/');
+
+  useEffect(() => {
+    let cancelled = false;
+    setUrl('');
+    setFailed(false);
+    supabase.storage.from(CHAT_ATTACHMENT_BUCKET).createSignedUrl(message.attachment_path, 3600).then(({ data, error }) => {
+      if (cancelled) return;
+      if (error || !data?.signedUrl) { console.error('Attachment link failed:', error); setFailed(true); return; }
+      setUrl(data.signedUrl);
+    });
+    return () => { cancelled = true; };
+  }, [message.attachment_path]);
+
+  const openFile = event => {
+    if (!url) { event.preventDefault(); return; }
+    if (IS_NATIVE) { event.preventDefault(); Browser.open({ url }); }
+  };
+
+  if (failed) return <div className="wa-attachment-file wa-attachment-failed">📎 {message.attachment_name || 'Attachment'} (unavailable)</div>;
+
+  if (isImage) {
+    return url
+      ? <a href={url} target="_blank" rel="noopener noreferrer" onClick={event => { event.stopPropagation(); openFile(event); }}><img className="wa-attachment-image" src={url} alt={message.attachment_name || 'Image attachment'} /></a>
+      : <div className="wa-attachment-file">Loading image…</div>;
+  }
+
+  return (
+    <a className="wa-attachment-file" href={url || '#'} target="_blank" rel="noopener noreferrer" download={message.attachment_name || undefined} onClick={event => { event.stopPropagation(); openFile(event); }}>
+      <span className="wa-attachment-icon">📎</span>
+      <span className="wa-attachment-info">
+        <strong>{message.attachment_name || 'File'}</strong>
+        <small>{formatChatFileSize(message.attachment_size)}</small>
+      </span>
+    </a>
+  );
+}
+
 function Chat() {
   const [users, setUsers] = useState([]);
   const [selectedUser, setSelectedUser] = useState(null);
@@ -6655,7 +6747,55 @@ function Chat() {
   const [selectedMessageId, setSelectedMessageId] = useState(null);
 
   const [currentUserId, setCurrentUserId] = useState(null);
+  const [currentUserName, setCurrentUserName] = useState('');
   const messagesEndRef = useRef(null);
+  const [showEmoji, setShowEmoji] = useState(false);
+  const [emojiGroup, setEmojiGroup] = useState(0);
+  const [pendingFile, setPendingFile] = useState(null);
+  const [pendingPreview, setPendingPreview] = useState('');
+  const fileInputRef = useRef(null);
+  const messageInputRef = useRef(null);
+  const emojiWrapRef = useRef(null);
+
+  // Close the emoji picker when clicking/tapping anywhere outside it.
+  useEffect(() => {
+    if (!showEmoji) return undefined;
+    const close = event => { if (!emojiWrapRef.current?.contains(event.target)) setShowEmoji(false); };
+    document.addEventListener('mousedown', close);
+    document.addEventListener('touchstart', close);
+    return () => { document.removeEventListener('mousedown', close); document.removeEventListener('touchstart', close); };
+  }, [showEmoji]);
+
+  // Thumbnail for a picked image; released when the file is cleared or sent.
+  useEffect(() => {
+    if (!pendingFile || !String(pendingFile.type).startsWith('image/')) { setPendingPreview(''); return undefined; }
+    const objectUrl = URL.createObjectURL(pendingFile);
+    setPendingPreview(objectUrl);
+    return () => URL.revokeObjectURL(objectUrl);
+  }, [pendingFile]);
+
+  function insertEmoji(emoji) {
+    const input = messageInputRef.current;
+    const start = input?.selectionStart ?? messageText.length;
+    const end = input?.selectionEnd ?? messageText.length;
+    const next = messageText.slice(0, start) + emoji + messageText.slice(end);
+    setMessageText(next);
+    const caret = start + emoji.length;
+    setTimeout(() => { input?.focus(); input?.setSelectionRange(caret, caret); }, 0);
+  }
+
+  function handleFileChosen(event) {
+    const file = event.target.files?.[0];
+    event.target.value = ''; // lets the same file be picked again later
+    if (!file) return;
+    if (file.size > CHAT_MAX_FILE_BYTES) {
+      setError(`"${file.name}" is too large. Maximum file size is ${formatChatFileSize(CHAT_MAX_FILE_BYTES)}.`);
+      return;
+    }
+    setError('');
+    setShowEmoji(false);
+    setPendingFile(file);
+  }
 
   useEffect(() => {
     loadCurrentUser();
@@ -6674,6 +6814,7 @@ function Chat() {
     }
 
     setCurrentUserId(user?.id || null);
+    setCurrentUserName(user?.user_metadata?.full_name || String(user?.email || '').split('@')[0]);
 
     if (user?.id) {
       fetchUsers(user.id);
@@ -6773,25 +6914,53 @@ function Chat() {
     event.preventDefault();
     const body = messageText.trim();
 
-    if (!body || !conversation || !currentUserId || sending) {
+    if ((!body && !pendingFile) || !conversation || !currentUserId || sending) {
       return;
     }
 
     setSending(true);
     setError('');
+    setShowEmoji(false);
 
+    // 1) Upload the attachment (if any) to private storage.
+    let attachment = {};
+    let uploadedPath = null;
+    if (pendingFile) {
+      const safeName = pendingFile.name.replace(/[^a-zA-Z0-9._-]/g, '_');
+      uploadedPath = `${conversation.id}/${Date.now()}-${safeName}`;
+      const { error: uploadError } = await supabase.storage
+        .from(CHAT_ATTACHMENT_BUCKET)
+        .upload(uploadedPath, pendingFile, { contentType: pendingFile.type || 'application/octet-stream', upsert: false });
+
+      if (uploadError) {
+        console.error('Failed to upload attachment:', uploadError);
+        setError(uploadError.message || 'Could not upload the file.');
+        setSending(false);
+        return;
+      }
+      attachment = {
+        attachment_path: uploadedPath,
+        attachment_name: pendingFile.name,
+        attachment_type: pendingFile.type || null,
+        attachment_size: pendingFile.size
+      };
+    }
+
+    // 2) Save the message row.
     const { data, error } = await supabase
       .from('chat_messages')
       .insert({
         conversation_id: conversation.id,
         sender_id: currentUserId,
-        body
+        body,
+        ...attachment
       })
       .select()
       .single();
 
     if (error) {
       console.error('Failed to send message:', error);
+      if (uploadedPath) await supabase.storage.from(CHAT_ATTACHMENT_BUCKET).remove([uploadedPath]);
       setError(error.message);
       setSending(false);
       return;
@@ -6815,8 +6984,8 @@ function Chat() {
         .insert({
           user_id: recipientId,
           type: 'new_chat',
-          title: 'New chat message',
-          message: body,
+          title: currentUserName ? `New message from ${currentUserName}` : 'New chat message',
+          message: body || `📎 ${pendingFile?.name || 'Attachment'}`,
           link: 'Chat'
         });
 
@@ -6828,10 +6997,12 @@ function Chat() {
       }
     }
     setMessageText('');
+    setPendingFile(null);
     setSending(false);
   }
   async function deleteMessage(messageId) {
     if (!messageId) return;
+    const target = messages.find(message => message.id === messageId);
 
     const { error } = await supabase
       .from('chat_messages')
@@ -6843,6 +7014,11 @@ function Chat() {
       console.error('Failed to delete message:', error);
       setError(error.message);
       return;
+    }
+
+    if (target?.attachment_path) {
+      const { error: removeError } = await supabase.storage.from(CHAT_ATTACHMENT_BUCKET).remove([target.attachment_path]);
+      if (removeError) console.error('Failed to remove attachment file:', removeError);
     }
 
     setMessages(prev =>
@@ -7002,7 +7178,8 @@ function Chat() {
                       onClick={() => setSelectedMessageId(message.id)}
                     >
                       <div className="wa-msg-bubble">
-                        <div className="wa-msg-text">{message.body}</div>
+                        {message.attachment_path && <ChatAttachment message={message} />}
+                        {message.body && <div className="wa-msg-text">{message.body}</div>}
                         {mine && selectedMessageId === message.id && (
                           <button
                             type="button"
@@ -7036,12 +7213,43 @@ function Chat() {
               <div ref={messagesEndRef} />
             </div>
 
+            {pendingFile && (
+              <div className="wa-attach-preview">
+                {pendingPreview
+                  ? <img src={pendingPreview} alt="" />
+                  : <span className="wa-attach-preview-icon">📎</span>}
+                <div className="wa-attach-preview-info">
+                  <strong>{pendingFile.name}</strong>
+                  <small>{formatChatFileSize(pendingFile.size)}</small>
+                </div>
+                <button type="button" className="wa-icon-btn" title="Remove attachment" onClick={() => setPendingFile(null)} disabled={sending}><X size={16} /></button>
+              </div>
+            )}
+
             <form className="wa-input-area" onSubmit={sendMessage}>
-              <button type="button" className="wa-icon-btn" title="Emoji">😊</button>
-              <button type="button" className="wa-icon-btn" title="Attach">📎</button>
+              <div className="wa-emoji-wrap" ref={emojiWrapRef}>
+                <button type="button" className="wa-icon-btn" title="Emoji" onClick={() => setShowEmoji(value => !value)}>😊</button>
+                {showEmoji && (
+                  <div className="wa-emoji-picker" role="dialog" aria-label="Emoji picker">
+                    <div className="wa-emoji-tabs">
+                      {CHAT_EMOJI_GROUPS.map((group, index) => (
+                        <button key={group.label} type="button" title={group.label} className={index === emojiGroup ? 'active' : ''} onClick={() => setEmojiGroup(index)}>{group.icon}</button>
+                      ))}
+                    </div>
+                    <div className="wa-emoji-grid">
+                      {CHAT_EMOJI_GROUPS[emojiGroup].emojis.map(emoji => (
+                        <button key={emoji} type="button" onClick={() => insertEmoji(emoji)}>{emoji}</button>
+                      ))}
+                    </div>
+                  </div>
+                )}
+              </div>
+              <button type="button" className="wa-icon-btn" title="Attach file" onClick={() => fileInputRef.current?.click()} disabled={sending}>📎</button>
+              <input ref={fileInputRef} type="file" hidden onChange={handleFileChosen} />
               <input
+                ref={messageInputRef}
                 type="text"
-                placeholder="Type a message..."
+                placeholder={pendingFile ? 'Add a caption (optional)...' : 'Type a message...'}
                 value={messageText}
                 onChange={e => setMessageText(e.target.value)}
                 disabled={sending}
@@ -7049,9 +7257,9 @@ function Chat() {
               <button
                 type="submit"
                 className="wa-send-btn"
-                disabled={sending || !messageText.trim()}
+                disabled={sending || (!messageText.trim() && !pendingFile)}
               >
-                Send
+                {sending && pendingFile ? 'Uploading...' : 'Send'}
               </button>
             </form>
           </>
