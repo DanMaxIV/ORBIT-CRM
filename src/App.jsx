@@ -6641,7 +6641,426 @@ function BirthdayReminders({ customers = [], leads = [] }) {
     ))}
   </div>;
 }
+function Chat() {
+  const [users, setUsers] = useState([]);
+  const [selectedUser, setSelectedUser] = useState(null);
+  const [conversation, setConversation] = useState(null);
+  const [messages, setMessages] = useState([]);
+  const [messageText, setMessageText] = useState('');
+  const [loadingUsers, setLoadingUsers] = useState(true);
+  const [loadingMessages, setLoadingMessages] = useState(false);
+  const [sending, setSending] = useState(false);
+  const [error, setError] = useState('');
+  const [searchQuery, setSearchQuery] = useState('');
+  const [selectedMessageId, setSelectedMessageId] = useState(null);
 
+  const [currentUserId, setCurrentUserId] = useState(null);
+  const messagesEndRef = useRef(null);
+
+  useEffect(() => {
+    loadCurrentUser();
+  }, []);
+
+  async function loadCurrentUser() {
+    const {
+      data: { user },
+      error
+    } = await supabase.auth.getUser();
+
+    if (error) {
+      console.error('Could not get current user:', error);
+      setError(error.message);
+      return;
+    }
+
+    setCurrentUserId(user?.id || null);
+
+    if (user?.id) {
+      fetchUsers(user.id);
+    }
+  }
+
+  async function fetchUsers(myUserId) {
+    setLoadingUsers(true);
+    setError('');
+
+    const { data, error } = await supabase
+      .from('authorized_users')
+      .select('user_id, email, role, status')
+      .eq('status', 'active')
+      .neq('user_id', myUserId)
+      .order('email', { ascending: true });
+
+    if (error) {
+      console.error('Failed to load chat users:', error);
+      setError('Unable to load users.');
+      setUsers([]);
+    } else {
+      setUsers(data || []);
+    }
+
+    setLoadingUsers(false);
+  }
+
+  async function openConversation(user) {
+    if (!currentUserId || !user?.user_id) return;
+
+    setSelectedUser(user);
+    setMessages([]);
+    setLoadingMessages(true);
+    setError('');
+
+    const { data, error } = await supabase
+      .from('chat_conversations')
+      .select('*')
+      .or(
+        `and(user_one.eq.${currentUserId},user_two.eq.${user.user_id}),and(user_one.eq.${user.user_id},user_two.eq.${currentUserId})`
+      )
+      .limit(1)
+      .maybeSingle();
+
+    if (error) {
+      console.error('Failed to find conversation:', error);
+      setError('Unable to open conversation.');
+      setLoadingMessages(false);
+      return;
+    }
+
+    let activeConversation = data;
+
+    if (!activeConversation) {
+      const { data: newConversation, error: createError } = await supabase
+        .from('chat_conversations')
+        .insert({
+          user_one: currentUserId,
+          user_two: user.user_id
+        })
+        .select()
+        .single();
+
+      if (createError) {
+        console.error('Failed to create conversation:', createError);
+        setError(createError.message);
+        setLoadingMessages(false);
+        return;
+      }
+
+      activeConversation = newConversation;
+    }
+
+    setConversation(activeConversation);
+    await fetchMessages(activeConversation.id);
+    setLoadingMessages(false);
+  }
+
+  async function fetchMessages(conversationId) {
+    const { data, error } = await supabase
+      .from('chat_messages')
+      .select('*')
+      .eq('conversation_id', conversationId)
+      .order('created_at', { ascending: true });
+
+    if (error) {
+      console.error('Failed to load messages:', error);
+      setError('Unable to load messages.');
+      return;
+    }
+
+    setMessages(data || []);
+  }
+
+  async function sendMessage(event) {
+    event.preventDefault();
+    const body = messageText.trim();
+
+    if (!body || !conversation || !currentUserId || sending) {
+      return;
+    }
+
+    setSending(true);
+    setError('');
+
+    const { data, error } = await supabase
+      .from('chat_messages')
+      .insert({
+        conversation_id: conversation.id,
+        sender_id: currentUserId,
+        body
+      })
+      .select()
+      .single();
+
+    if (error) {
+      console.error('Failed to send message:', error);
+      setError(error.message);
+      setSending(false);
+      return;
+    }
+
+    setMessages(prev => {
+      if (prev.some(message => message.id === data.id)) {
+        return prev;
+      }
+
+      return [...prev, data];
+    });
+    const recipientId =
+      conversation.user_one === currentUserId
+        ? conversation.user_two
+        : conversation.user_one;
+
+    if (recipientId !== currentUserId) {
+      const { error: notificationError } = await supabase
+        .from('notifications')
+        .insert({
+          user_id: recipientId,
+          type: 'new_chat',
+          title: 'New chat message',
+          message: body,
+          link: 'Chat'
+        });
+
+      if (notificationError) {
+        console.error(
+          'Failed to create chat notification:',
+          notificationError
+        );
+      }
+    }
+    setMessageText('');
+    setSending(false);
+  }
+  async function deleteMessage(messageId) {
+    if (!messageId) return;
+
+    const { error } = await supabase
+      .from('chat_messages')
+      .delete()
+      .eq('id', messageId)
+      .eq('sender_id', currentUserId);
+
+    if (error) {
+      console.error('Failed to delete message:', error);
+      setError(error.message);
+      return;
+    }
+
+    setMessages(prev =>
+      prev.filter(message => message.id !== messageId)
+    );
+  }
+
+  const scrollToBottom = () => {
+    messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
+  };
+
+  useEffect(() => {
+    scrollToBottom();
+  }, [messages]);
+
+  useEffect(() => {
+    if (!conversation?.id) return;
+
+    const channel = supabase
+      .channel(`chat-${conversation.id}`)
+      .on(
+        'postgres_changes',
+        {
+          event: 'INSERT',
+          schema: 'public',
+          table: 'chat_messages',
+          filter: `conversation_id=eq.${conversation.id}`
+        },
+        payload => {
+          const newMessage = payload.new;
+
+          setMessages(prev => {
+            if (prev.some(message => message.id === newMessage.id)) {
+              return prev;
+            }
+            return [...prev, newMessage];
+          });
+        }
+      )
+      .subscribe();
+
+    return () => {
+      supabase.removeChannel(channel);
+    };
+  }, [conversation?.id]);
+
+  const filteredUsers = users.filter(u =>
+    u.email.toLowerCase().includes(searchQuery.toLowerCase())
+  );
+
+  return (
+    <div className={`wa-layout ${selectedUser ? 'has-active-chat' : ''}`}>
+
+      <div className="wa-sidebar">
+        <div className="wa-sidebar-header">
+          <div className="wa-avatar">
+            {currentUserId ? 'U' : '?'}
+          </div>
+          <div className="wa-header-actions">
+            <button className="wa-icon-btn" title="New Chat"><MessageCircle size={18} /></button>
+            <button className="wa-icon-btn" title="Menu"><MoreHorizontal size={18} /></button>
+          </div>
+        </div>
+
+        <div className="wa-search-bar">
+          <div className="wa-search-input">
+            <Search size={15} />
+            <input
+              type="text"
+              placeholder="Search contacts..."
+              value={searchQuery}
+              onChange={(e) => setSearchQuery(e.target.value)}
+            />
+          </div>
+        </div>
+
+        <div className="wa-contacts-list">
+          {loadingUsers ? (
+            <div className="wa-empty-state">Loading users...</div>
+          ) : filteredUsers.length === 0 ? (
+            <div className="wa-empty-state">No contacts found</div>
+          ) : (
+            filteredUsers.map(user => (
+              <div
+                key={user.user_id}
+                className={`wa-contact-tile ${selectedUser?.user_id === user.user_id ? 'active' : ''}`}
+                onClick={() => openConversation(user)}
+              >
+                <div className="wa-avatar">
+                  {(user.email || '?').charAt(0).toUpperCase()}
+                </div>
+                <div className="wa-contact-body">
+                  <div className="wa-contact-top">
+                    <span className="wa-contact-name">{user.email.split('@')[0]}</span>
+                  </div>
+                  <div className="wa-contact-bottom">
+                    <span className="wa-last-msg">{user.email}</span>
+                    <span className="wa-role-tag">{roleLabel(user.role)}</span>
+                  </div>
+                </div>
+              </div>
+            ))
+          )}
+        </div>
+      </div>
+
+      <div className="wa-chat-panel">
+        {!selectedUser ? (
+          <div className="wa-welcome-screen">
+            <div className="wa-welcome-content">
+              <MessageCircle size={48} />
+              <h2>Select a contact</h2>
+              <p>Choose a conversation from the left to start messaging.</p>
+            </div>
+          </div>
+        ) : (
+          <>
+            <div className="wa-chat-header">
+              <button
+                className="wa-back-btn"
+                onClick={() => setSelectedUser(null)}
+                title="Back to contacts"
+              >
+                ←
+              </button>
+
+              <div className="wa-avatar">
+                {(selectedUser.email || '?').charAt(0).toUpperCase()}
+              </div>
+
+              <div className="wa-chat-info">
+                <strong>{selectedUser.email.split('@')[0]}</strong>
+                <span>Active now · {roleLabel(selectedUser.role)}</span>
+              </div>
+
+              <div className="wa-header-actions">
+                <button className="wa-icon-btn"><Search size={18} /></button>
+                <button className="wa-icon-btn"><MoreHorizontal size={18} /></button>
+              </div>
+            </div>
+
+            <div className="wa-chat-messages">
+              {loadingMessages ? (
+                <div className="wa-empty-state">Loading messages...</div>
+              ) : messages.length === 0 ? (
+                <div className="wa-empty-state">
+                  <span>No messages yet. Send a message to start the conversation.</span>
+                </div>
+              ) : (
+                messages.map(message => {
+                  const mine = message.sender_id === currentUserId;
+                  return (
+                    <div
+                      key={message.id}
+                      className={`wa-msg-row ${mine ? 'mine' : 'theirs'} ${selectedMessageId === message.id ? 'selected' : ''
+                        }`}
+                      onClick={() => setSelectedMessageId(message.id)}
+                    >
+                      <div className="wa-msg-bubble">
+                        <div className="wa-msg-text">{message.body}</div>
+                        {mine && selectedMessageId === message.id && (
+                          <button
+                            type="button"
+                            className="wa-msg-delete"
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              deleteMessage(message.id);
+                              setSelectedMessageId(null);
+                            }}
+                            title="Delete message"
+                          >
+                            Delete
+                          </button>
+                        )}
+                        <div className="wa-msg-meta">
+                          <span className="wa-msg-time">
+                            {message.created_at
+                              ? new Date(message.created_at).toLocaleTimeString([], {
+                                hour: '2-digit',
+                                minute: '2-digit'
+                              })
+                              : ''}
+                          </span>
+                          {mine && <span className="wa-msg-status">✓✓</span>}
+                        </div>
+                      </div>
+                    </div>
+                  );
+                })
+              )}
+              <div ref={messagesEndRef} />
+            </div>
+
+            <form className="wa-input-area" onSubmit={sendMessage}>
+              <button type="button" className="wa-icon-btn" title="Emoji">😊</button>
+              <button type="button" className="wa-icon-btn" title="Attach">📎</button>
+              <input
+                type="text"
+                placeholder="Type a message..."
+                value={messageText}
+                onChange={e => setMessageText(e.target.value)}
+                disabled={sending}
+              />
+              <button
+                type="submit"
+                className="wa-send-btn"
+                disabled={sending || !messageText.trim()}
+              >
+                Send
+              </button>
+            </form>
+          </>
+        )}
+      </div>
+      {error && <div className="wa-error-toast">{error}</div>}
+    </div>
+  );
+}
 function Activity({ icon, title, text, time }) {
   return (
     <div className="activity-row">
