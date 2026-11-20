@@ -4858,7 +4858,7 @@ function App() {
                 onAssign={assignTicket}
               />
             )}
-            {page === 'Chat' && <Chat />}
+            {page === 'Chat' && <Chat ownerProfiles={ownerProfiles} />}
             {page === 'Storhet AI' && <StorhetAIChat />}
             {page === 'Reports' && <AdvancedReports customers={customers} deals={deals} activities={activities} tickets={tickets} leads={leads} quotes={quotes} invoices={invoices} payments={payments} formatAmount={formatAmount} />}
             {page === 'Email Logs' && <EmailLogs emailLogs={emailLogs} customers={customers} onAdd={addEmailLog} />}
@@ -6733,7 +6733,31 @@ function ChatAttachment({ message }) {
   );
 }
 
-function Chat() {
+// ── Team chat: unread tracking (per device) ───────────────────────────────
+// "Seen up to" time per conversation is kept in localStorage, so no database change is needed.
+const chatReadKey = uid => `orbit_chat_read_${uid}`;
+const readChatReadMap = uid => { try { return JSON.parse(localStorage.getItem(chatReadKey(uid)) || '{}'); } catch { return {}; } };
+const writeChatReadMap = (uid, map) => { try { localStorage.setItem(chatReadKey(uid), JSON.stringify(map)); } catch { /* storage unavailable */ } };
+// Messages that already existed before this feature was first used are treated as seen.
+const chatBaseline = uid => {
+  try {
+    const key = `orbit_chat_baseline_${uid}`;
+    let value = localStorage.getItem(key);
+    if (!value) { value = new Date().toISOString(); localStorage.setItem(key, value); }
+    return value;
+  } catch { return new Date().toISOString(); }
+};
+const chatPreview = m => (m?.body ? String(m.body) : m?.attachment_name ? `📎 ${m.attachment_name}` : 'New message');
+
+// Two-letter initials for chat avatars: "Jane Doe" -> JD, "jane.doe" -> JD, "jane" -> JA.
+const chatInitials = name => {
+  const parts = String(name || '').replace(/[._-]+/g, ' ').trim().split(/\s+/).filter(Boolean);
+  if (parts.length === 0) return '?';
+  if (parts.length === 1) return parts[0].slice(0, 2).toUpperCase();
+  return (parts[0][0] + parts[1][0]).toUpperCase();
+};
+
+function Chat({ ownerProfiles = {} }) {
   const [users, setUsers] = useState([]);
   const [selectedUser, setSelectedUser] = useState(null);
   const [conversation, setConversation] = useState(null);
@@ -6748,6 +6772,9 @@ function Chat() {
 
   const [currentUserId, setCurrentUserId] = useState(null);
   const [currentUserName, setCurrentUserName] = useState('');
+  const [unreadByUser, setUnreadByUser] = useState({}); // { [senderUserId]: { count, preview, at } }
+  const convMapRef = useRef({}); // conversation id -> the other person's user id
+  const selectedUserRef = useRef(null);
   const messagesEndRef = useRef(null);
   const [showEmoji, setShowEmoji] = useState(false);
   const [emojiGroup, setEmojiGroup] = useState(0);
@@ -6800,6 +6827,100 @@ function Chat() {
   useEffect(() => {
     loadCurrentUser();
   }, []);
+
+  selectedUserRef.current = selectedUser;
+
+  async function refreshConversationMap(myId) {
+    const { data } = await supabase
+      .from('chat_conversations')
+      .select('id, user_one, user_two')
+      .or(`user_one.eq.${myId},user_two.eq.${myId}`);
+    const map = {};
+    (data || []).forEach(c => { map[c.id] = c.user_one === myId ? c.user_two : c.user_one; });
+    convMapRef.current = map;
+  }
+
+  async function loadUnread(myId) {
+    await refreshConversationMap(myId);
+    const { data, error: unreadError } = await supabase
+      .from('chat_messages')
+      .select('id, conversation_id, sender_id, body, attachment_name, created_at')
+      .neq('sender_id', myId)
+      .order('created_at', { ascending: false })
+      .limit(300);
+    if (unreadError) { console.error('Could not load unread messages:', unreadError); return; }
+    const readMap = readChatReadMap(myId);
+    const baseline = chatBaseline(myId);
+    const result = {};
+    (data || []).forEach(m => {
+      const otherId = convMapRef.current[m.conversation_id];
+      if (!otherId) return;
+      const seenUpTo = readMap[m.conversation_id] || baseline;
+      if (new Date(m.created_at) > new Date(seenUpTo)) {
+        const entry = result[otherId] || { count: 0, preview: chatPreview(m), at: m.created_at }; // newest first
+        entry.count += 1;
+        result[otherId] = entry;
+      }
+    });
+    setUnreadByUser(result);
+  }
+
+  function markConversationRead(conversationId, otherUserId, seenAt) {
+    if (!currentUserId || !conversationId) return;
+    const map = readChatReadMap(currentUserId);
+    map[conversationId] = seenAt || new Date().toISOString();
+    writeChatReadMap(currentUserId, map);
+    setUnreadByUser(prev => {
+      if (!prev[otherUserId]) return prev;
+      const next = { ...prev };
+      delete next[otherUserId];
+      return next;
+    });
+  }
+
+  // Live: a message from anyone I chat with updates the counts, whichever conversation is open.
+  useEffect(() => {
+    if (!currentUserId) return undefined;
+    loadUnread(currentUserId);
+
+    const channel = supabase
+      .channel(`chat-inbox-${currentUserId}`)
+      .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'chat_messages' }, async payload => {
+        const m = payload.new;
+        if (!m || m.sender_id === currentUserId) return;
+        let otherId = convMapRef.current[m.conversation_id];
+        if (!otherId) {
+          await refreshConversationMap(currentUserId); // someone started a brand-new conversation with me
+          otherId = convMapRef.current[m.conversation_id];
+        }
+        if (!otherId) return;
+        if (selectedUserRef.current?.user_id === otherId) {
+          markConversationRead(m.conversation_id, otherId, m.created_at);
+          return;
+        }
+        setUnreadByUser(prev => ({
+          ...prev,
+          [otherId]: { count: (prev[otherId]?.count || 0) + 1, preview: chatPreview(m), at: m.created_at }
+        }));
+      })
+      .subscribe();
+
+    return () => { supabase.removeChannel(channel); };
+  }, [currentUserId]);
+
+  // Display name (set in "Edit profile") first, then the part of the email before the @.
+  const displayNameFor = (userId, email) => {
+    const profileName = String(ownerProfiles[userId] || '').trim();
+    return profileName || String(email || '').split('@')[0] || 'Someone';
+  };
+  const myDisplayName = displayNameFor(currentUserId, currentUserName);
+  const nameOfUser = userId => {
+    const u = users.find(x => x.user_id === userId);
+    return u ? displayNameFor(u.user_id, u.email) : 'Someone';
+  };
+  const unreadEntries = Object.entries(unreadByUser);
+  const totalUnread = unreadEntries.reduce((sum, [, e]) => sum + e.count, 0);
+  const latestUnread = unreadEntries.sort((a, b) => new Date(b[1].at) - new Date(a[1].at))[0] || null;
 
   async function loadCurrentUser() {
     const {
@@ -6890,7 +7011,10 @@ function Chat() {
     }
 
     setConversation(activeConversation);
-    await fetchMessages(activeConversation.id);
+    const loadedMessages = await fetchMessages(activeConversation.id);
+    convMapRef.current[activeConversation.id] = user.user_id;
+    const newest = (loadedMessages || []).reduce((latest, m) => (!latest || new Date(m.created_at) > new Date(latest) ? m.created_at : latest), null);
+    markConversationRead(activeConversation.id, user.user_id, newest);
     setLoadingMessages(false);
   }
 
@@ -6904,10 +7028,11 @@ function Chat() {
     if (error) {
       console.error('Failed to load messages:', error);
       setError('Unable to load messages.');
-      return;
+      return [];
     }
 
     setMessages(data || []);
+    return data || [];
   }
 
   async function sendMessage(event) {
@@ -6984,7 +7109,7 @@ function Chat() {
         .insert({
           user_id: recipientId,
           type: 'new_chat',
-          title: currentUserName ? `New message from ${currentUserName}` : 'New chat message',
+          title: myDisplayName ? `New message from ${myDisplayName}` : 'New chat message',
           message: body || `📎 ${pendingFile?.name || 'Attachment'}`,
           link: 'Chat'
         });
@@ -7066,7 +7191,7 @@ function Chat() {
   }, [conversation?.id]);
 
   const filteredUsers = users.filter(u =>
-    u.email.toLowerCase().includes(searchQuery.toLowerCase())
+    `${displayNameFor(u.user_id, u.email)} ${u.email}`.toLowerCase().includes(searchQuery.toLowerCase())
   );
 
   return (
@@ -7074,9 +7199,30 @@ function Chat() {
 
       <div className="wa-sidebar">
         <div className="wa-sidebar-header">
-          <div className="wa-avatar">
-            {currentUserId ? 'U' : '?'}
+          <div className="wa-avatar" title={myDisplayName}>
+            {currentUserId ? chatInitials(myDisplayName) : '?'}
           </div>
+          {latestUnread ? (
+            <button
+              type="button"
+              title="Open conversation"
+              onClick={() => { const u = users.find(x => x.user_id === latestUnread[0]); if (u) openConversation(u); }}
+              style={{ flex: 1, minWidth: 0, display: 'flex', alignItems: 'center', gap: 8, padding: '4px 8px', border: 0, background: 'transparent', color: 'inherit', textAlign: 'left', cursor: 'pointer' }}
+            >
+              <span style={{ flex: 1, minWidth: 0, display: 'flex', flexDirection: 'column' }}>
+                <strong style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', fontSize: 13 }}>
+                  {nameOfUser(latestUnread[0])}{unreadEntries.length > 1 ? ` +${unreadEntries.length - 1} more` : ''}
+                </strong>
+                <small style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', opacity: 0.75 }}>{latestUnread[1].preview}</small>
+              </span>
+              <span
+                aria-label={`${totalUnread} unread messages`}
+                style={{ minWidth: 20, height: 20, padding: '0 6px', borderRadius: 999, background: '#ef4444', color: '#fff', fontSize: 11, fontWeight: 700, display: 'inline-flex', alignItems: 'center', justifyContent: 'center' }}
+              >
+                {totalUnread > 99 ? '99+' : totalUnread}
+              </span>
+            </button>
+          ) : <span style={{ flex: 1 }} />}
           <div className="wa-header-actions">
             <button className="wa-icon-btn" title="New Chat"><MessageCircle size={18} /></button>
             <button className="wa-icon-btn" title="Menu"><MoreHorizontal size={18} /></button>
@@ -7108,11 +7254,16 @@ function Chat() {
                 onClick={() => openConversation(user)}
               >
                 <div className="wa-avatar">
-                  {(user.email || '?').charAt(0).toUpperCase()}
+                  {chatInitials(displayNameFor(user.user_id, user.email))}
                 </div>
                 <div className="wa-contact-body">
                   <div className="wa-contact-top">
-                    <span className="wa-contact-name">{user.email.split('@')[0]}</span>
+                    <span className="wa-contact-name" style={unreadByUser[user.user_id] ? { fontWeight: 700 } : undefined}>{displayNameFor(user.user_id, user.email)}</span>
+                    {unreadByUser[user.user_id] && (
+                      <span style={{ marginLeft: 'auto', minWidth: 20, height: 20, padding: '0 6px', borderRadius: 999, background: '#ef4444', color: '#fff', fontSize: 11, fontWeight: 700, display: 'inline-flex', alignItems: 'center', justifyContent: 'center' }}>
+                        {unreadByUser[user.user_id].count > 99 ? '99+' : unreadByUser[user.user_id].count}
+                      </span>
+                    )}
                   </div>
                   <div className="wa-contact-bottom">
                     <span className="wa-last-msg">{user.email}</span>
@@ -7146,11 +7297,11 @@ function Chat() {
               </button>
 
               <div className="wa-avatar">
-                {(selectedUser.email || '?').charAt(0).toUpperCase()}
+                {chatInitials(displayNameFor(selectedUser.user_id, selectedUser.email))}
               </div>
 
               <div className="wa-chat-info">
-                <strong>{selectedUser.email.split('@')[0]}</strong>
+                <strong>{displayNameFor(selectedUser.user_id, selectedUser.email)}</strong>
                 <span>Active now · {roleLabel(selectedUser.role)}</span>
               </div>
 
@@ -10021,9 +10172,9 @@ function OcrModal({ onInsert, onClose }) {
   const [aiText, setAiText] = useState('');
   const [enhanceError, setEnhanceError] = useState('');
 
-  useEffect(() => () => { if (image?.previewUrl) URL.revokeObjectURL(image.previewUrl); }, [image?.previewUrl]);
+useEffect(() => () => { if (image?.previewUrl) URL.revokeObjectURL(image.previewUrl); }, [image?.previewUrl]);
 
-  const pickFile = event => {
+const pickFile = event => {
     const file = event.target.files?.[0];
     event.target.value = '';
     if (!file || !file.type.startsWith('image/')) return;
@@ -10034,7 +10185,7 @@ function OcrModal({ onInsert, onClose }) {
     });
   };
 
-  async function run() {
+async function run() {
     if (!image || running) return;
     setRunning(true); setError(''); setProgress(0); setAiText(''); setEnhanceError('');
     try {
@@ -10050,6 +10201,8 @@ function OcrModal({ onInsert, onClose }) {
     }
   }
 
+// Sends the photo to the storhet-ai-ocr edge function, which reads it
+  // with Gemini (same key the chat uses) and returns a cleaner transcription.
   async function enhance() {
     if (!image || enhancing) return;
     setEnhancing(true); setAiText(''); setEnhanceError('');
@@ -10072,12 +10225,12 @@ function OcrModal({ onInsert, onClose }) {
     }
   }
 
-  const copy = async () => {
+const copy = async () => {
     try { await navigator.clipboard.writeText(text); }
     catch { window.prompt('Copy the extracted text:', text); }
   };
 
-  return (
+return (
     <div className="modal-backdrop" onClick={() => !running && !enhancing && onClose()}>
       <div className="modal modal-wide" onClick={e => e.stopPropagation()}>
         <div className="modal-heading">
@@ -10086,7 +10239,7 @@ function OcrModal({ onInsert, onClose }) {
         </div>
         {error && <div className="form-error">{error}</div>}
 
-        <div className="ocr-pick-row">
+<div className="ocr-pick-row">
           <label className="secondary-btn" style={{ display: 'inline-flex', alignItems: 'center', gap: 6, cursor: 'pointer' }}>
             <Upload size={15} /> Choose image
             <input type="file" accept="image/*" hidden onChange={pickFile} />
@@ -10098,7 +10251,7 @@ function OcrModal({ onInsert, onClose }) {
           {image && <small style={{ alignSelf: 'center' }}>{image.file.name}</small>}
         </div>
 
-        {image && (
+{image && (
           <div className="ocr-work-area">
             <div className="ocr-preview"><img src={image.previewUrl} alt="Selected for OCR" /></div>
             <div className="ocr-side">
@@ -10112,7 +10265,7 @@ function OcrModal({ onInsert, onClose }) {
               )}
               {!running && <small>First scan on this device downloads the English model once (~2 MB); after that it works offline.</small>}
 
-              {!running && (
+{!running && (
                 <>
                   <button type="button" className="secondary-btn" onClick={enhance} disabled={enhancing}>
                     <Sparkles size={15} /> {enhancing ? 'Enhancing with AI…' : 'Enhance with AI'}
@@ -10124,9 +10277,9 @@ function OcrModal({ onInsert, onClose }) {
           </div>
         )}
 
-        {enhanceError && <div className="form-error">{enhanceError}</div>}
+{enhanceError && <div className="form-error">{enhanceError}</div>}
 
-        {aiText && (
+{aiText && (
           <div style={{ marginTop: 12 }}>
             <label>AI-enhanced text
               <textarea rows="8" readOnly value={aiText} />
@@ -10138,7 +10291,7 @@ function OcrModal({ onInsert, onClose }) {
           </div>
         )}
 
-        {text && (
+{text && (
           <>
             <label>Extracted text (edit before using)
               <textarea rows="8" value={text} onChange={e => setText(e.target.value)} />
