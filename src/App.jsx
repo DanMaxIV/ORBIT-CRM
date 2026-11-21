@@ -1,4 +1,4 @@
-import { createContext, useContext, useEffect, useMemo, useState, useRef } from 'react';
+import { createContext, useContext, useEffect, useMemo, useState, useRef, useCallback } from 'react';
 import { supabase } from './lib/supabase';
 import { Capacitor } from '@capacitor/core';
 import { Browser } from '@capacitor/browser';
@@ -30,6 +30,11 @@ import { Placeholder, CharacterCount } from '@tiptap/extensions';
 import FindAndReplace from '@tiptap/extension-find-and-replace';
 import { asBlob as htmlToDocxBlob } from 'html-docx-js-typescript';
 import Tesseract from 'tesseract.js';
+import { ReactFlow, ReactFlowProvider, Background, BackgroundVariant, Controls, MiniMap, useNodesState, useEdgesState, addEdge, Handle, Position, useReactFlow } from '@xyflow/react';
+import { Clock, Cake, GitBranch, Repeat, Square } from 'lucide-react';
+
+// STUDIO_CSS_IMPORT_MARKER
+
 
 
 
@@ -4794,7 +4799,7 @@ function App() {
             {page === 'Invoices' && <Invoices invoices={invoices} payments={payments} customers={customers} products={products} deals={deals} dealProducts={dealProducts} quotes={quotes} onAdd={addInvoice} onUpdate={updateInvoice} onDelete={deleteInvoice} onAddPayment={addPayment} formatAmount={formatAmount} currentUserId={session.user.id} isAdmin={isAdminRole(authorizationProfile?.role)} role={authorizationProfile?.role} onSendToHOS={sendInvoiceToHOS} onLoadInvoiceItems={loadInvoiceItems} onLoadQuoteItems={loadQuoteItems} initialDealId={commercialLaunch?.type === 'invoice' ? commercialLaunch.dealId : ''} initialQuoteId={commercialLaunch?.type === 'invoice' ? commercialLaunch.quoteId : ''} dealFilterId={commercialView?.type === 'invoices' ? commercialView.dealId : ''} onLaunchConsumed={() => setCommercialLaunch(null)} />}
             {page === 'Requisition' && <Requisition requisitions={requisitions} error={requisitionError} currentUserId={session.user.id} role={authorizationProfile?.role} employeeName={displayUserName} employeeEmail={session.user.email} onDelete={deleteRequisitions} onSubmit={submitRequisition} />}
             {page === 'Documents' && <Documents documents={documents} customers={customers} onUpload={uploadDocument} onDownload={downloadDocument} onDelete={deleteDocument} crmDocuments={crmDocuments} crmDocumentError={crmDocumentError} onSaveDoc={saveCrmDocument} onDeleteDoc={deleteCrmDocument} />}
-            {page === 'Automation' && <Automation workflows={workflows} onAdd={addWorkflow} onUpdate={updateWorkflow} />}
+            {page === 'Automation' && <AutomationStudio showToast={showToast} />}
             {page === 'Segments' && <Segments segments={segments} customers={customers} onAdd={addSegment} onUpdate={updateSegment} />}
             {page === 'Forecast' && <Forecast deals={deals} formatAmount={formatAmount} />}
             {page === 'Pipeline' && (
@@ -10172,9 +10177,9 @@ function OcrModal({ onInsert, onClose }) {
   const [aiText, setAiText] = useState('');
   const [enhanceError, setEnhanceError] = useState('');
 
-useEffect(() => () => { if (image?.previewUrl) URL.revokeObjectURL(image.previewUrl); }, [image?.previewUrl]);
+  useEffect(() => () => { if (image?.previewUrl) URL.revokeObjectURL(image.previewUrl); }, [image?.previewUrl]);
 
-const pickFile = event => {
+  const pickFile = event => {
     const file = event.target.files?.[0];
     event.target.value = '';
     if (!file || !file.type.startsWith('image/')) return;
@@ -10185,7 +10190,7 @@ const pickFile = event => {
     });
   };
 
-async function run() {
+  async function run() {
     if (!image || running) return;
     setRunning(true); setError(''); setProgress(0); setAiText(''); setEnhanceError('');
     try {
@@ -10201,7 +10206,7 @@ async function run() {
     }
   }
 
-// Sends the photo to the storhet-ai-ocr edge function, which reads it
+  // Sends the photo to the storhet-ai-ocr edge function, which reads it
   // with Gemini (same key the chat uses) and returns a cleaner transcription.
   async function enhance() {
     if (!image || enhancing) return;
@@ -10225,12 +10230,12 @@ async function run() {
     }
   }
 
-const copy = async () => {
+  const copy = async () => {
     try { await navigator.clipboard.writeText(text); }
     catch { window.prompt('Copy the extracted text:', text); }
   };
 
-return (
+  return (
     <div className="modal-backdrop" onClick={() => !running && !enhancing && onClose()}>
       <div className="modal modal-wide" onClick={e => e.stopPropagation()}>
         <div className="modal-heading">
@@ -10239,7 +10244,7 @@ return (
         </div>
         {error && <div className="form-error">{error}</div>}
 
-<div className="ocr-pick-row">
+        <div className="ocr-pick-row">
           <label className="secondary-btn" style={{ display: 'inline-flex', alignItems: 'center', gap: 6, cursor: 'pointer' }}>
             <Upload size={15} /> Choose image
             <input type="file" accept="image/*" hidden onChange={pickFile} />
@@ -10251,7 +10256,7 @@ return (
           {image && <small style={{ alignSelf: 'center' }}>{image.file.name}</small>}
         </div>
 
-{image && (
+        {image && (
           <div className="ocr-work-area">
             <div className="ocr-preview"><img src={image.previewUrl} alt="Selected for OCR" /></div>
             <div className="ocr-side">
@@ -10265,7 +10270,7 @@ return (
               )}
               {!running && <small>First scan on this device downloads the English model once (~2 MB); after that it works offline.</small>}
 
-{!running && (
+              {!running && (
                 <>
                   <button type="button" className="secondary-btn" onClick={enhance} disabled={enhancing}>
                     <Sparkles size={15} /> {enhancing ? 'Enhancing with AI…' : 'Enhance with AI'}
@@ -10277,9 +10282,9 @@ return (
           </div>
         )}
 
-{enhanceError && <div className="form-error">{enhanceError}</div>}
+        {enhanceError && <div className="form-error">{enhanceError}</div>}
 
-{aiText && (
+        {aiText && (
           <div style={{ marginTop: 12 }}>
             <label>AI-enhanced text
               <textarea rows="8" readOnly value={aiText} />
@@ -10291,7 +10296,7 @@ return (
           </div>
         )}
 
-{text && (
+        {text && (
           <>
             <label>Extracted text (edit before using)
               <textarea rows="8" value={text} onChange={e => setText(e.target.value)} />
@@ -10778,6 +10783,661 @@ function Documents({ documents, customers, onUpload, onDownload, onDelete, crmDo
   </>;
 }
 function Automation({ workflows, onAdd, onUpdate }) { const [show, setShow] = useState(false); const blank = { name: '', description: '', trigger_type: 'customer_created', action_type: 'create_notification', active: true, config: {} }; const [form, setForm] = useState(blank); const save = async e => { e.preventDefault(); try { await onAdd(form); setShow(false); setForm(blank) } catch (err) { alert(err.message) } }; return <><PageHeading eyebrow="AUTOMATION" title="Workflow automation" description="Define rules that turn CRM events into actions." action="New workflow" onAction={() => setShow(true)} /><div className="panel"><div className="table-wrap"><table><thead><tr><th>Workflow</th><th>Trigger</th><th>Action</th><th>Status</th><th>Created</th><th>Toggle</th></tr></thead><tbody>{workflows.length === 0 ? <tr><td colSpan="6">No workflows yet.</td></tr> : workflows.map(w => <tr key={w.id}><td><strong>{w.name}</strong><div className="deal-customer">{w.description}</div></td><td>{w.trigger_type}</td><td>{w.action_type}</td><td>{w.active ? 'Active' : 'Paused'}</td><td>{formatDate(w.created_at)}</td><td><button className="secondary-btn" onClick={() => onUpdate(w.id, { active: !w.active })}>{w.active ? 'Pause' : 'Activate'}</button></td></tr>)}</tbody></table></div></div>{show && <div className="modal-backdrop" onClick={() => setShow(false)}><form className="modal" onSubmit={save} onClick={e => e.stopPropagation()}><div className="modal-heading"><h2>New workflow</h2><button type="button" className="icon-btn" onClick={() => setShow(false)}><X size={18} /></button></div><label>Name<input required value={form.name} onChange={e => setForm({ ...form, name: e.target.value })} /></label><label>Description<input value={form.description} onChange={e => setForm({ ...form, description: e.target.value })} /></label><label>Trigger<select value={form.trigger_type} onChange={e => setForm({ ...form, trigger_type: e.target.value })}>{['customer_created', 'lead_created', 'deal_stage_changed', 'ticket_created', 'invoice_overdue', 'activity_due'].map(x => <option key={x}>{x}</option>)}</select></label><label>Action<select value={form.action_type} onChange={e => setForm({ ...form, action_type: e.target.value })}>{['create_notification', 'create_activity', 'log_event', 'send_email'].map(x => <option key={x}>{x}</option>)}</select></label><div className="modal-actions"><button type="button" className="secondary-btn" onClick={() => setShow(false)}>Cancel</button><button className="primary-btn">Create workflow</button></div></form></div>}</> }
+// ============================================================================
+// AUTOMATION STUDIO (Phase 2) — Overview + Templates + Visual Builder.
+// Reads workflow_node_types and workflow_versions from the Phase 1 migration.
+// Drafts save as new versions; execution arrives with the Phase 3 engine.
+// ============================================================================
+const STUDIO_NODE_ICONS = {
+  Workflow, UserPlus, Kanban, Receipt, CreditCard, CalendarCheck, Clock, Play,
+  CheckCircle2, FileText, UserCog, Cake, CalendarDays, Users, Tags, GitBranch,
+  Bell, ClipboardList, Mail, Pencil, Repeat, Square,
+};
+const studioIconFor = name => STUDIO_NODE_ICONS[name] || Workflow;
+const STUDIO_CATEGORY_ORDER = { trigger: 0, data: 1, condition: 2, action: 3, flow: 4 };
+const STUDIO_CATEGORY_LABEL = { trigger: 'When this happens', data: 'Find records', condition: 'Check things', action: 'Do things', flow: 'Control the flow' };
+const STUDIO_WEEKDAYS = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
+const studioStatusPill = status => <span className={`studio-status-pill ${status}`}>{status}</span>;
+const studioFmtDateTime = v => v ? new Date(v).toLocaleString(undefined, { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' }) : '—';
+
+function studioDefinitionToFlow(definition, registry) {
+  const nodes = (definition?.nodes || []).map(n => ({
+    id: n.id, type: 'studio', position: { x: n.x, y: n.y },
+    data: { nodeType: n.type, config: n.config || {}, meta: registry[n.type] || null },
+  }));
+  const edges = (definition?.edges || []).map(e => ({ id: e.id, source: e.source, target: e.target }));
+  return { nodes, edges };
+}
+
+function studioFlowToDefinition(nodes, edges) {
+  return {
+    nodes: nodes.map(n => ({ id: n.id, type: n.data.nodeType, config: n.data.config || {}, x: Math.round(n.position.x), y: Math.round(n.position.y) })),
+    edges: edges.map(e => ({ id: e.id, source: e.source, target: e.target })),
+  };
+}
+
+function studioConfigSummary(config) {
+  const parts = Object.entries(config || {})
+    .filter(([, v]) => v !== '' && v != null && !(Array.isArray(v) && v.length === 0))
+    .slice(0, 3)
+    .map(([k, v]) => `${k.replace(/_/g, ' ')}: ${Array.isArray(v) ? v.join(', ') : String(v).slice(0, 40)}`);
+  return parts.join(' · ');
+}
+
+function StudioNode({ data, selected }) {
+  const meta = data.meta;
+  if (!meta) return <div className="studio-node"><div className="studio-node-head"><strong>Unknown block</strong></div><p className="studio-node-desc">This block type is no longer registered.</p></div>;
+  const Icon = studioIconFor(meta.icon);
+  const isTrigger = meta.category === 'trigger';
+  const isEnd = meta.executor_kind === 'stop';
+  return (
+    <div className={`studio-node cat-${meta.category} ${selected ? 'selected' : ''}`}>
+      {!isTrigger && <Handle type="target" position={Position.Left} />}
+      <div className="studio-node-head">
+        <span className="studio-node-icon"><Icon size={14} /></span>
+        <strong>{meta.title}</strong>
+      </div>
+      <p className="studio-node-desc">{meta.description}</p>
+      <div className="studio-node-hint">{studioConfigSummary(data.config)}</div>
+      {!isEnd && <Handle type="source" position={Position.Right} />}
+    </div>
+  );
+}
+const STUDIO_FLOW_NODE_TYPES = { studio: StudioNode };
+
+function StudioConfigField({ label, schema, value, onChange }) {
+  if (Array.isArray(schema)) {
+    return (
+      <label>{label}
+        <select value={value ?? ''} onChange={e => onChange(e.target.value)}>
+          <option value="">—</option>
+          {schema.map(opt => <option key={String(opt)} value={typeof opt === 'object' ? opt.value : opt}>{typeof opt === 'object' ? opt.label : opt}</option>)}
+        </select>
+      </label>
+    );
+  }
+  if (schema && typeof schema === 'object') {
+    return (
+      <div>
+        <label>{label}</label>
+        {Object.entries(schema).map(([k, sub]) =>
+          <StudioConfigField key={k} label={k.replace(/_/g, ' ')} schema={sub}
+            value={(value || {})[k]}
+            onChange={v => onChange({ ...(value || {}), [k]: v })} />)}
+      </div>
+    );
+  }
+  const kind = String(schema);
+  if (kind === 'number') return <label>{label}<input type="number" value={value ?? ''} onChange={e => onChange(e.target.value)} /></label>;
+  if (kind === 'boolean') return <label>{label}<select value={value ?? ''} onChange={e => onChange(e.target.value === 'true')}><option value="">—</option><option value="true">Yes</option><option value="false">No</option></select></label>;
+  if (kind === 'date') return <label>{label}<input type="date" value={value ?? ''} onChange={e => onChange(e.target.value)} /></label>;
+  if (kind === 'HH:MM') return <label>{label}<input type="time" value={value ?? ''} onChange={e => onChange(e.target.value)} /></label>;
+  if (kind === 'me|anyone') return <label>{label}<select value={value ?? ''} onChange={e => onChange(e.target.value)}><option value="">—</option><option value="me">Only my records</option><option value="anyone">All records I can see</option></select></label>;
+  const long = /body|message|note|value.*any|text with/.test(kind);
+  return <label>{label}{long ? <textarea value={value ?? ''} onChange={e => onChange(e.target.value)} placeholder={kind.startsWith('text') ? 'You can use {{field}} placeholders' : ''} /> : <input type="text" value={value ?? ''} onChange={e => onChange(e.target.value)} />}</label>;
+}
+
+function StudioWeekdayPicker({ value, onChange }) {
+  const days = Array.isArray(value) ? value : [];
+  return (
+    <label>Days
+      <div className="studio-weekdays">
+        {STUDIO_WEEKDAYS.map((label, index) => {
+          const on = days.includes(index);
+          return <button type="button" key={label} className={on ? 'on' : ''} onClick={() => onChange(on ? days.filter(d => d !== index) : [...days, index])}>{label}</button>;
+        })}
+      </div>
+    </label>
+  );
+}
+
+function StudioConditionEditor({ conditions, onChange }) {
+  const list = Array.isArray(conditions) ? conditions : [];
+  const update = (index, patch) => onChange(list.map((c, i) => i === index ? { ...c, ...patch } : c));
+  return (
+    <div>
+      <label>Check whether all of these are true</label>
+      {list.map((condition, index) => (
+        <div className="studio-condition-row" key={index}>
+          <StudioConfigField label="Field" schema="text" value={condition.field} onChange={v => update(index, { field: v })} />
+          <StudioConfigField label="Operator"
+            schema={['equals', 'not_equals', 'contains', 'greater_than', 'less_than', 'is_empty', 'is_not_empty', 'older_than_days', 'newer_than_days', 'date_before', 'date_after']}
+            value={condition.operator} onChange={v => update(index, { operator: v })} />
+          <StudioConfigField label="Value" schema="any" value={condition.value} onChange={v => update(index, { value: v })} />
+          <button type="button" className="icon-btn" onClick={() => onChange(list.filter((_, i) => i !== index))} aria-label="Remove condition"><X size={14} /></button>
+        </div>
+      ))}
+      <button type="button" className="text-btn" onClick={() => onChange([...list, { field: '', operator: 'equals', value: '' }])}><Plus size={13} /> Add condition</button>
+    </div>
+  );
+}
+
+function StudioConfigPanel({ node, onConfigChange, onDeleteNode }) {
+  const meta = node?.data?.meta;
+  if (!node || !meta) return <div className="studio-config-empty">Click a block on the canvas to set it up. Every block explains what it does in plain English.</div>;
+  const config = node.data.config || {};
+  const Icon = studioIconFor(meta.icon);
+  return (
+    <>
+      <div className="studio-config-head">
+        <strong><Icon size={14} style={{ marginRight: 6, verticalAlign: -2 }} />{meta.title}</strong>
+        <p>{meta.description}</p>
+        {meta.requires_approval && <p style={{ color: '#a65b08' }}>⚠ This action needs a human approval before it runs for real.</p>}
+      </div>
+      <div className="studio-config-body">
+        {Object.entries(meta.config_schema || {}).map(([key, schema]) => {
+          if (key === 'weekdays') return <StudioWeekdayPicker key={key} value={config.weekdays} onChange={v => onConfigChange({ ...config, weekdays: v })} />;
+          if (key === 'conditions') return <StudioConditionEditor key={key} conditions={config.conditions} onChange={v => onConfigChange({ ...config, conditions: v })} />;
+          return <StudioConfigField key={key} label={key.replace(/_/g, ' ')} schema={schema} value={config[key]} onChange={v => onConfigChange({ ...config, [key]: v })} />;
+        })}
+        {Object.keys(meta.config_schema || {}).length === 0 && <p className="studio-config-empty">This block has no settings — connect it and you are done.</p>}
+        <button type="button" className="secondary-btn" style={{ marginTop: 10 }} onClick={onDeleteNode}><Trash2 size={14} /> Remove this block</button>
+      </div>
+    </>
+  );
+}
+
+function WorkflowBuilder({ registry, workflow, initialDefinition, onExit, showToast }) {
+  const [name, setName] = useState(workflow?.name || 'New automation');
+  const [description, setDescription] = useState(workflow?.description || '');
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState('');
+  const counterRef = useRef(1);
+  const historyRef = useRef([]);
+  const historyIndexRef = useRef(-1);
+  const { screenToFlowPosition } = useReactFlow();
+
+  const initial = studioDefinitionToFlow(initialDefinition, registry);
+  const [nodes, setNodes, onNodesChange] = useNodesState(initial.nodes.length ? initial.nodes : [{
+    id: 'n0', type: 'studio', position: { x: 80, y: 220 },
+    data: { nodeType: 'trigger_manual', config: {}, meta: registry['trigger_manual'] },
+  }]);
+  const [edges, setEdges, onEdgesChange] = useEdgesState(initial.edges);
+  const [selectedId, setSelectedId] = useState(null);
+  const [libraryQuery, setLibraryQuery] = useState('');
+  const [, forceRender] = useState(0);
+
+  const pushHistory = useCallback((nextNodes, nextEdges) => {
+    historyRef.current = historyRef.current.slice(0, historyIndexRef.current + 1);
+    historyRef.current.push({ nodes: nextNodes ?? nodes, edges: nextEdges ?? edges });
+    if (historyRef.current.length > 50) historyRef.current.shift();
+    historyIndexRef.current = historyRef.current.length - 1;
+    forceRender(v => v + 1);
+  }, [nodes, edges]);
+
+  const canUndo = historyIndexRef.current > 0;
+  const canRedo = historyIndexRef.current < historyRef.current.length - 1;
+
+  const applyHistory = direction => {
+    const index = historyIndexRef.current + direction;
+    const snapshot = historyRef.current[index];
+    if (!snapshot) return;
+    historyIndexRef.current = index;
+    setNodes(snapshot.nodes.map(n => ({ ...n })));
+    setEdges(snapshot.edges.map(e => ({ ...e })));
+    forceRender(v => v + 1);
+  };
+
+  const nextNodeId = () => { counterRef.current += 1; return `n${counterRef.current}`; };
+
+  const addNode = useCallback((nodeType, position) => {
+    const meta = registry[nodeType];
+    if (!meta) return;
+    const id = nextNodeId();
+    const at = position || (() => {
+  const flow = screenToFlowPosition({ x: window.innerWidth / 2, y: window.innerHeight / 2 });
+  return { x: flow.x - 110, y: flow.y - 40 };
+})();
+
+    const node = { id, type: 'studio', position: at, data: { nodeType, config: {}, meta } };
+    const nextNodes = [...nodes, node];
+    setNodes(nextNodes);
+    pushHistory(nextNodes, edges);
+    forceRender(v => v + 1);
+  }, [registry, nodes, edges, pushHistory, setNodes]);
+
+  const onConnect = useCallback(params => {
+    const nextEdges = addEdge({ ...params, id: `e${Date.now()}` }, edges);
+    setEdges(nextEdges);
+    pushHistory(nodes, nextEdges);
+  }, [edges, nodes, pushHistory, setEdges]);
+
+  const updateConfig = (nodeId, config) => {
+    setNodes(nds => nds.map(n => n.id === nodeId ? { ...n, data: { ...n.data, config } } : n));
+  };
+  const deleteNode = nodeId => {
+    const nextNodes = nodes.filter(n => n.id !== nodeId);
+    const nextEdges = edges.filter(e => e.source !== nodeId && e.target !== nodeId);
+    setNodes(nextNodes); setEdges(nextEdges);
+    if (selectedId === nodeId) setSelectedId(null);
+    pushHistory(nextNodes, nextEdges);
+  };
+
+  const metaOf = n => n.data.meta || registry[n.data.nodeType];
+const issues = useMemo(() => {
+  const list = [];
+  const triggers = nodes.filter(n => metaOf(n)?.category === 'trigger');
+  if (triggers.length === 0) list.push('Your automation needs a starting block ("When this happens"). Drag one in from the left.');
+  if (triggers.length > 1) list.push('An automation can only have one starting block. Remove the extra ones.');
+  triggers.forEach(t => { if (!edges.some(e => e.source === t.id)) list.push(`"${metaOf(t)?.title}" isn't connected to anything yet. Connect it to the next block.`); });
+  nodes.filter(n => metaOf(n)?.category !== 'trigger').forEach(n => {
+    if (!edges.some(e => e.target === n.id)) list.push(`"${metaOf(n)?.title || n.data.nodeType}" has nothing coming into it. It will never run.`);
+  });
+  return list;
+}, [nodes, edges, registry]);
+
+// Once the registry is available, attach meta to any node created without it.
+useEffect(() => {
+  if (!Object.keys(registry).length) return;
+  setNodes(nds => nds.map(n => !n.data.meta && registry[n.data.nodeType]
+    ? { ...n, data: { ...n.data, meta: registry[n.data.nodeType] } }
+    : n));
+}, [registry]);
+
+
+  const libraryGroups = useMemo(() => {
+    const query = libraryQuery.trim().toLowerCase();
+    const groups = {};
+    Object.values(registry).forEach(meta => {
+      if (query && !`${meta.title} ${meta.description}`.toLowerCase().includes(query)) return;
+      (groups[meta.category] = groups[meta.category] || []).push(meta);
+    });
+    Object.entries(groups).forEach(([, items]) => items.sort((a, b) => a.sort - b.sort));
+    return Object.entries(groups).sort((a, b) => STUDIO_CATEGORY_ORDER[a[0]] - STUDIO_CATEGORY_ORDER[b[0]]);
+  }, [registry, libraryQuery]);
+
+  const save = async ({ activate = false } = {}) => {
+    setError('');
+    if (issues.length) { setError('Fix the issues below before saving.'); return; }
+    setSaving(true);
+    try {
+      const { data: { user } } = await supabase.auth.getUser();
+      const definition = studioFlowToDefinition(nodes, edges);
+      let workflowId = workflow?.id;
+      if (!workflowId) {
+        const { data: created, error: createError } = await supabase
+          .from('workflows').insert([{ name: name.trim() || 'Untitled automation', description: description.trim() || null, status: 'draft', created_by: user.id }])
+          .select().single();
+        if (createError) throw createError;
+        workflowId = created.id;
+      } else {
+        const { error: updateError } = await supabase.from('workflows')
+          .update({ name: name.trim(), description: description.trim() || null, updated_at: new Date().toISOString() })
+          .eq('id', workflowId);
+        if (updateError) throw updateError;
+      }
+      const { data: versions } = await supabase.from('workflow_versions').select('version').eq('workflow_id', workflowId).order('version', { ascending: false }).limit(1);
+      const nextVersion = (versions?.[0]?.version || 0) + 1;
+      const { data: versionRow, error: versionError } = await supabase.from('workflow_versions')
+        .insert([{ workflow_id: workflowId, version: nextVersion, definition, created_by: user.id }])
+        .select().single();
+      if (versionError) throw versionError;
+      const { error: pointerError } = await supabase.from('workflows')
+        .update({ current_version_id: versionRow.id, ...(activate ? { status: 'active' } : {}) })
+        .eq('id', workflowId);
+      if (pointerError) throw pointerError;
+      showToast(activate ? 'Automation activated. The engine ships in Phase 3 — until then it runs when you test it.' : 'Draft saved.');
+    } catch (e) {
+      setError(e.message || 'Could not save this automation.');
+    } finally { setSaving(false); }
+  };
+
+  const selectedNode = nodes.find(n => n.id === selectedId) || null;
+
+  return (
+    <>
+      <div className="studio-toolbar">
+        <button type="button" className="secondary-btn" onClick={onExit}><ArrowLeft size={15} /> Back</button>
+        <input className="studio-toolbar-name" value={name} onChange={e => setName(e.target.value)} placeholder="Automation name" aria-label="Automation name" />
+        <div className="studio-toolbar-actions">
+          <button type="button" className="secondary-btn" onClick={() => applyHistory(-1)} disabled={!canUndo} title="Undo"><Undo2 size={15} /></button>
+          <button type="button" className="secondary-btn" onClick={() => applyHistory(1)} disabled={!canRedo} title="Redo"><Redo2 size={15} /></button>
+          <button type="button" className="secondary-btn" onClick={() => save()} disabled={saving}>{saving ? 'Saving…' : 'Save draft'}</button>
+          <button type="button" className="secondary-btn" title="Test mode arrives with the Phase 3 execution engine" disabled>Test</button>
+          <button type="button" className="primary-btn" onClick={() => save({ activate: true })} disabled={saving || issues.length > 0}>Activate</button>
+        </div>
+      </div>
+      {error && <div className="form-error">{error}</div>}
+      {issues.length > 0 && (
+        <div className="studio-issues">
+          <strong>Before this automation can run:</strong>
+          {issues.slice(0, 4).map((issue, i) => <div key={i}>• {issue}</div>)}
+        </div>
+      )}
+      <div className="studio-builder">
+        <aside className="studio-library">
+          <div className="studio-library-search">
+            <div className="toolbar-search"><Search size={14} /><input placeholder="Search blocks…" value={libraryQuery} onChange={e => setLibraryQuery(e.target.value)} /></div>
+          </div>
+          <div className="studio-library-list">
+            {libraryGroups.map(([category, items]) => (
+              <div key={category}>
+                <div className="studio-library-group-title">{STUDIO_CATEGORY_LABEL[category] || category}</div>
+                {items.map(meta => {
+                  const Icon = studioIconFor(meta.icon);
+                  return (
+                    <div key={meta.node_type} className="studio-library-item"
+                      draggable
+                      onDragStart={e => e.dataTransfer.setData('application/studio-node', meta.node_type)}
+                      onClick={() => addNode(meta.node_type)}>
+                      <span className="studio-library-item-icon"><Icon size={15} /></span>
+                      <span><strong>{meta.title}</strong><small>{meta.description}</small></span>
+                    </div>
+                  );
+                })}
+              </div>
+            ))}
+          </div>
+        </aside>
+        <div className="studio-canvas"
+          onDrop={e => {
+  e.preventDefault();
+  const nodeType = e.dataTransfer.getData('application/studio-node');
+  if (!nodeType) return;
+  const position = screenToFlowPosition({ x: e.clientX, y: e.clientY });
+  addNode(nodeType, position);
+}}
+
+          onDragOver={e => e.preventDefault()}>
+          <ReactFlow
+            nodes={nodes} edges={edges}
+            nodeTypes={STUDIO_FLOW_NODE_TYPES}
+            onNodesChange={onNodesChange} onEdgesChange={onEdgesChange}
+            onConnect={onConnect} onNodeDragStop={() => pushHistory()}
+            onNodeClick={(_, node) => setSelectedId(node.id)}
+            onPaneClick={() => setSelectedId(null)}
+            deleteKeyCode={['Backspace', 'Delete']}
+            onNodesDelete={() => window.setTimeout(() => pushHistory(), 0)}
+            fitView fitViewOptions={{ padding: 0.25 }}
+          >
+            <Background variant={BackgroundVariant.Dots} gap={18} size={1} color="#dfe3ee" />
+            <Controls showInteractive={false} />
+            <MiniMap pannable zoomable />
+          </ReactFlow>
+        </div>
+        <aside className="studio-config">
+          <StudioConfigPanel node={selectedNode} onConfigChange={config => updateConfig(selectedNode.id, config)} onDeleteNode={() => deleteNode(selectedNode.id)} />
+        </aside>
+      </div>
+    </>
+  );
+}
+
+function AutomationStudio({ showToast }) {
+  const [view, setView] = useState('overview'); // overview | templates | builder
+  const [workflows, setWorkflows] = useState([]);
+  const [runs, setRuns] = useState([]);
+  const [registry, setRegistry] = useState({});
+  const [templates, setTemplates] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [filter, setFilter] = useState('all');
+  const [search, setSearch] = useState('');
+  const [role, setRole] = useState('');
+  const [userId, setUserId] = useState(null);
+  const [builderState, setBuilderState] = useState(null);
+  const [busyId, setBusyId] = useState(null);
+  const [error, setError] = useState('');
+
+  const reload = useCallback(async ({ silent = false } = {}) => {
+    if (!silent) setLoading(true);
+    setError('');
+    try {
+      const { data: { user } } = await supabase.auth.getUser();
+      const { data: userRow } = await supabase.from('authorized_users').select('role').eq('user_id', user.id).maybeSingle();
+      setRole(userRow?.role || '');
+      setUserId(user.id);
+      const [wf, runRows, nodeTypes, tplRows] = await Promise.all([
+        supabase.from('workflows').select('*').order('updated_at', { ascending: false }),
+        supabase.from('workflow_runs').select('id, workflow_id, trigger_type, status, started_at, created_at, error').order('created_at', { ascending: false }).limit(100),
+        supabase.from('workflow_node_types').select('*').order('sort', { ascending: true }),
+        supabase.from('workflow_templates').select('id, name, description, category, definition').order('name', { ascending: true }),
+      ]);
+      if (wf.error) throw wf.error;
+if (runRows.error) throw runRows.error;
+if (nodeTypes.error) throw nodeTypes.error;
+if (tplRows.error) throw tplRows.error;
+
+      setWorkflows(wf.data || []);
+      setRuns(runRows.data || []);
+      setRegistry(Object.fromEntries((nodeTypes.data || []).map(row => [row.node_type, row])));
+      setTemplates(tplRows.data || []);
+    } catch (e) {
+      setError(e.message || 'Could not load the Automation Studio.');
+    } finally { setLoading(false); }
+  }, []);
+
+  useEffect(() => { reload(); }, [reload]);
+
+  const runsByWorkflow = useMemo(() => {
+    const map = {};
+    runs.forEach(run => { map[run.workflow_id] = (map[run.workflow_id] || 0) + 1; });
+    return map;
+  }, [runs]);
+
+  const openWorkflow = async workflow => {
+    try {
+      let definition = null;
+      if (workflow.current_version_id) {
+        const { data } = await supabase.from('workflow_versions').select('definition').eq('id', workflow.current_version_id).maybeSingle();
+        definition = data?.definition || null;
+      }
+      setBuilderState({ workflow, definition });
+      setView('builder');
+    } catch (e) { setError(e.message || 'Could not open this automation.'); }
+  };
+
+  const startNew = () => { setBuilderState({ workflow: null, definition: null }); setView('builder'); };
+
+  const useTemplate = async template => {
+    try {
+      setBusyId(template.id);
+      const { data: { user } } = await supabase.auth.getUser();
+      const { data: created, error: createError } = await supabase.from('workflows')
+        .insert([{ name: template.name, description: template.description, status: 'draft', created_by: user.id }])
+        .select().single();
+      if (createError) throw createError;
+      const { data: versionRow, error: versionError } = await supabase.from('workflow_versions')
+        .insert([{ workflow_id: created.id, version: 1, definition: template.definition, created_by: user.id }])
+        .select().single();
+      if (versionError) throw versionError;
+      await supabase.from('workflows').update({ current_version_id: versionRow.id }).eq('id', created.id);
+      setBuilderState({ workflow: { ...created, current_version_id: versionRow.id }, definition: template.definition });
+      setView('builder');
+    } catch (e) { setError(e.message || 'Could not start from this template.'); }
+    finally { setBusyId(null); }
+  };
+
+  const duplicateWorkflow = async workflow => {
+    try {
+      setBusyId(workflow.id);
+      const { data: { user } } = await supabase.auth.getUser();
+      let definition = null;
+      if (workflow.current_version_id) {
+        const { data } = await supabase.from('workflow_versions').select('definition').eq('id', workflow.current_version_id).maybeSingle();
+        definition = data?.definition || null;
+      }
+      const { data: created, error: createError } = await supabase.from('workflows')
+        .insert([{ name: `${workflow.name} (copy)`, description: workflow.description, status: 'draft', created_by: user.id }])
+        .select().single();
+      if (createError) throw createError;
+      let versionId = null;
+      if (definition) {
+        const { data: versionRow, error: versionError } = await supabase.from('workflow_versions')
+          .insert([{ workflow_id: created.id, version: 1, definition, created_by: user.id }]).select().single();
+        if (versionError) throw versionError;
+        versionId = versionRow.id;
+        await supabase.from('workflows').update({ current_version_id: versionId }).eq('id', created.id);
+      }
+      setWorkflows(prev => [{ ...created, current_version_id: versionId }, ...prev]);
+      showToast('Duplicated as a new draft.');
+    } catch (e) { setError(e.message || 'Could not duplicate this automation.'); }
+    finally { setBusyId(null); }
+  };
+
+  const toggleStatus = async workflow => {
+    setBusyId(workflow.id);
+    const next = workflow.status === 'active' ? 'paused' : 'active';
+    const { error: updateError } = await supabase.from('workflows').update({ status: next }).eq('id', workflow.id);
+    setBusyId(null);
+    if (updateError) { setError(updateError.message); return; }
+    setWorkflows(prev => prev.map(w => w.id === workflow.id ? { ...w, status: next, active: next === 'active' } : w));
+  };
+
+  const deleteWorkflow = async workflow => {
+    if (!window.confirm(`Delete "${workflow.name}"? Its versions and history go with it.`)) return;
+    setBusyId(workflow.id);
+    const { error: deleteError } = await supabase.from('workflows').delete().eq('id', workflow.id);
+    setBusyId(null);
+    if (deleteError) { setError(deleteError.message || 'Only an Admin or the MD can delete automations.'); return; }
+    setWorkflows(prev => prev.filter(w => w.id !== workflow.id));
+  };
+
+  const isAdmin = role === 'admin' || role === 'manager';
+  const counts = {
+    all: workflows.length,
+    mine: workflows.filter(w => w.created_by === userId).length,
+    active: workflows.filter(w => w.status === 'active').length,
+    paused: workflows.filter(w => w.status === 'paused').length,
+    draft: workflows.filter(w => w.status === 'draft').length,
+    failed: workflows.filter(w => w.fail_count > 0).length,
+  };
+  const visible = workflows.filter(w => {
+    if (filter === 'mine' && w.created_by !== userId) return false;
+    if (filter === 'active' && w.status !== 'active') return false;
+    if (filter === 'paused' && w.status !== 'paused') return false;
+    if (filter === 'draft' && w.status !== 'draft') return false;
+    if (filter === 'failed' && w.fail_count === 0) return false;
+    const q = search.trim().toLowerCase();
+    return !q || `${w.name} ${w.description || ''}`.toLowerCase().includes(q);
+  });
+  const recentRuns = runs.slice(0, 8);
+  const totalRuns = runs.length;
+  const failedRuns = runs.filter(r => r.status === 'failed').length;
+  const succeededRuns = runs.filter(r => r.status === 'succeeded' || r.status === 'partial').length;
+
+  const body = view === 'builder' && builderState ? (
+    <WorkflowBuilder
+      registry={registry}
+      workflow={builderState.workflow}
+      initialDefinition={builderState.definition}
+      onExit={() => { setView('overview'); reload({ silent: true }); }}
+      showToast={showToast}
+    />
+  ) : (
+    <div className="studio-shell">
+      <div className="page-heading">
+        <div>
+          <div className="eyebrow">AUTOMATION STUDIO</div>
+          <h1>{view === 'templates' ? 'Template library' : 'Automations'}</h1>
+          <p>Teach Storhet to do the repetitive work: every block is plain English, no code needed.</p>
+        </div>
+        <div className="page-heading-actions">
+          <button type="button" className="secondary-btn" onClick={() => setView(view === 'templates' ? 'overview' : 'templates')} disabled={loading}>
+            {view === 'templates' ? '← My automations' : 'Templates'}
+          </button>
+          <button type="button" className="primary-btn" onClick={startNew}><Plus size={16} /> New automation</button>
+        </div>
+      </div>
+
+      {error && <div className="form-error">{error}</div>}
+
+      {view === 'templates' ? (
+        loading ? <div className="panel empty-state">Loading templates…</div> : (
+          <div className="studio-template-grid">
+            {templates.map(template => (
+              <div className="panel studio-template-card" key={template.id}>
+                <div className="eyebrow">{(template.category || 'General').toUpperCase()}</div>
+                <h3>{template.name}</h3>
+                <p>{template.description}</p>
+                <button type="button" className="primary-btn" onClick={() => useTemplate(template)} disabled={busyId === template.id}>
+                  {busyId === template.id ? 'Opening…' : 'Use this template'}
+                </button>
+              </div>
+            ))}
+            {templates.length === 0 && <div className="panel empty-state"><p>No templates found. Run the Phase 1 migration to seed them.</p></div>}
+          </div>
+        )
+      ) : (
+        <>
+          <div className="stats-grid">
+            <div className="stat-card"><div className="stat-icon purple">W</div><div className="stat-label">Total automations</div><div className="stat-value">{counts.all}</div><div className="stat-change"><small>{counts.mine} created by you</small></div></div>
+            <div className="stat-card"><div className="stat-icon green">▶</div><div className="stat-label">Active</div><div className="stat-value">{counts.active}</div><div className="stat-change"><small>Running on their triggers</small></div></div>
+            <div className="stat-card"><div className="stat-icon orange">⏸</div><div className="stat-label">Paused &amp; drafts</div><div className="stat-value">{counts.paused + counts.draft}</div><div className="stat-change"><small>{counts.draft} drafts</small></div></div>
+            <div className="stat-card"><div className="stat-icon blue">↻</div><div className="stat-label">Executions (visible)</div><div className="stat-value">{totalRuns}</div><div className="stat-change"><small>{succeededRuns} ok · {failedRuns} failed</small></div></div>
+          </div>
+
+          <div className="panel">
+            <div className="toolbar">
+              <div className="toolbar-search"><Search size={15} /><input placeholder="Search automations" value={search} onChange={e => setSearch(e.target.value)} /></div>
+              <div className="filter-tabs">
+                {[['all', 'All'], ['mine', 'My automations'], ['active', 'Active'], ['paused', 'Paused'], ['draft', 'Drafts'], ['failed', 'Failed']].map(([key, label]) => (
+                  <button key={key} type="button" className={`filter-tab ${filter === key ? 'active' : ''}`} onClick={() => setFilter(key)}>
+                    {label}{counts[key] != null ? ` (${counts[key]})` : ''}
+                  </button>
+                ))}
+              </div>
+            </div>
+            {loading ? <div className="empty-state">Loading automations…</div> : visible.length === 0 ? (
+              <div className="empty-state">
+                <p>No automations here yet.</p>
+                <button type="button" className="primary-btn" onClick={startNew}>Create your first automation</button>
+              </div>
+            ) : (
+              <div className="table-wrap"><table>
+                <thead><tr><th>Automation</th><th>Creator</th><th>Status</th><th>Runs</th><th>Last run</th><th>Updated</th><th>Actions</th></tr></thead>
+                <tbody>
+                  {visible.map(w => (
+                    <tr key={w.id}>
+                      <td><strong>{w.name}</strong><div className="deal-customer">{w.description || '—'}</div></td>
+                      <td>{w.created_by === userId ? 'You' : 'Team member'}</td>
+                      <td>{studioStatusPill(w.status)}</td>
+                      <td>{runsByWorkflow[w.id] || 0}</td>
+                      <td>{studioFmtDateTime(w.last_run_at)}</td>
+                      <td>{studioFmtDateTime(w.updated_at)}</td>
+                      <td><div className="toolbar-actions">
+                        <button type="button" className="secondary-btn" onClick={() => openWorkflow(w)}>Open</button>
+                        <button type="button" className="secondary-btn" onClick={() => duplicateWorkflow(w)} disabled={busyId === w.id} title="Duplicate as draft"><Copy size={14} /></button>
+                        {w.status !== 'draft' && <button type="button" className="secondary-btn" onClick={() => toggleStatus(w)} disabled={busyId === w.id}>{w.status === 'active' ? 'Pause' : 'Resume'}</button>}
+                        {isAdmin && <button type="button" className="icon-btn" title="Delete" onClick={() => deleteWorkflow(w)}><X size={15} /></button>}
+                      </div></td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table></div>
+            )}
+          </div>
+
+          <div className="studio-overview-grid">
+            <div className="panel">
+              <div className="panel-heading">
+                <div><h3>Recent activity</h3><p>Latest runs across your automations (execution history fills up once the Phase 3 engine is live).</p></div>
+                <button type="button" className="text-btn" onClick={() => reload({ silent: true })}><RefreshCw size={13} /> Refresh</button>
+              </div>
+              {recentRuns.length === 0 ? <div className="empty-state"><p>No runs recorded yet. Automations save as drafts today; execution begins with the Phase 3 engine.</p></div> : recentRuns.map(run => (
+                <div className="studio-run-row" key={run.id}>
+                  <span className={`studio-run-dot ${run.status}`} />
+                  <span>{workflows.find(w => w.id === run.workflow_id)?.name || 'Automation'}</span>
+                  <span className="deal-customer">{run.trigger_type}</span>
+                  {run.error && <span className="status overdue" title={run.error}>error</span>}
+                  <time>{studioFmtDateTime(run.created_at)}</time>
+                </div>
+              ))}
+            </div>
+            <div className="panel">
+              <div className="panel-heading"><div><h3>How it works</h3><p>Three steps, in plain English.</p></div></div>
+              <div className="activity-row"><div className="activity-icon">1</div><div><strong>When this happens</strong><p>Pick a starting block — a schedule, a new lead, a won deal.</p></div></div>
+              <div className="activity-row"><div className="activity-icon">2</div><div><strong>Find &amp; check records</strong><p>Look up the CRM records you want, then check conditions on them.</p></div></div>
+              <div className="activity-row"><div className="activity-icon">3</div><div><strong>Do the work</strong><p>Notify people, create tasks, send approved messages. You confirm before anything external goes out.</p></div></div>
+            </div>
+          </div>
+        </>
+      )}
+    </div>
+  );
+
+  return <ReactFlowProvider>{body}</ReactFlowProvider>;
+}
+
 function Segments({ segments, customers, onAdd, onUpdate }) { const [show, setShow] = useState(false); const [form, setForm] = useState({ name: '', description: '', rule_json: { status: 'Active' }, active: true }); const [selected, setSelected] = useState(null); const save = async e => { e.preventDefault(); try { await onAdd(form); setShow(false) } catch (err) { alert(err.message) } }; const count = s => customers.filter(c => (c.status || 'Active') === (s.rule_json?.status || 'Active')).length; return <><PageHeading eyebrow="CUSTOMER INTELLIGENCE" title="Segments" description="Group customers for targeted follow-up and reporting." action="New segment" onAction={() => setShow(true)} /><div className="panel"><div className="table-wrap"><table><thead><tr><th>Segment</th><th>Rule</th><th>Customers</th><th>Status</th><th>Actions</th></tr></thead><tbody>{segments.length === 0 ? <tr><td colSpan="5">No segments yet.</td></tr> : segments.map(s => <tr key={s.id}><td><strong>{s.name}</strong><div className="deal-customer">{s.description}</div></td><td>Status = {s.rule_json?.status || 'Active'}</td><td>{count(s)}</td><td>{s.active ? 'Active' : 'Paused'}</td><td><button className="secondary-btn" onClick={() => onUpdate(s.id, { active: !s.active })}>{s.active ? 'Pause' : 'Activate'}</button></td></tr>)}</tbody></table></div></div>{show && <div className="modal-backdrop" onClick={() => setShow(false)}><form className="modal" onSubmit={save} onClick={e => e.stopPropagation()}><div className="modal-heading"><h2>New segment</h2><button type="button" className="icon-btn" onClick={() => setShow(false)}><X size={18} /></button></div><label>Name<input required value={form.name} onChange={e => setForm({ ...form, name: e.target.value })} /></label><label>Description<input value={form.description} onChange={e => setForm({ ...form, description: e.target.value })} /></label><label>Customer status<select value={form.rule_json.status} onChange={e => setForm({ ...form, rule_json: { ...form.rule_json, status: e.target.value } })}>{['Active', 'Inactive', 'Prospect', 'VIP'].map(x => <option key={x}>{x}</option>)}</select></label><div className="modal-actions"><button type="button" className="secondary-btn" onClick={() => setShow(false)}>Cancel</button><button className="primary-btn">Create segment</button></div></form></div>}</> }
 
 function Forecast({ deals, formatAmount }) {
