@@ -1122,7 +1122,7 @@ const suggestedUsdRate = code => {
 // (see ensureData) instead of fetching every table at login.
 const PAGE_DATA = {
   Dashboard: ['customers', 'leads', 'deals', 'activities', 'tickets'],
-  'MD Panel': ['deals', 'quotes', 'invoices', 'customers'],
+  'MD Panel': ['deals', 'quotes', 'invoices', 'customers', 'leads'],
   'HOS Panel': ['deals', 'quotes', 'invoices', 'tickets'],
   'HR Panel': ['activities', 'customers', 'leads', 'requisitions'],
   'Technical Support Panel': ['tickets', 'customers'],
@@ -4767,7 +4767,7 @@ function App() {
             {page === 'Dashboard' && (
               <Dashboard revenue={revenue} customers={customers} leads={leads} deals={deals} activities={activities} tickets={tickets} setPage={setPage} formatAmount={formatAmount} onSelectCustomer={setSelectedCustomer} onEditCustomer={setEditingCustomer} onDeleteCustomer={deleteCustomer} currentUserId={session.user.id} role={authorizationProfile?.role} />
             )}
-            {page === 'MD Panel' && ['manager', 'admin'].includes(authorizationProfile?.role) && <MDPanel deals={deals} quotes={quotes} invoices={invoices} customers={customers} formatAmount={formatAmount} onApprove={approveCommercialRecord} onReject={rejectCommercialRecord} onInviteStaff={inviteStaffWorker} onOpenInviteEmail={openCompose} staffInvitations={staffInvitations} onRevokeStaffInvitation={revokeStaffInvitation} staffInvitationActionId={staffInvitationActionId} setPage={setPage} />}
+            {page === 'MD Panel' && ['manager', 'admin'].includes(authorizationProfile?.role) && <MDPanel deals={deals} quotes={quotes} invoices={invoices} customers={customers} leads={leads} staffUsers={staffUsers} ownerProfiles={ownerProfiles} formatAmount={formatAmount} onApprove={approveCommercialRecord} onReject={rejectCommercialRecord} onInviteStaff={inviteStaffWorker} onOpenInviteEmail={openCompose} staffInvitations={staffInvitations} onRevokeStaffInvitation={revokeStaffInvitation} staffInvitationActionId={staffInvitationActionId} setPage={setPage} />}
 
             {page === 'HOS Panel' && authorizationProfile?.role === 'head_of_sales' && <HOSPanel deals={deals} quotes={quotes} invoices={invoices} quoteItems={quoteItems} tickets={tickets} ownerProfiles={ownerProfiles} formatAmount={formatAmount} currentUserId={session.user.id} role={authorizationProfile?.role} setPage={setPage} onApprove={approveCommercialRecord} onReject={rejectCommercialRecord} />}
             {page === 'HR Panel' && authorizationProfile?.role === 'hr' && <HRPanel activities={activities} authorizedUsers={authorizedUsers} ownerProfiles={ownerProfiles} customers={customers} leads={leads} requisitions={requisitions} requisitionError={requisitionError} onUpdateRequisitionStatus={updateRequisitionStatus} onDeleteRequisition={deleteRequisition} />}
@@ -6025,6 +6025,7 @@ function Requisition({ requisitions, error, currentUserId, role, employeeName, e
     .sort((a, b) => b.count - a.count);
   const maxTypeCount = Math.max(1, ...typeCounts.map(item => item.count));
   const listed = scoped.filter(request => statusFilter === 'All' || request.status === statusFilter);
+  const listedPg = usePagination(listed);
 
   const resetForm = () => { setDepartment(''); setRequestType(''); setDescription(''); setStartDate(''); setEndDate(''); };
   const openAll = (status = 'All') => { setStatusFilter(status); setView('all'); };
@@ -6131,9 +6132,9 @@ function Requisition({ requisitions, error, currentUserId, role, employeeName, e
             <button type="button" className="secondary-btn" onClick={() => setView('dashboard')}>Back to dashboard</button>
           </div>
         </div>
-        {listed.length === 0 ? <div className="empty-state"><p>No requests found.</p></div> : <div className="table-wrap"><table>
+        {listed.length === 0 ? <div className="empty-state"><p>No requests found.</p></div> : <><div className="table-wrap"><table>
           <thead><tr><th>Request ID</th><th>Employee</th><th>Department</th><th>Type</th><th>Dates</th><th>Description</th><th>Submitted</th><th>Status</th></tr></thead>
-          <tbody>{listed.map(request => <tr key={request.id}>
+          <tbody>{listedPg.items.map(request => <tr key={request.id}>
             <td><strong>{requisitionNumber(request)}</strong></td>
             <td>{request.employee_name}<div className="deal-customer">{request.employee_email}</div></td>
             <td>{request.department}</td>
@@ -6143,7 +6144,7 @@ function Requisition({ requisitions, error, currentUserId, role, employeeName, e
             <td>{formatDate(request.created_at)}</td>
             <td><span className={requisitionStatusClass(request.status)}>{request.status}</span></td>
           </tr>)}</tbody>
-        </table></div>}
+        </table></div><Pagination pg={listedPg} /></>}
       </div>
     </>;
   }
@@ -6474,6 +6475,34 @@ function downloadCSV(filename, header, rows) {
   link.download = filename;
   link.click();
   URL.revokeObjectURL(url);
+}
+
+// ── Pagination (10 per page across the CRM) ─────────────────────────────────
+const CRM_PAGE_SIZE = 10;
+function usePagination(items, pageSize = CRM_PAGE_SIZE) {
+  const [page, setPage] = useState(1);
+  const list = items || [];
+  const totalPages = Math.max(1, Math.ceil(list.length / pageSize));
+  const safePage = Math.min(page, totalPages);
+  return {
+    items: list.slice((safePage - 1) * pageSize, safePage * pageSize),
+    page: safePage, totalPages, total: list.length, pageSize, setPage
+  };
+}
+function Pagination({ pg }) {
+  if (!pg || pg.total <= pg.pageSize) return null;
+  const from = (pg.page - 1) * pg.pageSize + 1;
+  const to = Math.min(pg.page * pg.pageSize, pg.total);
+  return (
+    <div className="crm-pagination">
+      <span className="crm-pagination-info">{from}–{to} of {pg.total}</span>
+      <div className="crm-pagination-controls">
+        <button type="button" className="secondary-btn" disabled={pg.page <= 1} onClick={() => pg.setPage(pg.page - 1)} aria-label="Previous page">‹ Prev</button>
+        <span>{pg.page} / {pg.totalPages}</span>
+        <button type="button" className="secondary-btn" disabled={pg.page >= pg.totalPages} onClick={() => pg.setPage(pg.page + 1)} aria-label="Next page">Next ›</button>
+      </div>
+    </div>
+  );
 }
 
 function StatCard({ label, value, change, hint, icon, tone, onClick }) {
@@ -7437,6 +7466,7 @@ function Activity({ icon, title, text, time }) {
 
 function CustomerTable({ customers, deals = [], formatAmount, onSelectCustomer, onEditCustomer, onDeleteCustomer, currentUserId, role }) {
   const [openMenuId, setOpenMenuId] = useState(null);
+  const pg = usePagination(customers);
 
   useEffect(() => {
     if (openMenuId === null) return;
@@ -7450,7 +7480,7 @@ function CustomerTable({ customers, deals = [], formatAmount, onSelectCustomer, 
   }
 
   return (
-    <div className="table-wrap">
+    <><div className="table-wrap">
       <table>
         <thead>
           <tr>
@@ -7468,7 +7498,7 @@ function CustomerTable({ customers, deals = [], formatAmount, onSelectCustomer, 
           </tr>
         </thead>
         <tbody>
-          {customers.map(c => {
+          {pg.items.map(c => {
             const status = c.status || 'Active';
             const customerDeals = deals.filter(d => d.customer_id === c.id);
             const openDeals = customerDeals.filter(d => !['Won', 'Lost'].includes(d.stage));
@@ -7529,7 +7559,7 @@ function CustomerTable({ customers, deals = [], formatAmount, onSelectCustomer, 
           })}
         </tbody>
       </table>
-    </div>
+    </div><Pagination pg={pg} /></>
   );
 }
 
@@ -7979,6 +8009,7 @@ function FieldVisits({ customers = [], fieldVisits = [], currentUserId, role, on
   const [notice, setNotice] = useState(null); // { tone, text } result of the last check-in / check-out
 
   const visibleVisits = fieldVisits.filter(visit => role === 'manager' || role === 'admin' || visit.sales_rep_id === currentUserId);
+  const pg = usePagination(visibleVisits);
   const activeVisits = visibleVisits.filter(visit => !visit.check_out_at);
   const selectedCustomer = customers.find(customer => customer.id === customerId);
 
@@ -8169,7 +8200,7 @@ function FieldVisits({ customers = [], fieldVisits = [], currentUserId, role, on
 
     <div className="panel">
       <div className="panel-heading"><div><h3>Visit history</h3><p>{visibleVisits.length} visit{visibleVisits.length === 1 ? '' : 's'} recorded. Location links are retained for audit.</p></div></div>
-      {visibleVisits.length === 0 ? <div className="empty-state"><p>No field visits yet.</p></div> : <div className="table-wrap"><table><thead><tr><th>Visit target</th><th>Check In</th><th>Check Out</th><th>Distance</th><th>Verification</th><th>Location</th></tr></thead><tbody>{visibleVisits.map(visit => {
+      {visibleVisits.length === 0 ? <div className="empty-state"><p>No field visits yet.</p></div> : <><div className="table-wrap"><table><thead><tr><th>Visit target</th><th>Check In</th><th>Check Out</th><th>Distance</th><th>Verification</th><th>Location</th></tr></thead><tbody>{pg.items.map(visit => {
         const customer = customers.find(c => c.id === visit.customer_id);
         const checkInMapUrl = visit.check_in_location_url || googleMapsLocationUrl(visit.check_in_latitude, visit.check_in_longitude);
         const checkOutMapUrl = visit.check_out_location_url || googleMapsLocationUrl(visit.check_out_latitude, visit.check_out_longitude);
@@ -8182,7 +8213,7 @@ function FieldVisits({ customers = [], fieldVisits = [], currentUserId, role, on
           <td><span className={`status ${String(visit.verification_status || '').toLowerCase()}`}>{statusLabel(visit)}</span></td>
           <td><div className="field-visit-links field-visit-links-table">{checkInMapUrl && <a href={checkInMapUrl} target="_blank" rel="noreferrer" className="field-visit-map-link">Check-in location</a>}{checkOutMapUrl && <a href={checkOutMapUrl} target="_blank" rel="noreferrer" className="field-visit-map-link">Check-out location</a>}{targetMapUrl && <a href={targetMapUrl} target="_blank" rel="noreferrer" className="field-visit-map-link">Target location</a>}</div></td>
         </tr>;
-      })}</tbody></table></div>}
+      })}</tbody></table></div><Pagination pg={pg} /></>}
     </div>
   </>;
 }
@@ -8193,7 +8224,8 @@ function Activities({ activities, customers, ownerProfiles = {}, currentUserEmai
   const filters = { All: () => true, Upcoming: a => isOpenActivity(a) && !isOverdue(a), Overdue: isOverdue, Completed: a => a.status === 'Completed' };
   const counts = Object.fromEntries(Object.entries(filters).map(([k, f]) => [k, activities.filter(f).length]));
   const list = activities.filter(filters[tab]).sort((a, b) => { const diff = new Date(a.activity_date || 8.64e15) - new Date(b.activity_date || 8.64e15); return tab === 'Completed' ? -diff : diff; });
-  return <><PageHeading eyebrow="PRODUCTIVITY" title="Activities" description="Keep track of meetings, calls, and follow-ups." action="New activity" onAction={onAdd} /><div className="panel"><div className="panel-heading"><div><h3>Schedule</h3><p>Your tasks, calls and follow-ups.</p></div></div><div className="filter-tabs" role="tablist" aria-label="Filter activities">{Object.keys(filters).map(name => <button key={name} type="button" className={`filter-tab ${tab === name ? 'active' : ''} ${name === 'Overdue' && counts.Overdue ? 'danger' : ''}`} onClick={() => setTab(name)}>{name} ({counts[name]})</button>)}</div>{list.length === 0 ? <div className="empty-state"><p>{activities.length === 0 ? 'No activities yet.' : `No ${tab.toLowerCase()} activities.`}</p>{activities.length === 0 && <button type="button" className="primary-btn" onClick={onAdd}>Create your first activity</button>}</div> : list.map(activity => { const canEdit = isAdmin || activity.created_by === currentUserId; const date = activity.activity_date ? new Date(activity.activity_date) : null; return <div className="activity-row large" key={activity.id}><div className="date-box"><strong>{date ? date.getDate() : '--'}</strong><span>{date ? date.toLocaleDateString('en-US', { month: 'short' }).toUpperCase() : '---'}</span></div><div className="activity-content"><strong>{activity.title} {isOverdue(activity) && <span className="status overdue">Overdue</span>}</strong><p>{activity.type || 'Task'} · {getCustomerName(activity.customer_id)}</p><div className="activity-meta-badges"><span className={`priority-pill priority-${String(activity.priority || 'Medium').toLowerCase()}`}>{activity.priority || 'Medium'} priority</span><span className="assignee-pill">Assigned: {(activity.assigned_to === currentUserId ? (ownerProfiles[currentUserId] || currentUserEmail || 'Me') : (ownerProfiles[activity.assigned_to] || (activity.assigned_to ? 'Team member' : 'Unassigned')))}</span></div><small>Due: {formatDateTime(activity.activity_date)}</small>{activity.notes && <p className="activity-notes">{activity.notes}</p>}</div><div className="activity-actions"><button type="button" className="secondary-btn" onClick={() => onView(activity)}>View</button>{canEdit && <button type="button" className="secondary-btn" onClick={() => onEdit(activity)}><Pencil size={14} /> Edit</button>}{canEdit && isOpenActivity(activity) && <button type="button" className="secondary-btn" onClick={() => onStatusChange(activity.id, 'Completed')}>Mark done</button>}<select value={activity.status || 'Scheduled'} onChange={e => onStatusChange(activity.id, e.target.value)} disabled={!canEdit}><option value="Scheduled">Scheduled</option><option value="In Progress">In Progress</option><option value="Completed">Completed</option><option value="Cancelled">Cancelled</option></select>{canEdit && <button type="button" className="icon-btn" title="Delete activity" onClick={() => onDelete(activity.id)}><X size={16} /></button>}</div></div> })}</div></>;
+  const pg = usePagination(list);
+  return <><PageHeading eyebrow="PRODUCTIVITY" title="Activities" description="Keep track of meetings, calls, and follow-ups." action="New activity" onAction={onAdd} /><div className="panel"><div className="panel-heading"><div><h3>Schedule</h3><p>Your tasks, calls and follow-ups.</p></div></div><div className="filter-tabs" role="tablist" aria-label="Filter activities">{Object.keys(filters).map(name => <button key={name} type="button" className={`filter-tab ${tab === name ? 'active' : ''} ${name === 'Overdue' && counts.Overdue ? 'danger' : ''}`} onClick={() => setTab(name)}>{name} ({counts[name]})</button>)}</div>{list.length === 0 ? <div className="empty-state"><p>{activities.length === 0 ? 'No activities yet.' : `No ${tab.toLowerCase()} activities.`}</p>{activities.length === 0 && <button type="button" className="primary-btn" onClick={onAdd}>Create your first activity</button>}</div> : pg.items.map(activity => { const canEdit = isAdmin || activity.created_by === currentUserId; const date = activity.activity_date ? new Date(activity.activity_date) : null; return <div className="activity-row large" key={activity.id}><div className="date-box"><strong>{date ? date.getDate() : '--'}</strong><span>{date ? date.toLocaleDateString('en-US', { month: 'short' }).toUpperCase() : '---'}</span></div><div className="activity-content"><strong>{activity.title} {isOverdue(activity) && <span className="status overdue">Overdue</span>}</strong><p>{activity.type || 'Task'} · {getCustomerName(activity.customer_id)}</p><div className="activity-meta-badges"><span className={`priority-pill priority-${String(activity.priority || 'Medium').toLowerCase()}`}>{activity.priority || 'Medium'} priority</span><span className="assignee-pill">Assigned: {(activity.assigned_to === currentUserId ? (ownerProfiles[currentUserId] || currentUserEmail || 'Me') : (ownerProfiles[activity.assigned_to] || (activity.assigned_to ? 'Team member' : 'Unassigned')))}</span></div><small>Due: {formatDateTime(activity.activity_date)}</small>{activity.notes && <p className="activity-notes">{activity.notes}</p>}</div><div className="activity-actions"><button type="button" className="secondary-btn" onClick={() => onView(activity)}>View</button>{canEdit && <button type="button" className="secondary-btn" onClick={() => onEdit(activity)}><Pencil size={14} /> Edit</button>}{canEdit && isOpenActivity(activity) && <button type="button" className="secondary-btn" onClick={() => onStatusChange(activity.id, 'Completed')}>Mark done</button>}<select value={activity.status || 'Scheduled'} onChange={e => onStatusChange(activity.id, e.target.value)} disabled={!canEdit}><option value="Scheduled">Scheduled</option><option value="In Progress">In Progress</option><option value="Completed">Completed</option><option value="Cancelled">Cancelled</option></select>{canEdit && <button type="button" className="icon-btn" title="Delete activity" onClick={() => onDelete(activity.id)}><X size={16} /></button>}</div></div> })}<Pagination pg={pg} /></div></>;
 }
 
 function ActivityDetail({ activity, customer, ownerProfiles = {}, currentUserEmail, onClose, onEdit }) {
@@ -8255,6 +8287,7 @@ function Tickets({ tickets, error, onAdd, onStatusChange, onDelete, onEdit, onVi
     || (queue === 'Unassigned' && !t.assigned_to)
     || (queue === 'Customer portal' && t.source === 'portal');
   const filtered = tickets.filter(t => (status === 'All' || t.status === status) && (priority === 'All' || t.priority === priority) && matchesQueue(t) && (!q || `${t.title} ${t.description || ''} ${t.customers?.name || ''} ${t.category || ''} ${t.ticket_number || ''}`.toLowerCase().includes(q)));
+  const pg = usePagination(filtered);
   const count = s => tickets.filter(t => t.status === s).length;
   const portalOpen = tickets.filter(t => t.source === 'portal' && (t.status === 'Open' || t.status === 'In Progress')).length;
   return <>
@@ -8285,7 +8318,7 @@ function Tickets({ tickets, error, onAdd, onStatusChange, onDelete, onEdit, onVi
         <div className="empty-state">
           <p>No tickets yet.</p>
           <button type="button" className="secondary-btn" onClick={onAdd}>Create your first ticket</button>
-        </div> : filtered.length === 0 ? <div className="empty-state"><p>No tickets match your filters.</p></div> : <div className="table-wrap"><table><thead><tr><th>Ticket</th><th>Customer</th><th>Assigned to</th><th>Priority</th><th>Status</th><th>Created</th><th>Actions</th></tr></thead><tbody>{filtered.map(ticket => {
+        </div> : filtered.length === 0 ? <div className="empty-state"><p>No tickets match your filters.</p></div> : <><div className="table-wrap"><table><thead><tr><th>Ticket</th><th>Customer</th><th>Assigned to</th><th>Priority</th><th>Status</th><th>Created</th><th>Actions</th></tr></thead><tbody>{pg.items.map(ticket => {
           const editable = canManage(ticket);
           return <tr key={ticket.id}>
             <td>
@@ -8301,7 +8334,7 @@ function Tickets({ tickets, error, onAdd, onStatusChange, onDelete, onEdit, onVi
             <td>{formatDate(ticket.created_at)}</td>
             <td><div className="toolbar-actions"><button type="button" className="secondary-btn" onClick={() => onView(ticket)}>View</button>{editable && <button type="button" className="secondary-btn" onClick={() => onEdit(ticket)}><Pencil size={14} /> Edit</button>}{(isAdmin || ticket.created_by === currentUserId) && <button type="button" className="icon-btn" title="Delete ticket" onClick={() => onDelete(ticket.id)}><X size={16} /></button>}</div></td>
           </tr>;
-        })}</tbody></table></div>}</div></>;
+        })}</tbody></table></div><Pagination pg={pg} /></>}</div></>;
 }
 function TicketDetail({ onRefresh, ticket, staffName, staffOptions, currentUserId, canManage, onClose, onEdit, onStatusChange, onAssign }) {
   const [comments, setComments] = useState([]);
@@ -8537,6 +8570,7 @@ function Leads({ leads, customers, products, leadProducts, onAdd, onUpdate, onSy
   const primaryVendors = ['F5', 'Kong', 'IRONSCALES', 'SolarWinds', 'Utimaco'];
   const normalizeVendor = vendor => (vendor || '').trim().toLowerCase();
   const visible = leads.filter(x => `${x.name || ''} ${x.email || ''} ${x.company || ''} ${x.source || ''}`.toLowerCase().includes(q.toLowerCase()));
+  const pg = usePagination(visible);
 
   const productsForVendor = vendor => products.filter(product =>
     normalizeVendor(product.vendor) === normalizeVendor(vendor) && product.status !== 'Inactive'
@@ -8631,7 +8665,7 @@ function Leads({ leads, customers, products, leadProducts, onAdd, onUpdate, onSy
       {visible.length === 0 ?
         <div className="empty-state">
           <p>No leads yet.</p>
-        </div> : <div className="table-wrap">
+        </div> : <><div className="table-wrap">
           <table>
             <thead>
               <tr>
@@ -8644,10 +8678,11 @@ function Leads({ leads, customers, products, leadProducts, onAdd, onUpdate, onSy
               </tr>
             </thead>
             <tbody>
-              {visible.map(x => {
+              {pg.items.map(x => {
                 const solutionNames = solutionNamesForLead(x.id);
                 return <tr key={x.id}>
-                  <td><strong>{x.name || x.email}</strong><div className="deal-customer">{x.email}</div></td>
+                  <td><strong>{x.name} <span>({x.job_title})</span> </strong><div className="deal-customer">{x.email}</div>
+                  </td>
                   <td>{x.company || '—'}</td>
                   <td>
                     {solutionNames.length ? (
@@ -8669,7 +8704,7 @@ function Leads({ leads, customers, products, leadProducts, onAdd, onUpdate, onSy
               })}
             </tbody>
           </table>
-        </div>}
+        </div><Pagination pg={pg} /></>}
     </div>
 
 
@@ -8887,6 +8922,7 @@ function EmailPage({ emailLogs, customers, integrations, loading, error, onConne
 }
 function EmailLogs({ emailLogs, customers, onAdd, openExternally = false, onCloseExternal }) {
   const [show, setShow] = useState(openExternally);
+  const pg = usePagination(emailLogs);
   useEffect(() => { if (openExternally) setShow(true) }, [openExternally]);
   const [form, setForm] = useState({ to_email: '', subject: '', body: '', direction: 'Outgoing', status: 'Logged', customer_id: '' });
   const save = async e => {
@@ -8898,7 +8934,7 @@ function EmailLogs({ emailLogs, customers, onAdd, openExternally = false, onClos
   };
   return <>
     <div className="panel">
-      <div className="table-wrap">
+      <><div className="table-wrap">
         <table>
           <thead>
             <tr>
@@ -8913,7 +8949,7 @@ function EmailLogs({ emailLogs, customers, onAdd, openExternally = false, onClos
             {emailLogs.length === 0 ?
               <tr>
                 <td colSpan="5">No email logs yet.</td>
-              </tr> : emailLogs.map(
+              </tr> : pg.items.map(
                 e => <tr key={e.id}><td><strong>{e.subject}</strong>
                   <div className="deal-customer">{e.body?.slice(0, 80)}</div>
                 </td>
@@ -8925,7 +8961,7 @@ function EmailLogs({ emailLogs, customers, onAdd, openExternally = false, onClos
             }
           </tbody>
         </table>
-      </div>
+      </div><Pagination pg={pg} /></>
     </div>
     {show && <div className="modal-backdrop" onClick={() => setShow(false)}>
       <form className="modal" onSubmit={save} onClick={e => e.stopPropagation()}>
@@ -9386,6 +9422,7 @@ function Quotes({ quotes = [], products = [], quoteItems = [], deals = [], dealP
     (role !== 'sales' || q.created_by === currentUserId) &&
     (!dealFilterId || q.deal_id === dealFilterId)
   );
+  const pg = usePagination(visibleQuotes);
 
   const moneyNumber = value => Number(value) || 0;
   const lineSubtotal = item => moneyNumber(item.quantity) * moneyNumber(item.unit_price);
@@ -9587,7 +9624,7 @@ function Quotes({ quotes = [], products = [], quoteItems = [], deals = [], dealP
     />
 
     <div className="panel">
-      <div className="table-wrap">
+      <><div className="table-wrap">
         <table>
           <thead>
             <tr>
@@ -9600,7 +9637,7 @@ function Quotes({ quotes = [], products = [], quoteItems = [], deals = [], dealP
             </tr>
           </thead>
           <tbody>
-            {visibleQuotes.length === 0 ? <tr><td colSpan="6">No quotes yet.</td></tr> : visibleQuotes.map(q => (
+            {visibleQuotes.length === 0 ? <tr><td colSpan="6">No quotes yet.</td></tr> : pg.items.map(q => (
               <tr key={q.id}>
                 <td><strong>{q.quote_number}</strong><div className="deal-customer">{q.title}</div></td>
                 <td>{q.customer_name || q.company || '—'}{q.company && q.customer_name ? <div className="deal-customer">{q.company}</div> : null}</td>
@@ -9618,7 +9655,7 @@ function Quotes({ quotes = [], products = [], quoteItems = [], deals = [], dealP
             ))}
           </tbody>
         </table>
-      </div>
+      </div><Pagination pg={pg} /></>
     </div>
 
     {preview && <div className="commercial-preview-backdrop" onClick={() => setPreview(null)}>
@@ -9825,6 +9862,7 @@ function Invoices({ invoices, payments, customers, products, deals = [], dealPro
   const emptyItem = () => ({ product_id: '', product_name: '', description: '', quantity: 1, unit_price: 0, discount: 0, tax: 0 });
   const [items, setItems] = useState([emptyItem()]);
   const visibleInvoices = invoices.filter(i => (role !== 'sales' || i.created_by === currentUserId) && (!dealFilterId || i.deal_id === dealFilterId));
+  const pg = usePagination(visibleInvoices);
   const wonDeals = deals.filter(d => d.stage === 'Won' && (role !== 'sales' || d.created_by === currentUserId));
   const selectableQuotes = quotes.filter(q => q.approval_status === 'APPROVED' && (!form.deal_id || !q.deal_id || q.deal_id === form.deal_id) && (role !== 'sales' || q.created_by === currentUserId));
   const money = v => Number(v) || 0;
@@ -9922,12 +9960,12 @@ function Invoices({ invoices, payments, customers, products, deals = [], dealPro
       <StatCard label="Outstanding" value={formatAmount(invoices.filter(x => !['Paid', 'Cancelled'].includes(x.status)).reduce((s, x) => s + docAmountUsd(x, 'amount'), 0))} hint="Open balances" tone="orange" icon="!" />
     </div>
     {dealFilterId && <div className="panel" style={{ marginBottom: 12 }}><strong>Invoices for Deal:</strong> {deals.find(d => d.id === dealFilterId)?.title || dealFilterId}</div>}
-    <div className="panel"><div className="table-wrap"><table><thead><tr><th>Invoice</th><th>Customer</th><th>Deal</th><th>Source Quote</th><th>Amount</th><th>Status</th><th>Due</th><th>Actions</th></tr></thead><tbody>
-      {visibleInvoices.length === 0 ? <tr><td colSpan="8">No invoices yet.</td></tr> : visibleInvoices.map(i => <tr key={i.id}>
+    <div className="panel"><><div className="table-wrap"><table><thead><tr><th>Invoice</th><th>Customer</th><th>Deal</th><th>Source Quote</th><th>Amount</th><th>Status</th><th>Due</th><th>Actions</th></tr></thead><tbody>
+      {visibleInvoices.length === 0 ? <tr><td colSpan="8">No invoices yet.</td></tr> : pg.items.map(i => <tr key={i.id}>
         <td><strong>{i.invoice_number}</strong><div className="deal-customer">{i.title}</div></td><td>{i.customers?.name || customerFor(i)?.name || '—'}</td><td>{deals.find(d => d.id === i.deal_id)?.title || '—'}</td><td>{quotes.find(q => q.id === i.quote_id)?.quote_number || '—'}</td><td>{formatAmount(docAmountUsd(i, 'amount'))}</td><td><div>{i.status}</div><small className="approval-range-hint">{approvalRequirement(i.amount).label} approval</small></td><td>{i.due_date ? formatDate(i.due_date) : '—'}</td>
         <td><div className="toolbar-actions"><button type="button" className="secondary-btn" onClick={async () => { try { const loaded = onLoadInvoiceItems ? await onLoadInvoiceItems(i) : []; setPreview({ ...i, __items: loaded || [] }); } catch (err) { alert(err.message || 'Unable to load invoice items.'); } }}><FileText size={15} /> View</button>{(isCommercialEditor(role) || i.created_by === currentUserId) && <button type="button" className="secondary-btn" onClick={() => openEdit(i)}>Edit</button>}{i.created_by === currentUserId && ['HOS_PENDING', 'APPROVED', 'MD_PENDING'].indexOf(i.approval_status) === -1 && <button type="button" className="primary-btn approval-btn" onClick={async () => { try { await onSendToHOS(i.id); } catch (err) { alert(err.message); } }}>{i.approval_status === 'REJECTED' ? 'Resubmit to HOS' : 'Send to HOS'}</button>}{isCommercialDeleter(role) && <button type="button" className="icon-btn" title="Delete invoice" onClick={async () => { if (!window.confirm('Delete this invoice?')) return; try { await onDelete(i.id); } catch (err) { alert(err.message); } }}><X size={16} /></button>}{i.status !== 'Paid' && i.approval_status === 'APPROVED' && <button className="secondary-btn" onClick={() => setPay({ invoice_id: i.id, amount: i.amount, paid_at: new Date().toISOString().slice(0, 16), payment_method: 'Bank transfer' })}>Record payment</button>}{(isCommercialEditor(role) || i.created_by === currentUserId) && i.status !== 'Paid' && i.approval_status === 'APPROVED' && <button className="secondary-btn" onClick={() => onUpdate(i.id, { status: 'Paid' })}>Mark paid</button>}</div></td>
       </tr>)}
-    </tbody></table></div></div>
+    </tbody></table></div><Pagination pg={pg} /></></div>
 
     {show && <div className="modal-backdrop" onClick={() => setShow(false)}><form className="modal modal-wide invoice-form-modal" onSubmit={save} onClick={e => e.stopPropagation()}><div className="modal-heading"><div><h2>{form.id ? 'Edit invoice' : 'New invoice'}</h2><p>Invoice manually or optionally tie it to a Won Deal and/or approved Quote.</p></div><button type="button" className="icon-btn" onClick={() => setShow(false)}><X size={18} /></button></div>{error && <div className="form-error">{error}</div>}
       <div className="form-grid-2"><label>Invoice number<input required value={form.invoice_number} readOnly={!!form.id} onChange={e => setForm({ ...form, invoice_number: e.target.value })} /></label><label>Invoice title<input required value={form.title} onChange={e => setForm({ ...form, title: e.target.value })} /></label>
@@ -10717,6 +10755,8 @@ function DocEditor({ doc, customers, onSave, onClose }) {
 
 function Documents({ documents, customers, onUpload, onDownload, onDelete, crmDocuments = [], crmDocumentError = '', onSaveDoc, onDeleteDoc }) {
   const [customerId, setCustomerId] = useState('');
+  const filesPg = usePagination(documents);
+  const docsPg = usePagination(crmDocuments);
   const [tab, setTab] = useState('files');
   const [openDoc, setOpenDoc] = useState(null); // null = list view; {} = new doc; object = existing doc
   const [showOcr, setShowOcr] = useState(false);
@@ -10741,7 +10781,7 @@ function Documents({ documents, customers, onUpload, onDownload, onDelete, crmDo
         <Upload size={15} /> Upload file<input type="file" hidden onChange={upload} />
       </label>
       <button type="button" className="secondary-btn" onClick={() => setShowOcr(true)}><Upload size={15} /> Image to text</button>
-    </div><div className="table-wrap"><table><thead><tr><th>File</th><th>Customer</th><th>Type</th><th>Size</th><th>Created</th><th>Actions</th></tr></thead><tbody>{documents.length === 0 ? <tr><td colSpan="6">No documents yet.</td></tr> : documents.map(d => <tr key={d.id}><td><strong>{d.name}</strong></td><td>{d.customers?.name || '—'}</td><td>{d.mime_type}</td><td>{Math.max(1, Math.round(Number(d.size_bytes || 0) / 1024))} KB</td><td>{formatDate(d.created_at)}</td><td><div className="toolbar-actions"><button className="secondary-btn" onClick={() => onDownload(d)}><Download size={14} /> Download</button><button className="icon-btn" onClick={() => onDelete(d)}><X size={16} /></button></div></td></tr>)}</tbody></table></div></div>}
+    </div><><div className="table-wrap"><table><thead><tr><th>File</th><th>Customer</th><th>Type</th><th>Size</th><th>Created</th><th>Actions</th></tr></thead><tbody>{documents.length === 0 ? <tr><td colSpan="6">No documents yet.</td></tr> : filesPg.items.map(d => <tr key={d.id}><td><strong>{d.name}</strong></td><td>{d.customers?.name || '—'}</td><td>{d.mime_type}</td><td>{Math.max(1, Math.round(Number(d.size_bytes || 0) / 1024))} KB</td><td>{formatDate(d.created_at)}</td><td><div className="toolbar-actions"><button className="secondary-btn" onClick={() => onDownload(d)}><Download size={14} /> Download</button><button className="icon-btn" onClick={() => onDelete(d)}><X size={16} /></button></div></td></tr>)}</tbody></table></div><Pagination pg={filesPg} /></></div>}
 
     {tab === 'docs' && <div className="panel">
       <div className="panel-header">
@@ -10752,14 +10792,14 @@ function Documents({ documents, customers, onUpload, onDownload, onDelete, crmDo
       {crmDocuments.length === 0 ? (
         <div className="empty-state"><p>No documents yet.</p><button type="button" className="secondary-btn" onClick={() => setOpenDoc({})}>Create your first document</button></div>
       ) : (
-        <div className="table-wrap"><table><thead><tr><th>Title</th><th>Customer</th><th>Last edited</th><th>Actions</th></tr></thead><tbody>
-          {crmDocuments.map(d => <tr key={d.id}>
+        <><div className="table-wrap"><table><thead><tr><th>Title</th><th>Customer</th><th>Last edited</th><th>Actions</th></tr></thead><tbody>
+          {docsPg.items.map(d => <tr key={d.id}>
             <td><button type="button" className="text-btn" onClick={() => setOpenDoc(d)}><strong>{d.title || 'Untitled document'}</strong></button></td>
             <td>{d.customers?.name || '—'}</td>
             <td>{formatDate(d.updated_at || d.created_at)}</td>
             <td><div className="toolbar-actions"><button className="secondary-btn" onClick={() => setOpenDoc(d)}>Open</button><button className="icon-btn" onClick={() => onDeleteDoc(d.id)}><X size={16} /></button></div></td>
           </tr>)}
-        </tbody></table></div>
+        </tbody></table></div><Pagination pg={docsPg} /></>
       )}
     </div>}
 
@@ -12419,14 +12459,76 @@ function StorhetAIChat() {
   </>;
 }
 
-function MDPanel({ deals = [], quotes = [], invoices = [], customers = [], formatAmount, onApprove, onReject, onInviteStaff, onOpenInviteEmail, staffInvitations = [], onRevokeStaffInvitation, staffInvitationActionId, setPage }) {
+function MDPanel({ deals = [], quotes = [], invoices = [], customers = [], leads = [], staffUsers = [], ownerProfiles = {}, formatAmount, onApprove, onReject, onInviteStaff, onOpenInviteEmail, staffInvitations = [], onRevokeStaffInvitation, staffInvitationActionId, setPage }) {
   const [showStaffInvite, setShowStaffInvite] = useState(false);
+  const [showSalesReps, setShowSalesReps] = useState(false);
+  const [selectedRepId, setSelectedRepId] = useState(null);
+  // Sales reps and the leads each one opened (leads.created_by = the rep who opened the lead).
+  const salesReps = staffUsers.filter(u => u.role === 'sales');
+  const repName = rep => ownerProfiles[rep.user_id] || rep.email || 'Sales Rep';
+  const leadsOpenedBy = userId => leads.filter(l => l.created_by === userId);
+  const selectedRep = salesReps.find(r => r.user_id === selectedRepId);
+  const repLeads = selectedRep ? leadsOpenedBy(selectedRep.user_id) : [];
+  const repsPg = usePagination(salesReps);
+  const repLeadsPg = usePagination(repLeads);
+  const closeSalesModal = () => { setShowSalesReps(false); setSelectedRepId(null); };
+  const pickRep = id => { setSelectedRepId(id); repLeadsPg.setPage(1); };
   // Deals are not commercial approval records; only quotes and invoices can reach MD.
   const approvals = [...quotes.map(x => ({ ...x, _type: 'quote' })), ...invoices.map(x => ({ ...x, _type: 'invoice' }))].filter(item => item.approval_status === 'MD_PENDING');
   const pending = [...quotes, ...invoices].filter(item => ['SALES_PENDING', 'HOS_PENDING', 'MD_PENDING'].includes(item.approval_status)).length;
-  return <><PageHeading eyebrow="EXECUTIVE" title="MD Panel" description="Executive overview and final approval queue." action="Invite a worker" onAction={() => setShowStaffInvite(true)} />
+  return <>
+    <PageHeading eyebrow="EXECUTIVE" title="MD Panel" description="Executive overview and final approval queue."
+      action="Invite a worker"
+      onAction={() => setShowStaffInvite(true)} />
     {showStaffInvite && <StaffInviteModal onInvite={onInviteStaff} onOpenEmail={onOpenInviteEmail} onClose={() => setShowStaffInvite(false)} />}
-    <StaffInvitationsPanel invitations={staffInvitations} onRevoke={onRevokeStaffInvitation} actionId={staffInvitationActionId} /><div className="stats-grid"><StatCard label="Customers" value={customers.length} hint="Active customer records" tone="blue" icon="C" onClick={() => document.getElementById('md-customers')?.scrollIntoView({ behavior: 'smooth' })} /><StatCard label="Won revenue" value={formatAmount(deals.filter(d => d.stage === 'Won').reduce((s, d) => s + Number(d.amount || 0), 0))} hint="Pipeline revenue" tone="green" icon="$" onClick={() => document.getElementById('md-revenue')?.scrollIntoView({ behavior: 'smooth' })} /><StatCard label="Pending approvals" value={pending} hint="Commercial approval queue" tone="orange" icon="!" onClick={() => document.getElementById('md-approval-queue')?.scrollIntoView({ behavior: 'smooth' })} /><StatCard label="Open invoices" value={invoices.filter(i => !['Paid', 'Cancelled'].includes(i.status)).length} hint="Outstanding billing" tone="purple" icon="I" onClick={() => setPage?.('Invoices')} /></div><div className="panel" id="md-revenue"><div className="panel-heading"><div><h3>MD executive revenue</h3><p>Company-wide revenue visibility.</p></div></div><div className="panel-subsection" id="md-customers"><p>Customers: <strong>{customers.length}</strong> · Won revenue: <strong>{formatAmount(deals.filter(d => d.stage === 'Won').reduce((s, d) => s + Number(d.amount || 0), 0))}</strong> · Open invoices: <strong>{invoices.filter(i => !['Paid', 'Cancelled'].includes(i.status)).length}</strong></p></div></div><div className="panel" id="md-approval-queue"><div className="panel-heading"><div><h3>MD final approval queue</h3><p>Only $50,000+ records reach this queue after HOS approval.</p></div></div><div className="table-wrap"><table><thead><tr><th>Type</th><th>Record</th><th>Amount</th><th>Action</th></tr></thead><tbody>{approvals.length === 0 ? <tr><td colSpan="4">No MD approvals pending.</td></tr> : approvals.map(item => <tr key={`${item._type}-${item.id}`}><td>{item._type}</td><td>{item.title || item.quote_number || item.invoice_number || 'Record'}</td><td>{formatAmount(item.total ?? item.amount)}</td><td><div className="toolbar-actions"><button className="primary-btn" onClick={async () => { try { await onApprove(item._type, item.id) } catch (e) { alert(e.message) } }}>Approve</button><button className="secondary-btn" onClick={async () => { const note = window.prompt('Rejection reason / note:'); if (note) try { await onReject(item._type, item.id, note) } catch (e) { alert(e.message) } }}>Reject</button></div></td></tr>)}</tbody></table></div></div></>;
+    <StaffInvitationsPanel invitations={staffInvitations} onRevoke={onRevokeStaffInvitation} actionId={staffInvitationActionId} />
+    <div className="stats-grid">
+      <StatCard label="Customers" value={customers.length} hint="Active customer records" tone="blue" icon="C" onClick={() => document.getElementById('md-customers')?.scrollIntoView({ behavior: 'smooth' })} />
+      <StatCard label="Won revenue" value={formatAmount(deals.filter(d => d.stage === 'Won').reduce((s, d) => s + Number(d.amount || 0), 0))} hint="Pipeline revenue" tone="green" icon="$" onClick={() => document.getElementById('md-revenue')?.scrollIntoView({ behavior: 'smooth' })} />
+      <StatCard label="Pending approvals" value={pending} hint="Commercial approval queue" tone="orange" icon="!" onClick={() => document.getElementById('md-approval-queue')?.scrollIntoView({ behavior: 'smooth' })} />
+      <StatCard label="Open invoices" value={invoices.filter(i => !['Paid', 'Cancelled'].includes(i.status)).length} hint="Outstanding billing" tone="purple" icon="I" onClick={() => setPage?.('Invoices')} />
+      <StatCard label="Staff" value={salesReps.length} hint="Sales reps · click to view their leads" tone="blue" icon="S" onClick={() => setShowSalesReps(true)} />
+    </div>
+    {showSalesReps && <div className="modal-backdrop" onClick={closeSalesModal}>
+      <div className="modal md-modal" role="dialog" aria-modal="true" onClick={e => e.stopPropagation()}>
+        <div className="modal-heading">
+          <div>
+            <h2>{selectedRep ? `${repName(selectedRep)} — leads opened` : 'Sales reps'}</h2>
+            <p className="muted">{selectedRep ? `${repLeads.length} lead${repLeads.length === 1 ? '' : 's'} opened by this rep.` : 'Select a sales rep to see the leads they opened.'}</p>
+          </div>
+          <button type="button" className="icon-btn" onClick={closeSalesModal} aria-label="Close"><X size={16} /></button>
+        </div>
+        {selectedRep && <button type="button" className="secondary-btn md-back-btn" onClick={() => setSelectedRepId(null)}>← All sales reps</button>}
+        {!selectedRep && (salesReps.length === 0
+          ? <p className="muted">No active sales reps found.</p>
+          : <>
+              <div className="md-rep-list">
+                {repsPg.items.map(rep => <button type="button" key={rep.user_id} className="md-rep-item" onClick={() => pickRep(rep.user_id)}>
+                  <span className="md-rep-name">{repName(rep)}<small>{rep.email}</small></span>
+                  <span className="md-rep-count">{leadsOpenedBy(rep.user_id).length} leads</span>
+                </button>)}
+              </div>
+              <Pagination pg={repsPg} />
+            </>)}
+        {selectedRep && (repLeads.length === 0
+          ? <p className="muted">This rep has not opened any leads yet.</p>
+          : <>
+              <div className="table-wrap"><table className="md-leads-table">
+                <thead><tr><th>Lead</th><th>Company</th><th>Source</th><th>Status</th><th>Opened</th></tr></thead>
+                <tbody>{repLeadsPg.items.map(l => <tr key={l.id}>
+                  <td>{l.name || '—'}<small>{l.email || ''}</small></td>
+                  <td>{l.company || l.customers?.company || '—'}</td>
+                  <td>{l.source || '—'}</td>
+                  <td>{l.status || '—'}</td>
+                  <td>{l.created_at ? new Date(l.created_at).toLocaleDateString() : '—'}</td>
+                </tr>)}</tbody>
+              </table></div>
+              <Pagination pg={repLeadsPg} />
+            </>)}
+      </div>
+    </div>}
+    <div className="panel" id="md-revenue"><div className="panel-heading"><div><h3>MD executive revenue</h3><p>Company-wide revenue visibility.</p></div></div><div className="panel-subsection" id="md-customers"><p>Customers: <strong>{customers.length}</strong> · Won revenue: <strong>{formatAmount(deals.filter(d => d.stage === 'Won').reduce((s, d) => s + Number(d.amount || 0), 0))}</strong> · Open invoices: <strong>{invoices.filter(i => !['Paid', 'Cancelled'].includes(i.status)).length}</strong></p></div></div><div className="panel" id="md-approval-queue"><div className="panel-heading"><div><h3>MD final approval queue</h3><p>Only $50,000+ records reach this queue after HOS approval.</p></div></div><div className="table-wrap"><table><thead><tr><th>Type</th><th>Record</th><th>Amount</th><th>Action</th></tr></thead><tbody>{approvals.length === 0 ? <tr><td colSpan="4">No MD approvals pending.</td></tr> : approvals.map(item => <tr key={`${item._type}-${item.id}`}><td>{item._type}</td><td>{item.title || item.quote_number || item.invoice_number || 'Record'}</td><td>{formatAmount(item.total ?? item.amount)}</td><td><div className="toolbar-actions"><button className="primary-btn" onClick={async () => { try { await onApprove(item._type, item.id) } catch (e) { alert(e.message) } }}>Approve</button><button className="secondary-btn" onClick={async () => { const note = window.prompt('Rejection reason / note:'); if (note) try { await onReject(item._type, item.id, note) } catch (e) { alert(e.message) } }}>Reject</button></div></td></tr>)}</tbody></table></div></div>
+    </>;
 }
 
 function HOSPanel({
