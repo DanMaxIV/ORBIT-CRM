@@ -2253,7 +2253,7 @@ function App() {
   }
 
   async function fetchDocuments() { const { data, error } = await fetchAllRows(() => supabase.from('documents').select('*, customers(name,company)').order('created_at', { ascending: false })); if (error) { console.error('Error fetching documents:', error); return; } setDocuments(data || []); }
-  async function fetchWorkflows() { const { data, error } = await fetchAllRows(() => supabase.from('workflows').select('*').order('created_at', { ascending: false })); if (error) { console.error('Error fetching workflows:', error); return; } setWorkflows(data || []); }
+  async function fetchWorkflows() { const { data, error } = await fetchAllRows(() => supabase.from('workflows').select('*').eq('created_by', session.user.id).order('created_at', { ascending: false })); if (error) { console.error('Error fetching workflows:', error); return; } setWorkflows(data || []); }
   async function fetchSegments() { const { data, error } = await fetchAllRows(() => supabase.from('customer_segments').select('*').order('created_at', { ascending: false })); if (error) { console.error('Error fetching segments:', error); return; } setSegments(data || []); }
   async function fetchProducts() { const { data, error } = await fetchAllRows(() => supabase.from('products').select('*').order('created_at', { ascending: false })); if (error) { console.error('Error fetching products:', error); return; } setProducts(data || []); }
   async function fetchSupportEngineers() {
@@ -10794,6 +10794,8 @@ const STUDIO_NODE_ICONS = {
   Bell, ClipboardList, Mail, Pencil, Repeat, Square,
 };
 const studioIconFor = name => STUDIO_NODE_ICONS[name] || Workflow;
+// Approval step was removed — strip any leftover "you approve…" wording from block descriptions.
+const studioDesc = text => String(text || '').replace(/\s*(You|you) (approve|confirm)[^.]*\.?/g, '').trim();
 const STUDIO_CATEGORY_ORDER = { trigger: 0, data: 1, condition: 2, action: 3, flow: 4 };
 const STUDIO_CATEGORY_LABEL = { trigger: 'When this happens', data: 'Find records', condition: 'Check things', action: 'Do things', flow: 'Control the flow' };
 const STUDIO_WEEKDAYS = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
@@ -10824,6 +10826,275 @@ function studioConfigSummary(config) {
   return parts.join(' · ');
 }
 
+// ============================================================================
+// TEST RUNNER — dry run of the workflow on the canvas.
+// Reads real CRM records as sample data, evaluates conditions, and shows what
+// each action WOULD do. It never inserts, updates, emails or notifies anyone.
+// ============================================================================
+const STUDIO_ENTITY_TABLES = [
+  ['customer', 'customers'], ['contact', 'customers'], ['birthday', 'customers'],
+  ['lead', 'leads'], ['deal', 'deals'], ['ticket', 'tickets'], ['invoice', 'invoices'],
+  ['payment', 'payments'], ['quote', 'quotes'], ['activity', 'activities'], ['activities', 'activities'],
+  ['task', 'activities'], ['calendar', 'calendar_events'], ['event', 'calendar_events'],
+];
+
+function studioGuessTable(nodeType, config = {}) {
+  const explicit = config.table || config.entity || config.record_type || config.object || config.module || config.source || '';
+  const hay = `${explicit} ${nodeType || ''}`.toLowerCase();
+  for (const [word, table] of STUDIO_ENTITY_TABLES) if (hay.includes(word)) return table;
+  return null;
+}
+
+const studioGet = (record, path) => String(path || '').split('.').reduce((acc, key) => (acc == null ? undefined : acc[key]), record);
+
+function studioRender(text, record) {
+  if (typeof text !== 'string') return text;
+  return text.replace(/\{\{\s*([\w.]+)\s*\}\}/g, (_, path) => {
+    const value = studioGet(record, path);
+    return value == null || value === '' ? `[${path}?]` : String(value);
+  });
+}
+
+function studioCheckCondition(record, condition) {
+  const actual = studioGet(record, condition.field);
+  const expected = condition.value;
+  const str = v => String(v ?? '').trim().toLowerCase();
+  const num = v => Number(v);
+  const time = v => new Date(v).getTime();
+  const DAY = 86400000;
+  switch (condition.operator || 'equals') {
+    case 'equals': return str(actual) === str(expected);
+    case 'not_equals': return str(actual) !== str(expected);
+    case 'contains': return str(actual).includes(str(expected));
+    case 'greater_than': return num(actual) > num(expected);
+    case 'less_than': return num(actual) < num(expected);
+    case 'is_empty': return actual == null || str(actual) === '';
+    case 'is_not_empty': return !(actual == null || str(actual) === '');
+    case 'older_than_days': return !Number.isNaN(time(actual)) && Date.now() - time(actual) > num(expected) * DAY;
+    case 'newer_than_days': return !Number.isNaN(time(actual)) && Date.now() - time(actual) <= num(expected) * DAY;
+    case 'date_before': return time(actual) < time(expected);
+    case 'date_after': return time(actual) > time(expected);
+    default: return false;
+  }
+}
+
+function studioConditionsOf(config = {}) {
+  if (Array.isArray(config.conditions)) return config.conditions.filter(c => c && c.field);
+  if (config.field) return [{ field: config.field, operator: config.operator, value: config.value }];
+  return [];
+}
+
+function studioRecordLabel(record) {
+  if (!record) return '';
+  return record.name || record.title || record.full_name || record.company || record.email || record.subject || record.invoice_number || record.id || '';
+}
+
+async function studioFetchSample(table, { limit = 50 } = {}) {
+  let query = supabase.from(table).select('*').limit(limit);
+  const ordered = await query.order('created_at', { ascending: false });
+  if (!ordered.error) return ordered.data || [];
+  // Table without created_at — fall back to unordered.
+  const plain = await supabase.from(table).select('*').limit(limit);
+  if (plain.error) throw new Error(`Could not read ${table}: ${plain.error.message}`);
+  return plain.data || [];
+}
+
+async function studioInvokeError(error, data) {
+  if (error) {
+    let message = error.message;
+    try { const details = await error.context?.json(); if (details?.error) message = details.error; } catch { /* keep default */ }
+    return message;
+  }
+  return data?.error || null;
+}
+
+// Carries out one action for real, reusing the CRM's existing tables and Edge Functions.
+async function studioPerformAction(kind, cfg, record, ctx) {
+  const customerId = record.customer_id || null;
+
+  if (/mail/.test(kind)) {
+    const to = String(cfg.to || cfg.recipient || cfg.email || record.email || '').trim();
+    if (!to) throw new Error('No recipient: fill in "to" or use {{email}}.');
+    const provider = cfg.provider || ctx.integrations[0]?.provider;
+    if (!provider) throw new Error('Connect a Gmail or Outlook account on the Email page first.');
+    if (!ctx.integrations.some(i => i.provider === provider)) throw new Error(`Your ${provider} account is not connected. Connect it on the Email page.`);
+    const { data, error } = await supabase.functions.invoke('send-email', {
+      body: { provider, to, cc: cfg.cc || '', bcc: cfg.bcc || '', subject: cfg.subject || '(no subject)', body: cfg.body || cfg.message || '', customer_id: customerId },
+    });
+    const message = await studioInvokeError(error, data);
+    if (message) throw new Error(`Email not sent: ${message}`);
+    return `Email sent to ${to}`;
+  }
+
+  if (/notif|notify|alert/.test(kind)) {
+    const row = { user_id: cfg.user_id || ctx.userId, title: cfg.title || cfg.subject || 'Automation', message: cfg.message || cfg.body || '', link: cfg.link || null, read: false };
+    let { error } = await supabase.from('notifications').insert([{ ...row, type: 'automation' }]);
+    if (error) ({ error } = await supabase.from('notifications').insert([row]));
+    if (error) throw new Error(`Notification not created: ${error.message}`);
+    return 'Notification created';
+  }
+
+  if (/activit|task|follow|remind|call|meeting/.test(kind)) {
+    const due = cfg.due_date || cfg.date || cfg.activity_date;
+    const { error } = await supabase.from('activities').insert([{
+      title: cfg.title || cfg.name || 'Automation task', type: cfg.type || cfg.activity_type || 'Task',
+      activity_date: due ? new Date(due).toISOString() : new Date().toISOString(), notes: cfg.notes || cfg.note || cfg.description || null,
+      status: 'Scheduled', priority: cfg.priority || 'Medium', customer_id: customerId,
+      assigned_to: ctx.userId, created_by: ctx.userId,
+    }]);
+    if (error) throw new Error(`Activity not created: ${error.message}`);
+    return `Activity "${cfg.title || 'Automation task'}" created`;
+  }
+
+  if (/update|set_field|change/.test(kind)) {
+    const table = studioGuessTable(kind, cfg);
+    if (!table || !record.id || !cfg.field) throw new Error('Needs a record type, a field and a value to update.');
+    const { error } = await supabase.from(table).update({ [cfg.field]: cfg.value }).eq('id', record.id);
+    if (error) throw new Error(`Update failed: ${error.message}`);
+    return `Updated ${cfg.field} on ${studioRecordLabel(record)}`;
+  }
+
+  return 'This action type cannot run from Test yet — it was skipped';
+}
+
+async function studioExecuteNode(node, meta, items, ctx) {
+  const type = node.data.nodeType || '';
+  const config = node.data.config || {};
+  const category = meta?.category;
+  const kind = `${meta?.executor_kind || ''} ${type}`.toLowerCase();
+
+  if (category === 'trigger') {
+    if (/manual/.test(kind)) return { status: 'succeeded', message: 'Started manually (test run).', items: [{ triggered_by: ctx.userEmail || 'you', triggered_at: new Date().toISOString() }] };
+    if (/schedul|cron|daily|weekly|time|recurr/.test(kind)) {
+      const when = [config.time, Array.isArray(config.weekdays) && config.weekdays.length ? config.weekdays.map(d => STUDIO_WEEKDAYS[d]).join(', ') : null].filter(Boolean).join(' on ');
+      return { status: 'succeeded', message: `Schedule${when ? ` (${when})` : ''} — fired immediately for this test.`, items: [{ run_at: new Date().toISOString() }] };
+    }
+    const table = studioGuessTable(type, config);
+    if (!table) return { status: 'succeeded', message: 'Trigger simulated with an empty sample.', items: [{}] };
+    const rows = await studioFetchSample(table, { limit: 1 });
+    if (!rows.length) return { status: 'succeeded', message: `No ${table} exist yet, so the test uses an empty sample record.`, items: [{}] };
+    return { status: 'succeeded', message: `Simulated using your most recent record from ${table}: "${studioRecordLabel(rows[0])}".`, items: rows };
+  }
+
+  if (category === 'data') {
+    const table = studioGuessTable(type, config);
+    if (!table) return { status: 'failed', message: 'Could not tell which kind of record this block looks up. Pick the record type in its settings.', items: [] };
+    let rows = await studioFetchSample(table, { limit: Math.min(Number(config.limit) || 50, 200) });
+    const scope = config.owner || config.scope || config.whose || config.records;
+    if (scope === 'me' && ctx.userId) rows = rows.filter(r => [r.created_by, r.owner_id, r.assigned_to, r.user_id].includes(ctx.userId));
+    const conditions = studioConditionsOf(config);
+    if (conditions.length) rows = rows.filter(r => conditions.every(c => studioCheckCondition(r, c)));
+    return { status: 'succeeded', message: `Found ${rows.length} record${rows.length === 1 ? '' : 's'} in ${table}${conditions.length ? ' matching the filters' : ''}${rows.length >= 50 ? ' (test reads at most 50)' : ''}.`, items: rows };
+  }
+
+  if (category === 'condition') {
+    const conditions = studioConditionsOf(config);
+    if (!conditions.length) return { status: 'failed', message: 'This check has no conditions yet. Add at least one in its settings.', items: [] };
+    const input = items.length ? items : [{}];
+    const passed = input.filter(r => conditions.every(c => studioCheckCondition(r, c)));
+    const detail = conditions.map(c => `${c.field} ${String(c.operator || 'equals').replace(/_/g, ' ')} ${c.value ?? ''}`.trim()).join(' AND ');
+    return { status: passed.length ? 'succeeded' : 'skipped', message: `${passed.length} of ${input.length} passed (${detail}).${passed.length ? '' : ' Nothing continues past this block.'}`, items: passed };
+  }
+
+  if (category === 'action' && ctx.live) {
+    const targets = (items.length ? items : [{}]).slice(0, 25);
+    const done = [];
+    for (const record of targets) {
+      const rendered = {};
+      Object.entries(config).forEach(([key, value]) => { rendered[key] = typeof value === 'string' ? studioRender(value, record) : value; });
+      done.push(await studioPerformAction(kind, rendered, record, ctx));
+    }
+    const skippedNote = items.length > 25 ? ` (stopped at 25 of ${items.length} for safety)` : '';
+    return { status: 'succeeded', message: `${done[0]}${done.length > 1 ? ` — done for ${done.length} records` : ''}${skippedNote}.`, items };
+  }
+
+  if (category === 'action') {
+    const targets = items.length ? items : [{}];
+    const preview = targets.slice(0, 3).map(record => {
+      const rendered = {};
+      Object.entries(config).forEach(([key, value]) => { rendered[key] = typeof value === 'string' ? studioRender(value, record) : value; });
+      return { record: studioRecordLabel(record), ...rendered };
+    });
+    return { status: 'simulated', message: `Will run "${meta?.title || type}" for ${targets.length} record${targets.length === 1 ? '' : 's'}.`, items, preview };
+  }
+
+  // flow blocks
+  if (/stop|end/.test(kind)) return { status: 'succeeded', message: 'Automation ends here.', items, stop: true };
+  if (/wait|delay|pause|sleep/.test(kind)) {
+    const amount = config.duration || config.amount || config.minutes || config.hours || config.days || '';
+    return { status: 'succeeded', message: `Would wait${amount ? ` ${amount}${config.unit ? ` ${config.unit}` : ''}` : ''} — skipped during the test.`, items };
+  }
+  if (/loop|repeat|each/.test(kind)) return { status: 'succeeded', message: `Would repeat the next steps for each of ${items.length} record${items.length === 1 ? '' : 's'}.`, items };
+  return { status: 'succeeded', message: 'Passed through.', items };
+}
+
+async function studioRunTest({ nodes, edges, registry, live = false }) {
+  const { data: { user } } = await supabase.auth.getUser();
+  const ctx = { userId: user?.id, userEmail: user?.email, live, integrations: [] };
+  if (live) {
+    const { data } = await supabase.from('email_integrations').select('provider, email_address, status').eq('user_id', user.id);
+    ctx.integrations = data || [];
+  }
+  const metaOf = n => n.data.meta || registry[n.data.nodeType];
+  const trigger = nodes.find(n => metaOf(n)?.category === 'trigger');
+  if (!trigger) throw new Error('Add a starting block before testing.');
+  const nextNodes = id => edges.filter(e => e.source === id).map(e => nodes.find(n => n.id === e.target)).filter(Boolean);
+
+  const steps = [];
+  const visits = {};
+  const queue = [{ node: trigger, items: [] }];
+  while (queue.length && steps.length < 60) {
+    const { node, items } = queue.shift();
+    visits[node.id] = (visits[node.id] || 0) + 1;
+    if (visits[node.id] > 3) continue; // loop guard
+    const meta = metaOf(node);
+    const started = performance.now();
+    let result;
+    try {
+      result = meta ? await studioExecuteNode(node, meta, items, ctx) : { status: 'failed', message: 'This block type is no longer registered.', items: [] };
+    } catch (e) {
+      result = { status: 'failed', message: e.message || 'This block failed.', items: [] };
+    }
+    steps.push({
+      nodeId: node.id, title: meta?.title || node.data.nodeType, category: meta?.category || 'unknown',
+      status: result.status, message: result.message, count: result.items?.length || 0,
+      preview: result.preview || (result.items || []).slice(0, 3).map(studioRecordLabel).filter(Boolean),
+      ms: Math.round(performance.now() - started),
+    });
+    if (result.status === 'failed' || result.status === 'skipped' || result.stop) continue;
+    nextNodes(node.id).forEach(next => queue.push({ node: next, items: result.items || [] }));
+  }
+
+  const failed = steps.find(s => s.status === 'failed');
+  return { status: failed ? 'failed' : 'succeeded', live, error: failed ? `${failed.title}: ${failed.message}` : null, steps, finishedAt: new Date().toISOString() };
+}
+
+function StudioTestPanel({ result, onClose, onSelectNode }) {
+  const label = { succeeded: 'OK', simulated: 'Simulated', skipped: 'Stopped', failed: 'Failed' };
+  return (
+    <>
+      <div className="studio-config-head">
+        <strong>{result.live ? 'Run' : 'Preview'} · {result.status === 'failed' ? 'needs attention' : result.live ? 'done' : 'not run'}</strong>
+        <p>{result.live ? 'The actions below were carried out for real.' : 'Preview only — you cancelled, so nothing was sent or changed.'}</p>
+      </div>
+      <div className="studio-config-body">
+        {result.steps.map((step, i) => (
+          <button type="button" key={`${step.nodeId}-${i}`} className={`studio-test-step ${step.status}`} onClick={() => onSelectNode(step.nodeId)}>
+            <span className="studio-test-step-head"><strong>{i + 1}. {step.title}</strong><span className={`studio-test-badge ${step.status}`}>{label[step.status] || step.status}</span></span>
+            <span className="studio-test-step-msg">{step.message}</span>
+            {step.preview?.length > 0 && (
+              <span className="studio-test-preview">
+                {step.preview.map((p, j) => <code key={j}>{typeof p === 'string' ? p : Object.entries(p).filter(([, v]) => v !== '' && v != null).map(([k, v]) => `${k}: ${Array.isArray(v) ? v.join(', ') : typeof v === 'object' ? JSON.stringify(v) : v}`).join('\n')}</code>)}
+              </span>
+            )}
+          </button>
+        ))}
+        <button type="button" className="secondary-btn" style={{ marginTop: 10 }} onClick={onClose}><X size={14} /> Close test results</button>
+      </div>
+    </>
+  );
+}
+
 function StudioNode({ data, selected }) {
   const meta = data.meta;
   if (!meta) return <div className="studio-node"><div className="studio-node-head"><strong>Unknown block</strong></div><p className="studio-node-desc">This block type is no longer registered.</p></div>;
@@ -10831,13 +11102,13 @@ function StudioNode({ data, selected }) {
   const isTrigger = meta.category === 'trigger';
   const isEnd = meta.executor_kind === 'stop';
   return (
-    <div className={`studio-node cat-${meta.category} ${selected ? 'selected' : ''}`}>
+    <div className={`studio-node cat-${meta.category} ${selected ? 'selected' : ''} ${data.testStatus ? `test-${data.testStatus}` : ''}`}>
       {!isTrigger && <Handle type="target" position={Position.Left} />}
       <div className="studio-node-head">
         <span className="studio-node-icon"><Icon size={14} /></span>
         <strong>{meta.title}</strong>
       </div>
-      <p className="studio-node-desc">{meta.description}</p>
+      <p className="studio-node-desc">{studioDesc(meta.description)}</p>
       <div className="studio-node-hint">{studioConfigSummary(data.config)}</div>
       {!isEnd && <Handle type="source" position={Position.Right} />}
     </div>
@@ -10921,8 +11192,7 @@ function StudioConfigPanel({ node, onConfigChange, onDeleteNode }) {
     <>
       <div className="studio-config-head">
         <strong><Icon size={14} style={{ marginRight: 6, verticalAlign: -2 }} />{meta.title}</strong>
-        <p>{meta.description}</p>
-        {meta.requires_approval && <p style={{ color: '#a65b08' }}>⚠ This action needs a human approval before it runs for real.</p>}
+        <p>{studioDesc(meta.description)}</p>
       </div>
       <div className="studio-config-body">
         {Object.entries(meta.config_schema || {}).map(([key, schema]) => {
@@ -10956,6 +11226,47 @@ function WorkflowBuilder({ registry, workflow, initialDefinition, onExit, showTo
   const [selectedId, setSelectedId] = useState(null);
   const [libraryQuery, setLibraryQuery] = useState('');
   const [, forceRender] = useState(0);
+  const [testing, setTesting] = useState(false);
+  const [testResult, setTestResult] = useState(null);
+  const [showTest, setShowTest] = useState(false);
+
+  const clearTestMarks = () => setNodes(nds => nds.map(n => n.data.testStatus ? { ...n, data: { ...n.data, testStatus: undefined } } : n));
+
+  const runTest = async () => {
+    setError('');
+    console.log('[Automation test] clicked', { nodes: nodes.length, edges: edges.length, issues });
+    if (issues.length) { setError(`Can't test yet: ${issues[0]}`); showToast(`Can't test yet: ${issues[0]}`); return; }
+    setTesting(true);
+    clearTestMarks();
+    try {
+      const preview = await studioRunTest({ nodes, edges, registry });
+      const actions = preview.steps.filter(s => s.status === 'simulated');
+      let result = preview;
+      if (preview.status !== 'failed' && actions.length) {
+        const summary = actions.map(s => `• ${s.title} — ${s.count || 1} record${(s.count || 1) === 1 ? '' : 's'}`).join('\n');
+        if (window.confirm(`Run this automation for real now?\n\n${summary}\n\nEmails will really be sent and records really created.`)) {
+          result = await studioRunTest({ nodes, edges, registry, live: true });
+        }
+      }
+      const statusById = {};
+      result.steps.forEach(s => { statusById[s.nodeId] = s.status; });
+      setNodes(nds => nds.map(n => ({ ...n, data: { ...n.data, testStatus: statusById[n.id] || 'notrun' } })));
+      setTestResult(result);
+      setShowTest(true);
+      setSelectedId(null);
+      showToast(result.status === 'failed' ? 'Finished with a problem — see the results panel.' : result.live ? 'Automation ran successfully.' : 'Preview only — nothing was sent.');
+      // Log the test in run history when the automation is saved (ignored if RLS blocks it).
+      if (workflow?.id && result.live) {
+        try {
+          await supabase.from('workflow_runs').insert([{ workflow_id: workflow.id, trigger_type: 'manual', status: result.status, started_at: new Date().toISOString(), error: result.error }]);
+        } catch { /* history is optional */ }
+      }
+    } catch (e) {
+      console.error('[Automation test] failed', e);
+      setError(e.message || 'The test could not run.');
+      showToast(`Test could not run: ${e.message || 'unknown error'}`);
+    } finally { setTesting(false); }
+  };
 
   const pushHistory = useCallback((nextNodes, nextEdges) => {
     historyRef.current = historyRef.current.slice(0, historyIndexRef.current + 1);
@@ -11076,7 +11387,7 @@ useEffect(() => {
         .update({ current_version_id: versionRow.id, ...(activate ? { status: 'active' } : {}) })
         .eq('id', workflowId);
       if (pointerError) throw pointerError;
-      showToast(activate ? 'Automation activated. The engine ships in Phase 3 — until then it runs when you test it.' : 'Draft saved.');
+      showToast(activate ? 'Automation activated.' : 'Draft saved.');
     } catch (e) {
       setError(e.message || 'Could not save this automation.');
     } finally { setSaving(false); }
@@ -11093,7 +11404,10 @@ useEffect(() => {
           <button type="button" className="secondary-btn" onClick={() => applyHistory(-1)} disabled={!canUndo} title="Undo"><Undo2 size={15} /></button>
           <button type="button" className="secondary-btn" onClick={() => applyHistory(1)} disabled={!canRedo} title="Redo"><Redo2 size={15} /></button>
           <button type="button" className="secondary-btn" onClick={() => save()} disabled={saving}>{saving ? 'Saving…' : 'Save draft'}</button>
-          <button type="button" className="secondary-btn" title="Test mode arrives with the Phase 3 execution engine" disabled>Test</button>
+          <button type="button" className="secondary-btn" onClick={runTest} disabled={testing}
+            title={issues.length ? 'Fix the issues below before testing' : 'Dry run on your real data — nothing is changed or sent'}>
+            <Play size={14} /> {testing ? 'Testing…' : 'Test'}
+          </button>
           <button type="button" className="primary-btn" onClick={() => save({ activate: true })} disabled={saving || issues.length > 0}>Activate</button>
         </div>
       </div>
@@ -11121,7 +11435,7 @@ useEffect(() => {
                       onDragStart={e => e.dataTransfer.setData('application/studio-node', meta.node_type)}
                       onClick={() => addNode(meta.node_type)}>
                       <span className="studio-library-item-icon"><Icon size={15} /></span>
-                      <span><strong>{meta.title}</strong><small>{meta.description}</small></span>
+                      <span><strong>{meta.title}</strong><small>{studioDesc(meta.description)}</small></span>
                     </div>
                   );
                 })}
@@ -11144,7 +11458,7 @@ useEffect(() => {
             nodeTypes={STUDIO_FLOW_NODE_TYPES}
             onNodesChange={onNodesChange} onEdgesChange={onEdgesChange}
             onConnect={onConnect} onNodeDragStop={() => pushHistory()}
-            onNodeClick={(_, node) => setSelectedId(node.id)}
+            onNodeClick={(_, node) => { setSelectedId(node.id); setShowTest(false); }}
             onPaneClick={() => setSelectedId(null)}
             deleteKeyCode={['Backspace', 'Delete']}
             onNodesDelete={() => window.setTimeout(() => pushHistory(), 0)}
@@ -11156,7 +11470,14 @@ useEffect(() => {
           </ReactFlow>
         </div>
         <aside className="studio-config">
-          <StudioConfigPanel node={selectedNode} onConfigChange={config => updateConfig(selectedNode.id, config)} onDeleteNode={() => deleteNode(selectedNode.id)} />
+          {showTest && testResult
+            ? <StudioTestPanel result={testResult}
+                onClose={() => { setShowTest(false); setTestResult(null); clearTestMarks(); }}
+                onSelectNode={id => { setSelectedId(id); setNodes(nds => nds.map(n => ({ ...n, selected: n.id === id }))); }} />
+            : <>
+                {testResult && <button type="button" className="text-btn" style={{ margin: '10px 14px 0' }} onClick={() => setShowTest(true)}>← Back to test results</button>}
+                <StudioConfigPanel node={selectedNode} onConfigChange={config => updateConfig(selectedNode.id, config)} onDeleteNode={() => deleteNode(selectedNode.id)} />
+              </>}
         </aside>
       </div>
     </>
@@ -11187,7 +11508,7 @@ function AutomationStudio({ showToast }) {
       setRole(userRow?.role || '');
       setUserId(user.id);
       const [wf, runRows, nodeTypes, tplRows] = await Promise.all([
-        supabase.from('workflows').select('*').order('updated_at', { ascending: false }),
+        supabase.from('workflows').select('*').eq('created_by', user.id).order('updated_at', { ascending: false }),
         supabase.from('workflow_runs').select('id, workflow_id, trigger_type, status, started_at, created_at, error').order('created_at', { ascending: false }).limit(100),
         supabase.from('workflow_node_types').select('*').order('sort', { ascending: true }),
         supabase.from('workflow_templates').select('id, name, description, category, definition').order('name', { ascending: true }),
@@ -11197,8 +11518,10 @@ if (runRows.error) throw runRows.error;
 if (nodeTypes.error) throw nodeTypes.error;
 if (tplRows.error) throw tplRows.error;
 
-      setWorkflows(wf.data || []);
-      setRuns(runRows.data || []);
+      const mine = (wf.data || []).filter(w => w.created_by === user.id);
+      const mineIds = new Set(mine.map(w => w.id));
+      setWorkflows(mine);
+      setRuns((runRows.data || []).filter(r => mineIds.has(r.workflow_id)));
       setRegistry(Object.fromEntries((nodeTypes.data || []).map(row => [row.node_type, row])));
       setTemplates(tplRows.data || []);
     } catch (e) {
@@ -11288,7 +11611,7 @@ if (tplRows.error) throw tplRows.error;
     setBusyId(workflow.id);
     const { error: deleteError } = await supabase.from('workflows').delete().eq('id', workflow.id);
     setBusyId(null);
-    if (deleteError) { setError(deleteError.message || 'Only an Admin or the MD can delete automations.'); return; }
+    if (deleteError) { setError(deleteError.message || 'Could not delete this automation.'); return; }
     setWorkflows(prev => prev.filter(w => w.id !== workflow.id));
   };
 
@@ -11398,7 +11721,7 @@ if (tplRows.error) throw tplRows.error;
                         <button type="button" className="secondary-btn" onClick={() => openWorkflow(w)}>Open</button>
                         <button type="button" className="secondary-btn" onClick={() => duplicateWorkflow(w)} disabled={busyId === w.id} title="Duplicate as draft"><Copy size={14} /></button>
                         {w.status !== 'draft' && <button type="button" className="secondary-btn" onClick={() => toggleStatus(w)} disabled={busyId === w.id}>{w.status === 'active' ? 'Pause' : 'Resume'}</button>}
-                        {isAdmin && <button type="button" className="icon-btn" title="Delete" onClick={() => deleteWorkflow(w)}><X size={15} /></button>}
+                        {w.created_by === userId && <button type="button" className="icon-btn" title="Delete" onClick={() => deleteWorkflow(w)}><X size={15} /></button>}
                       </div></td>
                     </tr>
                   ))}
@@ -11427,7 +11750,7 @@ if (tplRows.error) throw tplRows.error;
               <div className="panel-heading"><div><h3>How it works</h3><p>Three steps, in plain English.</p></div></div>
               <div className="activity-row"><div className="activity-icon">1</div><div><strong>When this happens</strong><p>Pick a starting block — a schedule, a new lead, a won deal.</p></div></div>
               <div className="activity-row"><div className="activity-icon">2</div><div><strong>Find &amp; check records</strong><p>Look up the CRM records you want, then check conditions on them.</p></div></div>
-              <div className="activity-row"><div className="activity-icon">3</div><div><strong>Do the work</strong><p>Notify people, create tasks, send approved messages. You confirm before anything external goes out.</p></div></div>
+              <div className="activity-row"><div className="activity-icon">3</div><div><strong>Do the work</strong><p>Notify people, create tasks and send emails automatically.</p></div></div>
             </div>
           </div>
         </>
