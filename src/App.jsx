@@ -1122,7 +1122,7 @@ const suggestedUsdRate = code => {
 // (see ensureData) instead of fetching every table at login.
 const PAGE_DATA = {
   Dashboard: ['customers', 'leads', 'deals', 'activities', 'tickets'],
-  'MD Panel': ['deals', 'quotes', 'invoices', 'customers', 'leads'],
+  'MD Panel': ['deals', 'quotes', 'invoices', 'customers'],
   'HOS Panel': ['deals', 'quotes', 'invoices', 'tickets'],
   'HR Panel': ['activities', 'customers', 'leads', 'requisitions'],
   'Technical Support Panel': ['tickets', 'customers'],
@@ -4767,7 +4767,7 @@ function App() {
             {page === 'Dashboard' && (
               <Dashboard revenue={revenue} customers={customers} leads={leads} deals={deals} activities={activities} tickets={tickets} setPage={setPage} formatAmount={formatAmount} onSelectCustomer={setSelectedCustomer} onEditCustomer={setEditingCustomer} onDeleteCustomer={deleteCustomer} currentUserId={session.user.id} role={authorizationProfile?.role} />
             )}
-            {page === 'MD Panel' && ['manager', 'admin'].includes(authorizationProfile?.role) && <MDPanel deals={deals} quotes={quotes} invoices={invoices} customers={customers} leads={leads} staffUsers={staffUsers} ownerProfiles={ownerProfiles} formatAmount={formatAmount} onApprove={approveCommercialRecord} onReject={rejectCommercialRecord} onInviteStaff={inviteStaffWorker} onOpenInviteEmail={openCompose} staffInvitations={staffInvitations} onRevokeStaffInvitation={revokeStaffInvitation} staffInvitationActionId={staffInvitationActionId} setPage={setPage} />}
+            {page === 'MD Panel' && ['manager', 'admin'].includes(authorizationProfile?.role) && <MDPanel deals={deals} quotes={quotes} invoices={invoices} customers={customers} formatAmount={formatAmount} onApprove={approveCommercialRecord} onReject={rejectCommercialRecord} onInviteStaff={inviteStaffWorker} onOpenInviteEmail={openCompose} staffInvitations={staffInvitations} onRevokeStaffInvitation={revokeStaffInvitation} staffInvitationActionId={staffInvitationActionId} setPage={setPage} />}
 
             {page === 'HOS Panel' && authorizationProfile?.role === 'head_of_sales' && <HOSPanel deals={deals} quotes={quotes} invoices={invoices} quoteItems={quoteItems} tickets={tickets} ownerProfiles={ownerProfiles} formatAmount={formatAmount} currentUserId={session.user.id} role={authorizationProfile?.role} setPage={setPage} onApprove={approveCommercialRecord} onReject={rejectCommercialRecord} />}
             {page === 'HR Panel' && authorizationProfile?.role === 'hr' && <HRPanel activities={activities} authorizedUsers={authorizedUsers} ownerProfiles={ownerProfiles} customers={customers} leads={leads} requisitions={requisitions} requisitionError={requisitionError} onUpdateRequisitionStatus={updateRequisitionStatus} onDeleteRequisition={deleteRequisition} />}
@@ -6025,7 +6025,6 @@ function Requisition({ requisitions, error, currentUserId, role, employeeName, e
     .sort((a, b) => b.count - a.count);
   const maxTypeCount = Math.max(1, ...typeCounts.map(item => item.count));
   const listed = scoped.filter(request => statusFilter === 'All' || request.status === statusFilter);
-  const listedPg = usePagination(listed);
 
   const resetForm = () => { setDepartment(''); setRequestType(''); setDescription(''); setStartDate(''); setEndDate(''); };
   const openAll = (status = 'All') => { setStatusFilter(status); setView('all'); };
@@ -6132,9 +6131,9 @@ function Requisition({ requisitions, error, currentUserId, role, employeeName, e
             <button type="button" className="secondary-btn" onClick={() => setView('dashboard')}>Back to dashboard</button>
           </div>
         </div>
-        {listed.length === 0 ? <div className="empty-state"><p>No requests found.</p></div> : <><div className="table-wrap"><table>
+        {listed.length === 0 ? <div className="empty-state"><p>No requests found.</p></div> : <div className="table-wrap"><table>
           <thead><tr><th>Request ID</th><th>Employee</th><th>Department</th><th>Type</th><th>Dates</th><th>Description</th><th>Submitted</th><th>Status</th></tr></thead>
-          <tbody>{listedPg.items.map(request => <tr key={request.id}>
+          <tbody>{listed.map(request => <tr key={request.id}>
             <td><strong>{requisitionNumber(request)}</strong></td>
             <td>{request.employee_name}<div className="deal-customer">{request.employee_email}</div></td>
             <td>{request.department}</td>
@@ -6144,7 +6143,7 @@ function Requisition({ requisitions, error, currentUserId, role, employeeName, e
             <td>{formatDate(request.created_at)}</td>
             <td><span className={requisitionStatusClass(request.status)}>{request.status}</span></td>
           </tr>)}</tbody>
-        </table></div><Pagination pg={listedPg} /></>}
+        </table></div>}
       </div>
     </>;
   }
@@ -6475,34 +6474,6 @@ function downloadCSV(filename, header, rows) {
   link.download = filename;
   link.click();
   URL.revokeObjectURL(url);
-}
-
-// ── Pagination (10 per page across the CRM) ─────────────────────────────────
-const CRM_PAGE_SIZE = 10;
-function usePagination(items, pageSize = CRM_PAGE_SIZE) {
-  const [page, setPage] = useState(1);
-  const list = items || [];
-  const totalPages = Math.max(1, Math.ceil(list.length / pageSize));
-  const safePage = Math.min(page, totalPages);
-  return {
-    items: list.slice((safePage - 1) * pageSize, safePage * pageSize),
-    page: safePage, totalPages, total: list.length, pageSize, setPage
-  };
-}
-function Pagination({ pg }) {
-  if (!pg || pg.total <= pg.pageSize) return null;
-  const from = (pg.page - 1) * pg.pageSize + 1;
-  const to = Math.min(pg.page * pg.pageSize, pg.total);
-  return (
-    <div className="crm-pagination">
-      <span className="crm-pagination-info">{from}–{to} of {pg.total}</span>
-      <div className="crm-pagination-controls">
-        <button type="button" className="secondary-btn" disabled={pg.page <= 1} onClick={() => pg.setPage(pg.page - 1)} aria-label="Previous page">‹ Prev</button>
-        <span>{pg.page} / {pg.totalPages}</span>
-        <button type="button" className="secondary-btn" disabled={pg.page >= pg.totalPages} onClick={() => pg.setPage(pg.page + 1)} aria-label="Next page">Next ›</button>
-      </div>
-    </div>
-  );
 }
 
 function StatCard({ label, value, change, hint, icon, tone, onClick }) {
@@ -7466,7 +7437,6 @@ function Activity({ icon, title, text, time }) {
 
 function CustomerTable({ customers, deals = [], formatAmount, onSelectCustomer, onEditCustomer, onDeleteCustomer, currentUserId, role }) {
   const [openMenuId, setOpenMenuId] = useState(null);
-  const pg = usePagination(customers);
 
   useEffect(() => {
     if (openMenuId === null) return;
@@ -7480,7 +7450,7 @@ function CustomerTable({ customers, deals = [], formatAmount, onSelectCustomer, 
   }
 
   return (
-    <><div className="table-wrap">
+    <div className="table-wrap">
       <table>
         <thead>
           <tr>
@@ -7498,7 +7468,7 @@ function CustomerTable({ customers, deals = [], formatAmount, onSelectCustomer, 
           </tr>
         </thead>
         <tbody>
-          {pg.items.map(c => {
+          {customers.map(c => {
             const status = c.status || 'Active';
             const customerDeals = deals.filter(d => d.customer_id === c.id);
             const openDeals = customerDeals.filter(d => !['Won', 'Lost'].includes(d.stage));
@@ -7559,7 +7529,7 @@ function CustomerTable({ customers, deals = [], formatAmount, onSelectCustomer, 
           })}
         </tbody>
       </table>
-    </div><Pagination pg={pg} /></>
+    </div>
   );
 }
 
@@ -8009,7 +7979,6 @@ function FieldVisits({ customers = [], fieldVisits = [], currentUserId, role, on
   const [notice, setNotice] = useState(null); // { tone, text } result of the last check-in / check-out
 
   const visibleVisits = fieldVisits.filter(visit => role === 'manager' || role === 'admin' || visit.sales_rep_id === currentUserId);
-  const pg = usePagination(visibleVisits);
   const activeVisits = visibleVisits.filter(visit => !visit.check_out_at);
   const selectedCustomer = customers.find(customer => customer.id === customerId);
 
@@ -8200,7 +8169,7 @@ function FieldVisits({ customers = [], fieldVisits = [], currentUserId, role, on
 
     <div className="panel">
       <div className="panel-heading"><div><h3>Visit history</h3><p>{visibleVisits.length} visit{visibleVisits.length === 1 ? '' : 's'} recorded. Location links are retained for audit.</p></div></div>
-      {visibleVisits.length === 0 ? <div className="empty-state"><p>No field visits yet.</p></div> : <><div className="table-wrap"><table><thead><tr><th>Visit target</th><th>Check In</th><th>Check Out</th><th>Distance</th><th>Verification</th><th>Location</th></tr></thead><tbody>{pg.items.map(visit => {
+      {visibleVisits.length === 0 ? <div className="empty-state"><p>No field visits yet.</p></div> : <div className="table-wrap"><table><thead><tr><th>Visit target</th><th>Check In</th><th>Check Out</th><th>Distance</th><th>Verification</th><th>Location</th></tr></thead><tbody>{visibleVisits.map(visit => {
         const customer = customers.find(c => c.id === visit.customer_id);
         const checkInMapUrl = visit.check_in_location_url || googleMapsLocationUrl(visit.check_in_latitude, visit.check_in_longitude);
         const checkOutMapUrl = visit.check_out_location_url || googleMapsLocationUrl(visit.check_out_latitude, visit.check_out_longitude);
@@ -8213,7 +8182,7 @@ function FieldVisits({ customers = [], fieldVisits = [], currentUserId, role, on
           <td><span className={`status ${String(visit.verification_status || '').toLowerCase()}`}>{statusLabel(visit)}</span></td>
           <td><div className="field-visit-links field-visit-links-table">{checkInMapUrl && <a href={checkInMapUrl} target="_blank" rel="noreferrer" className="field-visit-map-link">Check-in location</a>}{checkOutMapUrl && <a href={checkOutMapUrl} target="_blank" rel="noreferrer" className="field-visit-map-link">Check-out location</a>}{targetMapUrl && <a href={targetMapUrl} target="_blank" rel="noreferrer" className="field-visit-map-link">Target location</a>}</div></td>
         </tr>;
-      })}</tbody></table></div><Pagination pg={pg} /></>}
+      })}</tbody></table></div>}
     </div>
   </>;
 }
@@ -8224,8 +8193,7 @@ function Activities({ activities, customers, ownerProfiles = {}, currentUserEmai
   const filters = { All: () => true, Upcoming: a => isOpenActivity(a) && !isOverdue(a), Overdue: isOverdue, Completed: a => a.status === 'Completed' };
   const counts = Object.fromEntries(Object.entries(filters).map(([k, f]) => [k, activities.filter(f).length]));
   const list = activities.filter(filters[tab]).sort((a, b) => { const diff = new Date(a.activity_date || 8.64e15) - new Date(b.activity_date || 8.64e15); return tab === 'Completed' ? -diff : diff; });
-  const pg = usePagination(list);
-  return <><PageHeading eyebrow="PRODUCTIVITY" title="Activities" description="Keep track of meetings, calls, and follow-ups." action="New activity" onAction={onAdd} /><div className="panel"><div className="panel-heading"><div><h3>Schedule</h3><p>Your tasks, calls and follow-ups.</p></div></div><div className="filter-tabs" role="tablist" aria-label="Filter activities">{Object.keys(filters).map(name => <button key={name} type="button" className={`filter-tab ${tab === name ? 'active' : ''} ${name === 'Overdue' && counts.Overdue ? 'danger' : ''}`} onClick={() => setTab(name)}>{name} ({counts[name]})</button>)}</div>{list.length === 0 ? <div className="empty-state"><p>{activities.length === 0 ? 'No activities yet.' : `No ${tab.toLowerCase()} activities.`}</p>{activities.length === 0 && <button type="button" className="primary-btn" onClick={onAdd}>Create your first activity</button>}</div> : pg.items.map(activity => { const canEdit = isAdmin || activity.created_by === currentUserId; const date = activity.activity_date ? new Date(activity.activity_date) : null; return <div className="activity-row large" key={activity.id}><div className="date-box"><strong>{date ? date.getDate() : '--'}</strong><span>{date ? date.toLocaleDateString('en-US', { month: 'short' }).toUpperCase() : '---'}</span></div><div className="activity-content"><strong>{activity.title} {isOverdue(activity) && <span className="status overdue">Overdue</span>}</strong><p>{activity.type || 'Task'} · {getCustomerName(activity.customer_id)}</p><div className="activity-meta-badges"><span className={`priority-pill priority-${String(activity.priority || 'Medium').toLowerCase()}`}>{activity.priority || 'Medium'} priority</span><span className="assignee-pill">Assigned: {(activity.assigned_to === currentUserId ? (ownerProfiles[currentUserId] || currentUserEmail || 'Me') : (ownerProfiles[activity.assigned_to] || (activity.assigned_to ? 'Team member' : 'Unassigned')))}</span></div><small>Due: {formatDateTime(activity.activity_date)}</small>{activity.notes && <p className="activity-notes">{activity.notes}</p>}</div><div className="activity-actions"><button type="button" className="secondary-btn" onClick={() => onView(activity)}>View</button>{canEdit && <button type="button" className="secondary-btn" onClick={() => onEdit(activity)}><Pencil size={14} /> Edit</button>}{canEdit && isOpenActivity(activity) && <button type="button" className="secondary-btn" onClick={() => onStatusChange(activity.id, 'Completed')}>Mark done</button>}<select value={activity.status || 'Scheduled'} onChange={e => onStatusChange(activity.id, e.target.value)} disabled={!canEdit}><option value="Scheduled">Scheduled</option><option value="In Progress">In Progress</option><option value="Completed">Completed</option><option value="Cancelled">Cancelled</option></select>{canEdit && <button type="button" className="icon-btn" title="Delete activity" onClick={() => onDelete(activity.id)}><X size={16} /></button>}</div></div> })}<Pagination pg={pg} /></div></>;
+  return <><PageHeading eyebrow="PRODUCTIVITY" title="Activities" description="Keep track of meetings, calls, and follow-ups." action="New activity" onAction={onAdd} /><div className="panel"><div className="panel-heading"><div><h3>Schedule</h3><p>Your tasks, calls and follow-ups.</p></div></div><div className="filter-tabs" role="tablist" aria-label="Filter activities">{Object.keys(filters).map(name => <button key={name} type="button" className={`filter-tab ${tab === name ? 'active' : ''} ${name === 'Overdue' && counts.Overdue ? 'danger' : ''}`} onClick={() => setTab(name)}>{name} ({counts[name]})</button>)}</div>{list.length === 0 ? <div className="empty-state"><p>{activities.length === 0 ? 'No activities yet.' : `No ${tab.toLowerCase()} activities.`}</p>{activities.length === 0 && <button type="button" className="primary-btn" onClick={onAdd}>Create your first activity</button>}</div> : list.map(activity => { const canEdit = isAdmin || activity.created_by === currentUserId; const date = activity.activity_date ? new Date(activity.activity_date) : null; return <div className="activity-row large" key={activity.id}><div className="date-box"><strong>{date ? date.getDate() : '--'}</strong><span>{date ? date.toLocaleDateString('en-US', { month: 'short' }).toUpperCase() : '---'}</span></div><div className="activity-content"><strong>{activity.title} {isOverdue(activity) && <span className="status overdue">Overdue</span>}</strong><p>{activity.type || 'Task'} · {getCustomerName(activity.customer_id)}</p><div className="activity-meta-badges"><span className={`priority-pill priority-${String(activity.priority || 'Medium').toLowerCase()}`}>{activity.priority || 'Medium'} priority</span><span className="assignee-pill">Assigned: {(activity.assigned_to === currentUserId ? (ownerProfiles[currentUserId] || currentUserEmail || 'Me') : (ownerProfiles[activity.assigned_to] || (activity.assigned_to ? 'Team member' : 'Unassigned')))}</span></div><small>Due: {formatDateTime(activity.activity_date)}</small>{activity.notes && <p className="activity-notes">{activity.notes}</p>}</div><div className="activity-actions"><button type="button" className="secondary-btn" onClick={() => onView(activity)}>View</button>{canEdit && <button type="button" className="secondary-btn" onClick={() => onEdit(activity)}><Pencil size={14} /> Edit</button>}{canEdit && isOpenActivity(activity) && <button type="button" className="secondary-btn" onClick={() => onStatusChange(activity.id, 'Completed')}>Mark done</button>}<select value={activity.status || 'Scheduled'} onChange={e => onStatusChange(activity.id, e.target.value)} disabled={!canEdit}><option value="Scheduled">Scheduled</option><option value="In Progress">In Progress</option><option value="Completed">Completed</option><option value="Cancelled">Cancelled</option></select>{canEdit && <button type="button" className="icon-btn" title="Delete activity" onClick={() => onDelete(activity.id)}><X size={16} /></button>}</div></div> })}</div></>;
 }
 
 function ActivityDetail({ activity, customer, ownerProfiles = {}, currentUserEmail, onClose, onEdit }) {
@@ -8287,7 +8255,6 @@ function Tickets({ tickets, error, onAdd, onStatusChange, onDelete, onEdit, onVi
     || (queue === 'Unassigned' && !t.assigned_to)
     || (queue === 'Customer portal' && t.source === 'portal');
   const filtered = tickets.filter(t => (status === 'All' || t.status === status) && (priority === 'All' || t.priority === priority) && matchesQueue(t) && (!q || `${t.title} ${t.description || ''} ${t.customers?.name || ''} ${t.category || ''} ${t.ticket_number || ''}`.toLowerCase().includes(q)));
-  const pg = usePagination(filtered);
   const count = s => tickets.filter(t => t.status === s).length;
   const portalOpen = tickets.filter(t => t.source === 'portal' && (t.status === 'Open' || t.status === 'In Progress')).length;
   return <>
@@ -8318,7 +8285,7 @@ function Tickets({ tickets, error, onAdd, onStatusChange, onDelete, onEdit, onVi
         <div className="empty-state">
           <p>No tickets yet.</p>
           <button type="button" className="secondary-btn" onClick={onAdd}>Create your first ticket</button>
-        </div> : filtered.length === 0 ? <div className="empty-state"><p>No tickets match your filters.</p></div> : <><div className="table-wrap"><table><thead><tr><th>Ticket</th><th>Customer</th><th>Assigned to</th><th>Priority</th><th>Status</th><th>Created</th><th>Actions</th></tr></thead><tbody>{pg.items.map(ticket => {
+        </div> : filtered.length === 0 ? <div className="empty-state"><p>No tickets match your filters.</p></div> : <div className="table-wrap"><table><thead><tr><th>Ticket</th><th>Customer</th><th>Assigned to</th><th>Priority</th><th>Status</th><th>Created</th><th>Actions</th></tr></thead><tbody>{filtered.map(ticket => {
           const editable = canManage(ticket);
           return <tr key={ticket.id}>
             <td>
@@ -8334,7 +8301,7 @@ function Tickets({ tickets, error, onAdd, onStatusChange, onDelete, onEdit, onVi
             <td>{formatDate(ticket.created_at)}</td>
             <td><div className="toolbar-actions"><button type="button" className="secondary-btn" onClick={() => onView(ticket)}>View</button>{editable && <button type="button" className="secondary-btn" onClick={() => onEdit(ticket)}><Pencil size={14} /> Edit</button>}{(isAdmin || ticket.created_by === currentUserId) && <button type="button" className="icon-btn" title="Delete ticket" onClick={() => onDelete(ticket.id)}><X size={16} /></button>}</div></td>
           </tr>;
-        })}</tbody></table></div><Pagination pg={pg} /></>}</div></>;
+        })}</tbody></table></div>}</div></>;
 }
 function TicketDetail({ onRefresh, ticket, staffName, staffOptions, currentUserId, canManage, onClose, onEdit, onStatusChange, onAssign }) {
   const [comments, setComments] = useState([]);
@@ -8570,7 +8537,6 @@ function Leads({ leads, customers, products, leadProducts, onAdd, onUpdate, onSy
   const primaryVendors = ['F5', 'Kong', 'IRONSCALES', 'SolarWinds', 'Utimaco'];
   const normalizeVendor = vendor => (vendor || '').trim().toLowerCase();
   const visible = leads.filter(x => `${x.name || ''} ${x.email || ''} ${x.company || ''} ${x.source || ''}`.toLowerCase().includes(q.toLowerCase()));
-  const pg = usePagination(visible);
 
   const productsForVendor = vendor => products.filter(product =>
     normalizeVendor(product.vendor) === normalizeVendor(vendor) && product.status !== 'Inactive'
@@ -8665,7 +8631,7 @@ function Leads({ leads, customers, products, leadProducts, onAdd, onUpdate, onSy
       {visible.length === 0 ?
         <div className="empty-state">
           <p>No leads yet.</p>
-        </div> : <><div className="table-wrap">
+        </div> : <div className="table-wrap">
           <table>
             <thead>
               <tr>
@@ -8678,11 +8644,10 @@ function Leads({ leads, customers, products, leadProducts, onAdd, onUpdate, onSy
               </tr>
             </thead>
             <tbody>
-              {pg.items.map(x => {
+              {visible.map(x => {
                 const solutionNames = solutionNamesForLead(x.id);
                 return <tr key={x.id}>
-                  <td><strong>{x.name} <span>({x.job_title})</span> </strong><div className="deal-customer">{x.email}</div>
-                  </td>
+                  <td><strong>{x.name || x.email}</strong><div className="deal-customer">{x.email}</div></td>
                   <td>{x.company || '—'}</td>
                   <td>
                     {solutionNames.length ? (
@@ -8704,7 +8669,7 @@ function Leads({ leads, customers, products, leadProducts, onAdd, onUpdate, onSy
               })}
             </tbody>
           </table>
-        </div><Pagination pg={pg} /></>}
+        </div>}
     </div>
 
 
@@ -8922,7 +8887,6 @@ function EmailPage({ emailLogs, customers, integrations, loading, error, onConne
 }
 function EmailLogs({ emailLogs, customers, onAdd, openExternally = false, onCloseExternal }) {
   const [show, setShow] = useState(openExternally);
-  const pg = usePagination(emailLogs);
   useEffect(() => { if (openExternally) setShow(true) }, [openExternally]);
   const [form, setForm] = useState({ to_email: '', subject: '', body: '', direction: 'Outgoing', status: 'Logged', customer_id: '' });
   const save = async e => {
@@ -8934,7 +8898,7 @@ function EmailLogs({ emailLogs, customers, onAdd, openExternally = false, onClos
   };
   return <>
     <div className="panel">
-      <><div className="table-wrap">
+      <div className="table-wrap">
         <table>
           <thead>
             <tr>
@@ -8949,7 +8913,7 @@ function EmailLogs({ emailLogs, customers, onAdd, openExternally = false, onClos
             {emailLogs.length === 0 ?
               <tr>
                 <td colSpan="5">No email logs yet.</td>
-              </tr> : pg.items.map(
+              </tr> : emailLogs.map(
                 e => <tr key={e.id}><td><strong>{e.subject}</strong>
                   <div className="deal-customer">{e.body?.slice(0, 80)}</div>
                 </td>
@@ -8961,7 +8925,7 @@ function EmailLogs({ emailLogs, customers, onAdd, openExternally = false, onClos
             }
           </tbody>
         </table>
-      </div><Pagination pg={pg} /></>
+      </div>
     </div>
     {show && <div className="modal-backdrop" onClick={() => setShow(false)}>
       <form className="modal" onSubmit={save} onClick={e => e.stopPropagation()}>
@@ -9422,7 +9386,6 @@ function Quotes({ quotes = [], products = [], quoteItems = [], deals = [], dealP
     (role !== 'sales' || q.created_by === currentUserId) &&
     (!dealFilterId || q.deal_id === dealFilterId)
   );
-  const pg = usePagination(visibleQuotes);
 
   const moneyNumber = value => Number(value) || 0;
   const lineSubtotal = item => moneyNumber(item.quantity) * moneyNumber(item.unit_price);
@@ -9624,7 +9587,7 @@ function Quotes({ quotes = [], products = [], quoteItems = [], deals = [], dealP
     />
 
     <div className="panel">
-      <><div className="table-wrap">
+      <div className="table-wrap">
         <table>
           <thead>
             <tr>
@@ -9637,7 +9600,7 @@ function Quotes({ quotes = [], products = [], quoteItems = [], deals = [], dealP
             </tr>
           </thead>
           <tbody>
-            {visibleQuotes.length === 0 ? <tr><td colSpan="6">No quotes yet.</td></tr> : pg.items.map(q => (
+            {visibleQuotes.length === 0 ? <tr><td colSpan="6">No quotes yet.</td></tr> : visibleQuotes.map(q => (
               <tr key={q.id}>
                 <td><strong>{q.quote_number}</strong><div className="deal-customer">{q.title}</div></td>
                 <td>{q.customer_name || q.company || '—'}{q.company && q.customer_name ? <div className="deal-customer">{q.company}</div> : null}</td>
@@ -9655,7 +9618,7 @@ function Quotes({ quotes = [], products = [], quoteItems = [], deals = [], dealP
             ))}
           </tbody>
         </table>
-      </div><Pagination pg={pg} /></>
+      </div>
     </div>
 
     {preview && <div className="commercial-preview-backdrop" onClick={() => setPreview(null)}>
@@ -9862,7 +9825,6 @@ function Invoices({ invoices, payments, customers, products, deals = [], dealPro
   const emptyItem = () => ({ product_id: '', product_name: '', description: '', quantity: 1, unit_price: 0, discount: 0, tax: 0 });
   const [items, setItems] = useState([emptyItem()]);
   const visibleInvoices = invoices.filter(i => (role !== 'sales' || i.created_by === currentUserId) && (!dealFilterId || i.deal_id === dealFilterId));
-  const pg = usePagination(visibleInvoices);
   const wonDeals = deals.filter(d => d.stage === 'Won' && (role !== 'sales' || d.created_by === currentUserId));
   const selectableQuotes = quotes.filter(q => q.approval_status === 'APPROVED' && (!form.deal_id || !q.deal_id || q.deal_id === form.deal_id) && (role !== 'sales' || q.created_by === currentUserId));
   const money = v => Number(v) || 0;
@@ -9960,12 +9922,12 @@ function Invoices({ invoices, payments, customers, products, deals = [], dealPro
       <StatCard label="Outstanding" value={formatAmount(invoices.filter(x => !['Paid', 'Cancelled'].includes(x.status)).reduce((s, x) => s + docAmountUsd(x, 'amount'), 0))} hint="Open balances" tone="orange" icon="!" />
     </div>
     {dealFilterId && <div className="panel" style={{ marginBottom: 12 }}><strong>Invoices for Deal:</strong> {deals.find(d => d.id === dealFilterId)?.title || dealFilterId}</div>}
-    <div className="panel"><><div className="table-wrap"><table><thead><tr><th>Invoice</th><th>Customer</th><th>Deal</th><th>Source Quote</th><th>Amount</th><th>Status</th><th>Due</th><th>Actions</th></tr></thead><tbody>
-      {visibleInvoices.length === 0 ? <tr><td colSpan="8">No invoices yet.</td></tr> : pg.items.map(i => <tr key={i.id}>
+    <div className="panel"><div className="table-wrap"><table><thead><tr><th>Invoice</th><th>Customer</th><th>Deal</th><th>Source Quote</th><th>Amount</th><th>Status</th><th>Due</th><th>Actions</th></tr></thead><tbody>
+      {visibleInvoices.length === 0 ? <tr><td colSpan="8">No invoices yet.</td></tr> : visibleInvoices.map(i => <tr key={i.id}>
         <td><strong>{i.invoice_number}</strong><div className="deal-customer">{i.title}</div></td><td>{i.customers?.name || customerFor(i)?.name || '—'}</td><td>{deals.find(d => d.id === i.deal_id)?.title || '—'}</td><td>{quotes.find(q => q.id === i.quote_id)?.quote_number || '—'}</td><td>{formatAmount(docAmountUsd(i, 'amount'))}</td><td><div>{i.status}</div><small className="approval-range-hint">{approvalRequirement(i.amount).label} approval</small></td><td>{i.due_date ? formatDate(i.due_date) : '—'}</td>
         <td><div className="toolbar-actions"><button type="button" className="secondary-btn" onClick={async () => { try { const loaded = onLoadInvoiceItems ? await onLoadInvoiceItems(i) : []; setPreview({ ...i, __items: loaded || [] }); } catch (err) { alert(err.message || 'Unable to load invoice items.'); } }}><FileText size={15} /> View</button>{(isCommercialEditor(role) || i.created_by === currentUserId) && <button type="button" className="secondary-btn" onClick={() => openEdit(i)}>Edit</button>}{i.created_by === currentUserId && ['HOS_PENDING', 'APPROVED', 'MD_PENDING'].indexOf(i.approval_status) === -1 && <button type="button" className="primary-btn approval-btn" onClick={async () => { try { await onSendToHOS(i.id); } catch (err) { alert(err.message); } }}>{i.approval_status === 'REJECTED' ? 'Resubmit to HOS' : 'Send to HOS'}</button>}{isCommercialDeleter(role) && <button type="button" className="icon-btn" title="Delete invoice" onClick={async () => { if (!window.confirm('Delete this invoice?')) return; try { await onDelete(i.id); } catch (err) { alert(err.message); } }}><X size={16} /></button>}{i.status !== 'Paid' && i.approval_status === 'APPROVED' && <button className="secondary-btn" onClick={() => setPay({ invoice_id: i.id, amount: i.amount, paid_at: new Date().toISOString().slice(0, 16), payment_method: 'Bank transfer' })}>Record payment</button>}{(isCommercialEditor(role) || i.created_by === currentUserId) && i.status !== 'Paid' && i.approval_status === 'APPROVED' && <button className="secondary-btn" onClick={() => onUpdate(i.id, { status: 'Paid' })}>Mark paid</button>}</div></td>
       </tr>)}
-    </tbody></table></div><Pagination pg={pg} /></></div>
+    </tbody></table></div></div>
 
     {show && <div className="modal-backdrop" onClick={() => setShow(false)}><form className="modal modal-wide invoice-form-modal" onSubmit={save} onClick={e => e.stopPropagation()}><div className="modal-heading"><div><h2>{form.id ? 'Edit invoice' : 'New invoice'}</h2><p>Invoice manually or optionally tie it to a Won Deal and/or approved Quote.</p></div><button type="button" className="icon-btn" onClick={() => setShow(false)}><X size={18} /></button></div>{error && <div className="form-error">{error}</div>}
       <div className="form-grid-2"><label>Invoice number<input required value={form.invoice_number} readOnly={!!form.id} onChange={e => setForm({ ...form, invoice_number: e.target.value })} /></label><label>Invoice title<input required value={form.title} onChange={e => setForm({ ...form, title: e.target.value })} /></label>
@@ -10755,8 +10717,6 @@ function DocEditor({ doc, customers, onSave, onClose }) {
 
 function Documents({ documents, customers, onUpload, onDownload, onDelete, crmDocuments = [], crmDocumentError = '', onSaveDoc, onDeleteDoc }) {
   const [customerId, setCustomerId] = useState('');
-  const filesPg = usePagination(documents);
-  const docsPg = usePagination(crmDocuments);
   const [tab, setTab] = useState('files');
   const [openDoc, setOpenDoc] = useState(null); // null = list view; {} = new doc; object = existing doc
   const [showOcr, setShowOcr] = useState(false);
@@ -10781,7 +10741,7 @@ function Documents({ documents, customers, onUpload, onDownload, onDelete, crmDo
         <Upload size={15} /> Upload file<input type="file" hidden onChange={upload} />
       </label>
       <button type="button" className="secondary-btn" onClick={() => setShowOcr(true)}><Upload size={15} /> Image to text</button>
-    </div><><div className="table-wrap"><table><thead><tr><th>File</th><th>Customer</th><th>Type</th><th>Size</th><th>Created</th><th>Actions</th></tr></thead><tbody>{documents.length === 0 ? <tr><td colSpan="6">No documents yet.</td></tr> : filesPg.items.map(d => <tr key={d.id}><td><strong>{d.name}</strong></td><td>{d.customers?.name || '—'}</td><td>{d.mime_type}</td><td>{Math.max(1, Math.round(Number(d.size_bytes || 0) / 1024))} KB</td><td>{formatDate(d.created_at)}</td><td><div className="toolbar-actions"><button className="secondary-btn" onClick={() => onDownload(d)}><Download size={14} /> Download</button><button className="icon-btn" onClick={() => onDelete(d)}><X size={16} /></button></div></td></tr>)}</tbody></table></div><Pagination pg={filesPg} /></></div>}
+    </div><div className="table-wrap"><table><thead><tr><th>File</th><th>Customer</th><th>Type</th><th>Size</th><th>Created</th><th>Actions</th></tr></thead><tbody>{documents.length === 0 ? <tr><td colSpan="6">No documents yet.</td></tr> : documents.map(d => <tr key={d.id}><td><strong>{d.name}</strong></td><td>{d.customers?.name || '—'}</td><td>{d.mime_type}</td><td>{Math.max(1, Math.round(Number(d.size_bytes || 0) / 1024))} KB</td><td>{formatDate(d.created_at)}</td><td><div className="toolbar-actions"><button className="secondary-btn" onClick={() => onDownload(d)}><Download size={14} /> Download</button><button className="icon-btn" onClick={() => onDelete(d)}><X size={16} /></button></div></td></tr>)}</tbody></table></div></div>}
 
     {tab === 'docs' && <div className="panel">
       <div className="panel-header">
@@ -10792,14 +10752,14 @@ function Documents({ documents, customers, onUpload, onDownload, onDelete, crmDo
       {crmDocuments.length === 0 ? (
         <div className="empty-state"><p>No documents yet.</p><button type="button" className="secondary-btn" onClick={() => setOpenDoc({})}>Create your first document</button></div>
       ) : (
-        <><div className="table-wrap"><table><thead><tr><th>Title</th><th>Customer</th><th>Last edited</th><th>Actions</th></tr></thead><tbody>
-          {docsPg.items.map(d => <tr key={d.id}>
+        <div className="table-wrap"><table><thead><tr><th>Title</th><th>Customer</th><th>Last edited</th><th>Actions</th></tr></thead><tbody>
+          {crmDocuments.map(d => <tr key={d.id}>
             <td><button type="button" className="text-btn" onClick={() => setOpenDoc(d)}><strong>{d.title || 'Untitled document'}</strong></button></td>
             <td>{d.customers?.name || '—'}</td>
             <td>{formatDate(d.updated_at || d.created_at)}</td>
             <td><div className="toolbar-actions"><button className="secondary-btn" onClick={() => setOpenDoc(d)}>Open</button><button className="icon-btn" onClick={() => onDeleteDoc(d.id)}><X size={16} /></button></div></td>
           </tr>)}
-        </tbody></table></div><Pagination pg={docsPg} /></>
+        </tbody></table></div>
       )}
     </div>}
 
@@ -10867,255 +10827,28 @@ function studioConfigSummary(config) {
 }
 
 // ============================================================================
-// TEST RUNNER — dry run of the workflow on the canvas.
-// Reads real CRM records as sample data, evaluates conditions, and shows what
-// each action WOULD do. It never inserts, updates, emails or notifies anyone.
+// TEST / RUN — every run goes through the workflow-worker Edge Function, the
+// same engine that runs activated automations in the background.
+// dry_run: true → preview (nothing sent or changed); false → really runs.
 // ============================================================================
-const STUDIO_ENTITY_TABLES = [
-  ['customer', 'customers'], ['contact', 'customers'], ['birthday', 'customers'],
-  ['lead', 'leads'], ['deal', 'deals'], ['ticket', 'tickets'], ['invoice', 'invoices'],
-  ['payment', 'payments'], ['quote', 'quotes'], ['activity', 'activities'], ['activities', 'activities'],
-  ['task', 'activities'], ['calendar', 'calendar_events'], ['event', 'calendar_events'],
-];
-
-function studioGuessTable(nodeType, config = {}) {
-  const explicit = config.table || config.entity || config.record_type || config.object || config.module || config.source || '';
-  const hay = `${explicit} ${nodeType || ''}`.toLowerCase();
-  for (const [word, table] of STUDIO_ENTITY_TABLES) if (hay.includes(word)) return table;
-  return null;
-}
-
-const studioGet = (record, path) => String(path || '').split('.').reduce((acc, key) => (acc == null ? undefined : acc[key]), record);
-
-function studioRender(text, record) {
-  if (typeof text !== 'string') return text;
-  return text.replace(/\{\{\s*([\w.]+)\s*\}\}/g, (_, path) => {
-    const value = studioGet(record, path);
-    return value == null || value === '' ? `[${path}?]` : String(value);
-  });
-}
-
-function studioCheckCondition(record, condition) {
-  const actual = studioGet(record, condition.field);
-  const expected = condition.value;
-  const str = v => String(v ?? '').trim().toLowerCase();
-  const num = v => Number(v);
-  const time = v => new Date(v).getTime();
-  const DAY = 86400000;
-  switch (condition.operator || 'equals') {
-    case 'equals': return str(actual) === str(expected);
-    case 'not_equals': return str(actual) !== str(expected);
-    case 'contains': return str(actual).includes(str(expected));
-    case 'greater_than': return num(actual) > num(expected);
-    case 'less_than': return num(actual) < num(expected);
-    case 'is_empty': return actual == null || str(actual) === '';
-    case 'is_not_empty': return !(actual == null || str(actual) === '');
-    case 'older_than_days': return !Number.isNaN(time(actual)) && Date.now() - time(actual) > num(expected) * DAY;
-    case 'newer_than_days': return !Number.isNaN(time(actual)) && Date.now() - time(actual) <= num(expected) * DAY;
-    case 'date_before': return time(actual) < time(expected);
-    case 'date_after': return time(actual) > time(expected);
-    default: return false;
-  }
-}
-
-function studioConditionsOf(config = {}) {
-  if (Array.isArray(config.conditions)) return config.conditions.filter(c => c && c.field);
-  if (config.field) return [{ field: config.field, operator: config.operator, value: config.value }];
-  return [];
-}
-
-function studioRecordLabel(record) {
-  if (!record) return '';
-  return record.name || record.title || record.full_name || record.company || record.email || record.subject || record.invoice_number || record.id || '';
-}
-
-async function studioFetchSample(table, { limit = 50 } = {}) {
-  let query = supabase.from(table).select('*').limit(limit);
-  const ordered = await query.order('created_at', { ascending: false });
-  if (!ordered.error) return ordered.data || [];
-  // Table without created_at — fall back to unordered.
-  const plain = await supabase.from(table).select('*').limit(limit);
-  if (plain.error) throw new Error(`Could not read ${table}: ${plain.error.message}`);
-  return plain.data || [];
-}
-
-async function studioInvokeError(error, data) {
+async function studioCallWorker(body) {
+  const { data, error } = await supabase.functions.invoke('workflow-worker', { body: { action: 'run', ...body } });
   if (error) {
     let message = error.message;
     try { const details = await error.context?.json(); if (details?.error) message = details.error; } catch { /* keep default */ }
-    return message;
+    throw new Error(message);
   }
-  return data?.error || null;
-}
-
-// Carries out one action for real, reusing the CRM's existing tables and Edge Functions.
-async function studioPerformAction(kind, cfg, record, ctx) {
-  const customerId = record.customer_id || null;
-
-  if (/mail/.test(kind)) {
-    const to = String(cfg.to || cfg.recipient || cfg.email || record.email || '').trim();
-    if (!to) throw new Error('No recipient: fill in "to" or use {{email}}.');
-    const provider = cfg.provider || ctx.integrations[0]?.provider;
-    if (!provider) throw new Error('Connect a Gmail or Outlook account on the Email page first.');
-    if (!ctx.integrations.some(i => i.provider === provider)) throw new Error(`Your ${provider} account is not connected. Connect it on the Email page.`);
-    const { data, error } = await supabase.functions.invoke('send-email', {
-      body: { provider, to, cc: cfg.cc || '', bcc: cfg.bcc || '', subject: cfg.subject || '(no subject)', body: cfg.body || cfg.message || '', customer_id: customerId },
-    });
-    const message = await studioInvokeError(error, data);
-    if (message) throw new Error(`Email not sent: ${message}`);
-    return `Email sent to ${to}`;
-  }
-
-  if (/notif|notify|alert/.test(kind)) {
-    const row = { user_id: cfg.user_id || ctx.userId, title: cfg.title || cfg.subject || 'Automation', message: cfg.message || cfg.body || '', link: cfg.link || null, read: false };
-    let { error } = await supabase.from('notifications').insert([{ ...row, type: 'automation' }]);
-    if (error) ({ error } = await supabase.from('notifications').insert([row]));
-    if (error) throw new Error(`Notification not created: ${error.message}`);
-    return 'Notification created';
-  }
-
-  if (/activit|task|follow|remind|call|meeting/.test(kind)) {
-    const due = cfg.due_date || cfg.date || cfg.activity_date;
-    const { error } = await supabase.from('activities').insert([{
-      title: cfg.title || cfg.name || 'Automation task', type: cfg.type || cfg.activity_type || 'Task',
-      activity_date: due ? new Date(due).toISOString() : new Date().toISOString(), notes: cfg.notes || cfg.note || cfg.description || null,
-      status: 'Scheduled', priority: cfg.priority || 'Medium', customer_id: customerId,
-      assigned_to: ctx.userId, created_by: ctx.userId,
-    }]);
-    if (error) throw new Error(`Activity not created: ${error.message}`);
-    return `Activity "${cfg.title || 'Automation task'}" created`;
-  }
-
-  if (/update|set_field|change/.test(kind)) {
-    const table = studioGuessTable(kind, cfg);
-    if (!table || !record.id || !cfg.field) throw new Error('Needs a record type, a field and a value to update.');
-    const { error } = await supabase.from(table).update({ [cfg.field]: cfg.value }).eq('id', record.id);
-    if (error) throw new Error(`Update failed: ${error.message}`);
-    return `Updated ${cfg.field} on ${studioRecordLabel(record)}`;
-  }
-
-  return 'This action type cannot run from Test yet — it was skipped';
-}
-
-async function studioExecuteNode(node, meta, items, ctx) {
-  const type = node.data.nodeType || '';
-  const config = node.data.config || {};
-  const category = meta?.category;
-  const kind = `${meta?.executor_kind || ''} ${type}`.toLowerCase();
-
-  if (category === 'trigger') {
-    if (/manual/.test(kind)) return { status: 'succeeded', message: 'Started manually (test run).', items: [{ triggered_by: ctx.userEmail || 'you', triggered_at: new Date().toISOString() }] };
-    if (/schedul|cron|daily|weekly|time|recurr/.test(kind)) {
-      const when = [config.time, Array.isArray(config.weekdays) && config.weekdays.length ? config.weekdays.map(d => STUDIO_WEEKDAYS[d]).join(', ') : null].filter(Boolean).join(' on ');
-      return { status: 'succeeded', message: `Schedule${when ? ` (${when})` : ''} — fired immediately for this test.`, items: [{ run_at: new Date().toISOString() }] };
-    }
-    const table = studioGuessTable(type, config);
-    if (!table) return { status: 'succeeded', message: 'Trigger simulated with an empty sample.', items: [{}] };
-    const rows = await studioFetchSample(table, { limit: 1 });
-    if (!rows.length) return { status: 'succeeded', message: `No ${table} exist yet, so the test uses an empty sample record.`, items: [{}] };
-    return { status: 'succeeded', message: `Simulated using your most recent record from ${table}: "${studioRecordLabel(rows[0])}".`, items: rows };
-  }
-
-  if (category === 'data') {
-    const table = studioGuessTable(type, config);
-    if (!table) return { status: 'failed', message: 'Could not tell which kind of record this block looks up. Pick the record type in its settings.', items: [] };
-    let rows = await studioFetchSample(table, { limit: Math.min(Number(config.limit) || 50, 200) });
-    const scope = config.owner || config.scope || config.whose || config.records;
-    if (scope === 'me' && ctx.userId) rows = rows.filter(r => [r.created_by, r.owner_id, r.assigned_to, r.user_id].includes(ctx.userId));
-    const conditions = studioConditionsOf(config);
-    if (conditions.length) rows = rows.filter(r => conditions.every(c => studioCheckCondition(r, c)));
-    return { status: 'succeeded', message: `Found ${rows.length} record${rows.length === 1 ? '' : 's'} in ${table}${conditions.length ? ' matching the filters' : ''}${rows.length >= 50 ? ' (test reads at most 50)' : ''}.`, items: rows };
-  }
-
-  if (category === 'condition') {
-    const conditions = studioConditionsOf(config);
-    if (!conditions.length) return { status: 'failed', message: 'This check has no conditions yet. Add at least one in its settings.', items: [] };
-    const input = items.length ? items : [{}];
-    const passed = input.filter(r => conditions.every(c => studioCheckCondition(r, c)));
-    const detail = conditions.map(c => `${c.field} ${String(c.operator || 'equals').replace(/_/g, ' ')} ${c.value ?? ''}`.trim()).join(' AND ');
-    return { status: passed.length ? 'succeeded' : 'skipped', message: `${passed.length} of ${input.length} passed (${detail}).${passed.length ? '' : ' Nothing continues past this block.'}`, items: passed };
-  }
-
-  if (category === 'action' && ctx.live) {
-    const targets = (items.length ? items : [{}]).slice(0, 25);
-    const done = [];
-    for (const record of targets) {
-      const rendered = {};
-      Object.entries(config).forEach(([key, value]) => { rendered[key] = typeof value === 'string' ? studioRender(value, record) : value; });
-      done.push(await studioPerformAction(kind, rendered, record, ctx));
-    }
-    const skippedNote = items.length > 25 ? ` (stopped at 25 of ${items.length} for safety)` : '';
-    return { status: 'succeeded', message: `${done[0]}${done.length > 1 ? ` — done for ${done.length} records` : ''}${skippedNote}.`, items };
-  }
-
-  if (category === 'action') {
-    const targets = items.length ? items : [{}];
-    const preview = targets.slice(0, 3).map(record => {
-      const rendered = {};
-      Object.entries(config).forEach(([key, value]) => { rendered[key] = typeof value === 'string' ? studioRender(value, record) : value; });
-      return { record: studioRecordLabel(record), ...rendered };
-    });
-    return { status: 'simulated', message: `Will run "${meta?.title || type}" for ${targets.length} record${targets.length === 1 ? '' : 's'}.`, items, preview };
-  }
-
-  // flow blocks
-  if (/stop|end/.test(kind)) return { status: 'succeeded', message: 'Automation ends here.', items, stop: true };
-  if (/wait|delay|pause|sleep/.test(kind)) {
-    const amount = config.duration || config.amount || config.minutes || config.hours || config.days || '';
-    return { status: 'succeeded', message: `Would wait${amount ? ` ${amount}${config.unit ? ` ${config.unit}` : ''}` : ''} — skipped during the test.`, items };
-  }
-  if (/loop|repeat|each/.test(kind)) return { status: 'succeeded', message: `Would repeat the next steps for each of ${items.length} record${items.length === 1 ? '' : 's'}.`, items };
-  return { status: 'succeeded', message: 'Passed through.', items };
-}
-
-async function studioRunTest({ nodes, edges, registry, live = false }) {
-  const { data: { user } } = await supabase.auth.getUser();
-  const ctx = { userId: user?.id, userEmail: user?.email, live, integrations: [] };
-  if (live) {
-    const { data } = await supabase.from('email_integrations').select('provider, email_address, status').eq('user_id', user.id);
-    ctx.integrations = data || [];
-  }
-  const metaOf = n => n.data.meta || registry[n.data.nodeType];
-  const trigger = nodes.find(n => metaOf(n)?.category === 'trigger');
-  if (!trigger) throw new Error('Add a starting block before testing.');
-  const nextNodes = id => edges.filter(e => e.source === id).map(e => nodes.find(n => n.id === e.target)).filter(Boolean);
-
-  const steps = [];
-  const visits = {};
-  const queue = [{ node: trigger, items: [] }];
-  while (queue.length && steps.length < 60) {
-    const { node, items } = queue.shift();
-    visits[node.id] = (visits[node.id] || 0) + 1;
-    if (visits[node.id] > 3) continue; // loop guard
-    const meta = metaOf(node);
-    const started = performance.now();
-    let result;
-    try {
-      result = meta ? await studioExecuteNode(node, meta, items, ctx) : { status: 'failed', message: 'This block type is no longer registered.', items: [] };
-    } catch (e) {
-      result = { status: 'failed', message: e.message || 'This block failed.', items: [] };
-    }
-    steps.push({
-      nodeId: node.id, title: meta?.title || node.data.nodeType, category: meta?.category || 'unknown',
-      status: result.status, message: result.message, count: result.items?.length || 0,
-      preview: result.preview || (result.items || []).slice(0, 3).map(studioRecordLabel).filter(Boolean),
-      ms: Math.round(performance.now() - started),
-    });
-    if (result.status === 'failed' || result.status === 'skipped' || result.stop) continue;
-    nextNodes(node.id).forEach(next => queue.push({ node: next, items: result.items || [] }));
-  }
-
-  const failed = steps.find(s => s.status === 'failed');
-  return { status: failed ? 'failed' : 'succeeded', live, error: failed ? `${failed.title}: ${failed.message}` : null, steps, finishedAt: new Date().toISOString() };
+  if (data?.error && !data?.steps) throw new Error(data.error);
+  return { ...data, live: !data?.dry_run };
 }
 
 function StudioTestPanel({ result, onClose, onSelectNode }) {
-  const label = { succeeded: 'OK', simulated: 'Simulated', skipped: 'Stopped', failed: 'Failed' };
+  const label = { succeeded: 'OK', simulated: 'Will run', skipped: 'Stopped', failed: 'Failed', waiting: 'Waiting' };
   return (
     <>
       <div className="studio-config-head">
-        <strong>{result.live ? 'Run' : 'Preview'} · {result.status === 'failed' ? 'needs attention' : result.live ? 'done' : 'not run'}</strong>
-        <p>{result.live ? 'The actions below were carried out for real.' : 'Preview only — you cancelled, so nothing was sent or changed.'}</p>
+        <strong>{result.live ? 'Run' : 'Preview'} · {['failed', 'partial'].includes(result.status) ? 'needs attention' : result.live ? 'done' : 'not run'}</strong>
+        <p>{result.live ? (result.status === 'waiting' ? 'Running — it will continue after the Wait block. See Recent activity.' : 'The actions below were carried out for real.') : 'Preview only — nothing was sent or changed.'}</p>
       </div>
       <div className="studio-config-body">
         {result.steps.map((step, i) => (
@@ -11223,7 +10956,24 @@ function StudioConditionEditor({ conditions, onChange }) {
   );
 }
 
-function StudioConfigPanel({ node, onConfigChange, onDeleteNode }) {
+const studioProviderLabel = p => (p === 'gmail' ? 'Gmail' : p === 'outlook' ? 'Outlook' : p);
+
+function StudioEmailAccountPicker({ accounts, value, onChange }) {
+  const connected = accounts.filter(a => a.status === 'connected');
+  const current = String(value || '').trim().toLowerCase();
+  return (
+    <label>Send from
+      <select value={connected.some(a => a.provider === current) ? current : ''} onChange={e => onChange(e.target.value)}>
+        <option value="">{connected.length ? '— Choose an email account —' : 'No account connected'}</option>
+        {connected.map(a => <option key={a.id} value={a.provider}>{a.email_address || studioProviderLabel(a.provider)} ({studioProviderLabel(a.provider)})</option>)}
+      </select>
+      {connected.length === 0 && <small style={{ display: 'block', marginTop: 4, fontWeight: 500 }}>Connect Gmail or Outlook on the Email page first.</small>}
+      {current && !connected.some(a => a.provider === current) && connected.length > 0 && <small style={{ display: 'block', marginTop: 4, fontWeight: 500, color: '#c24141' }}>"{value}" is not connected — pick one of your accounts.</small>}
+    </label>
+  );
+}
+
+function StudioConfigPanel({ node, onConfigChange, onDeleteNode, emailAccounts = [] }) {
   const meta = node?.data?.meta;
   if (!node || !meta) return <div className="studio-config-empty">Click a block on the canvas to set it up. Every block explains what it does in plain English.</div>;
   const config = node.data.config || {};
@@ -11235,7 +10985,10 @@ function StudioConfigPanel({ node, onConfigChange, onDeleteNode }) {
         <p>{studioDesc(meta.description)}</p>
       </div>
       <div className="studio-config-body">
+        {/mail/i.test(`${meta.executor_kind || ''} ${meta.node_type || node.data.nodeType || ''}`) && !('provider' in (meta.config_schema || {})) &&
+          <StudioEmailAccountPicker accounts={emailAccounts} value={config.provider} onChange={v => onConfigChange({ ...config, provider: v })} />}
         {Object.entries(meta.config_schema || {}).map(([key, schema]) => {
+          if (key === 'provider') return <StudioEmailAccountPicker key={key} accounts={emailAccounts} value={config.provider} onChange={v => onConfigChange({ ...config, provider: v })} />;
           if (key === 'weekdays') return <StudioWeekdayPicker key={key} value={config.weekdays} onChange={v => onConfigChange({ ...config, weekdays: v })} />;
           if (key === 'conditions') return <StudioConditionEditor key={key} conditions={config.conditions} onChange={v => onConfigChange({ ...config, conditions: v })} />;
           return <StudioConfigField key={key} label={key.replace(/_/g, ' ')} schema={schema} value={config[key]} onChange={v => onConfigChange({ ...config, [key]: v })} />;
@@ -11249,6 +11002,7 @@ function StudioConfigPanel({ node, onConfigChange, onDeleteNode }) {
 
 function WorkflowBuilder({ registry, workflow, initialDefinition, onExit, showToast }) {
   const [name, setName] = useState(workflow?.name || 'New automation');
+  const [savedId, setSavedId] = useState(workflow?.id || null);
   const [description, setDescription] = useState(workflow?.description || '');
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
@@ -11266,6 +11020,16 @@ function WorkflowBuilder({ registry, workflow, initialDefinition, onExit, showTo
   const [selectedId, setSelectedId] = useState(null);
   const [libraryQuery, setLibraryQuery] = useState('');
   const [, forceRender] = useState(0);
+  const [emailAccounts, setEmailAccounts] = useState([]);
+  useEffect(() => {
+    (async () => {
+      const { data: { user } } = await supabase.auth.getUser();
+      if (!user) return;
+      const { data, error } = await supabase.from('email_integrations').select('id, provider, email_address, status').eq('user_id', user.id);
+      if (error) console.error('[Automation] could not load email accounts', error);
+      setEmailAccounts(data || []);
+    })();
+  }, []);
   const [testing, setTesting] = useState(false);
   const [testResult, setTestResult] = useState(null);
   const [showTest, setShowTest] = useState(false);
@@ -11279,13 +11043,14 @@ function WorkflowBuilder({ registry, workflow, initialDefinition, onExit, showTo
     setTesting(true);
     clearTestMarks();
     try {
-      const preview = await studioRunTest({ nodes, edges, registry });
-      const actions = preview.steps.filter(s => s.status === 'simulated');
+      const definition = studioFlowToDefinition(nodes, edges);
+      const preview = await studioCallWorker({ workflow_id: savedId, definition, dry_run: true });
+      const actions = (preview.steps || []).filter(s => s.status === 'simulated');
       let result = preview;
       if (preview.status !== 'failed' && actions.length) {
-        const summary = actions.map(s => `• ${s.title} — ${s.count || 1} record${(s.count || 1) === 1 ? '' : 's'}`).join('\n');
+        const summary = actions.map(s => `• ${s.title}: ${s.message}`).join('\n');
         if (window.confirm(`Run this automation for real now?\n\n${summary}\n\nEmails will really be sent and records really created.`)) {
-          result = await studioRunTest({ nodes, edges, registry, live: true });
+          result = await studioCallWorker({ workflow_id: savedId, definition, dry_run: false });
         }
       }
       const statusById = {};
@@ -11294,13 +11059,7 @@ function WorkflowBuilder({ registry, workflow, initialDefinition, onExit, showTo
       setTestResult(result);
       setShowTest(true);
       setSelectedId(null);
-      showToast(result.status === 'failed' ? 'Finished with a problem — see the results panel.' : result.live ? 'Automation ran successfully.' : 'Preview only — nothing was sent.');
-      // Log the test in run history when the automation is saved (ignored if RLS blocks it).
-      if (workflow?.id && result.live) {
-        try {
-          await supabase.from('workflow_runs').insert([{ workflow_id: workflow.id, trigger_type: 'manual', status: result.status, started_at: new Date().toISOString(), error: result.error }]);
-        } catch { /* history is optional */ }
-      }
+      showToast(result.status === 'failed' || result.status === 'partial' ? 'Finished with a problem — see the results panel.' : result.live ? 'Automation ran.' : 'Preview only — nothing was sent.');
     } catch (e) {
       console.error('[Automation test] failed', e);
       setError(e.message || 'The test could not run.');
@@ -11404,13 +11163,14 @@ useEffect(() => {
     try {
       const { data: { user } } = await supabase.auth.getUser();
       const definition = studioFlowToDefinition(nodes, edges);
-      let workflowId = workflow?.id;
+      let workflowId = savedId;
       if (!workflowId) {
         const { data: created, error: createError } = await supabase
           .from('workflows').insert([{ name: name.trim() || 'Untitled automation', description: description.trim() || null, status: 'draft', created_by: user.id }])
           .select().single();
         if (createError) throw createError;
         workflowId = created.id;
+        setSavedId(created.id);
       } else {
         const { error: updateError } = await supabase.from('workflows')
           .update({ name: name.trim(), description: description.trim() || null, updated_at: new Date().toISOString() })
@@ -11516,7 +11276,7 @@ useEffect(() => {
                 onSelectNode={id => { setSelectedId(id); setNodes(nds => nds.map(n => ({ ...n, selected: n.id === id }))); }} />
             : <>
                 {testResult && <button type="button" className="text-btn" style={{ margin: '10px 14px 0' }} onClick={() => setShowTest(true)}>← Back to test results</button>}
-                <StudioConfigPanel node={selectedNode} onConfigChange={config => updateConfig(selectedNode.id, config)} onDeleteNode={() => deleteNode(selectedNode.id)} />
+                <StudioConfigPanel node={selectedNode} emailAccounts={emailAccounts} onConfigChange={config => updateConfig(selectedNode.id, config)} onDeleteNode={() => deleteNode(selectedNode.id)} />
               </>}
         </aside>
       </div>
@@ -12459,76 +12219,14 @@ function StorhetAIChat() {
   </>;
 }
 
-function MDPanel({ deals = [], quotes = [], invoices = [], customers = [], leads = [], staffUsers = [], ownerProfiles = {}, formatAmount, onApprove, onReject, onInviteStaff, onOpenInviteEmail, staffInvitations = [], onRevokeStaffInvitation, staffInvitationActionId, setPage }) {
+function MDPanel({ deals = [], quotes = [], invoices = [], customers = [], formatAmount, onApprove, onReject, onInviteStaff, onOpenInviteEmail, staffInvitations = [], onRevokeStaffInvitation, staffInvitationActionId, setPage }) {
   const [showStaffInvite, setShowStaffInvite] = useState(false);
-  const [showSalesReps, setShowSalesReps] = useState(false);
-  const [selectedRepId, setSelectedRepId] = useState(null);
-  // Sales reps and the leads each one opened (leads.created_by = the rep who opened the lead).
-  const salesReps = staffUsers.filter(u => u.role === 'sales');
-  const repName = rep => ownerProfiles[rep.user_id] || rep.email || 'Sales Rep';
-  const leadsOpenedBy = userId => leads.filter(l => l.created_by === userId);
-  const selectedRep = salesReps.find(r => r.user_id === selectedRepId);
-  const repLeads = selectedRep ? leadsOpenedBy(selectedRep.user_id) : [];
-  const repsPg = usePagination(salesReps);
-  const repLeadsPg = usePagination(repLeads);
-  const closeSalesModal = () => { setShowSalesReps(false); setSelectedRepId(null); };
-  const pickRep = id => { setSelectedRepId(id); repLeadsPg.setPage(1); };
   // Deals are not commercial approval records; only quotes and invoices can reach MD.
   const approvals = [...quotes.map(x => ({ ...x, _type: 'quote' })), ...invoices.map(x => ({ ...x, _type: 'invoice' }))].filter(item => item.approval_status === 'MD_PENDING');
   const pending = [...quotes, ...invoices].filter(item => ['SALES_PENDING', 'HOS_PENDING', 'MD_PENDING'].includes(item.approval_status)).length;
-  return <>
-    <PageHeading eyebrow="EXECUTIVE" title="MD Panel" description="Executive overview and final approval queue."
-      action="Invite a worker"
-      onAction={() => setShowStaffInvite(true)} />
+  return <><PageHeading eyebrow="EXECUTIVE" title="MD Panel" description="Executive overview and final approval queue." action="Invite a worker" onAction={() => setShowStaffInvite(true)} />
     {showStaffInvite && <StaffInviteModal onInvite={onInviteStaff} onOpenEmail={onOpenInviteEmail} onClose={() => setShowStaffInvite(false)} />}
-    <StaffInvitationsPanel invitations={staffInvitations} onRevoke={onRevokeStaffInvitation} actionId={staffInvitationActionId} />
-    <div className="stats-grid">
-      <StatCard label="Customers" value={customers.length} hint="Active customer records" tone="blue" icon="C" onClick={() => document.getElementById('md-customers')?.scrollIntoView({ behavior: 'smooth' })} />
-      <StatCard label="Won revenue" value={formatAmount(deals.filter(d => d.stage === 'Won').reduce((s, d) => s + Number(d.amount || 0), 0))} hint="Pipeline revenue" tone="green" icon="$" onClick={() => document.getElementById('md-revenue')?.scrollIntoView({ behavior: 'smooth' })} />
-      <StatCard label="Pending approvals" value={pending} hint="Commercial approval queue" tone="orange" icon="!" onClick={() => document.getElementById('md-approval-queue')?.scrollIntoView({ behavior: 'smooth' })} />
-      <StatCard label="Open invoices" value={invoices.filter(i => !['Paid', 'Cancelled'].includes(i.status)).length} hint="Outstanding billing" tone="purple" icon="I" onClick={() => setPage?.('Invoices')} />
-      <StatCard label="Staff" value={salesReps.length} hint="Sales reps · click to view their leads" tone="blue" icon="S" onClick={() => setShowSalesReps(true)} />
-    </div>
-    {showSalesReps && <div className="modal-backdrop" onClick={closeSalesModal}>
-      <div className="modal md-modal" role="dialog" aria-modal="true" onClick={e => e.stopPropagation()}>
-        <div className="modal-heading">
-          <div>
-            <h2>{selectedRep ? `${repName(selectedRep)} — leads opened` : 'Sales reps'}</h2>
-            <p className="muted">{selectedRep ? `${repLeads.length} lead${repLeads.length === 1 ? '' : 's'} opened by this rep.` : 'Select a sales rep to see the leads they opened.'}</p>
-          </div>
-          <button type="button" className="icon-btn" onClick={closeSalesModal} aria-label="Close"><X size={16} /></button>
-        </div>
-        {selectedRep && <button type="button" className="secondary-btn md-back-btn" onClick={() => setSelectedRepId(null)}>← All sales reps</button>}
-        {!selectedRep && (salesReps.length === 0
-          ? <p className="muted">No active sales reps found.</p>
-          : <>
-              <div className="md-rep-list">
-                {repsPg.items.map(rep => <button type="button" key={rep.user_id} className="md-rep-item" onClick={() => pickRep(rep.user_id)}>
-                  <span className="md-rep-name">{repName(rep)}<small>{rep.email}</small></span>
-                  <span className="md-rep-count">{leadsOpenedBy(rep.user_id).length} leads</span>
-                </button>)}
-              </div>
-              <Pagination pg={repsPg} />
-            </>)}
-        {selectedRep && (repLeads.length === 0
-          ? <p className="muted">This rep has not opened any leads yet.</p>
-          : <>
-              <div className="table-wrap"><table className="md-leads-table">
-                <thead><tr><th>Lead</th><th>Company</th><th>Source</th><th>Status</th><th>Opened</th></tr></thead>
-                <tbody>{repLeadsPg.items.map(l => <tr key={l.id}>
-                  <td>{l.name || '—'}<small>{l.email || ''}</small></td>
-                  <td>{l.company || l.customers?.company || '—'}</td>
-                  <td>{l.source || '—'}</td>
-                  <td>{l.status || '—'}</td>
-                  <td>{l.created_at ? new Date(l.created_at).toLocaleDateString() : '—'}</td>
-                </tr>)}</tbody>
-              </table></div>
-              <Pagination pg={repLeadsPg} />
-            </>)}
-      </div>
-    </div>}
-    <div className="panel" id="md-revenue"><div className="panel-heading"><div><h3>MD executive revenue</h3><p>Company-wide revenue visibility.</p></div></div><div className="panel-subsection" id="md-customers"><p>Customers: <strong>{customers.length}</strong> · Won revenue: <strong>{formatAmount(deals.filter(d => d.stage === 'Won').reduce((s, d) => s + Number(d.amount || 0), 0))}</strong> · Open invoices: <strong>{invoices.filter(i => !['Paid', 'Cancelled'].includes(i.status)).length}</strong></p></div></div><div className="panel" id="md-approval-queue"><div className="panel-heading"><div><h3>MD final approval queue</h3><p>Only $50,000+ records reach this queue after HOS approval.</p></div></div><div className="table-wrap"><table><thead><tr><th>Type</th><th>Record</th><th>Amount</th><th>Action</th></tr></thead><tbody>{approvals.length === 0 ? <tr><td colSpan="4">No MD approvals pending.</td></tr> : approvals.map(item => <tr key={`${item._type}-${item.id}`}><td>{item._type}</td><td>{item.title || item.quote_number || item.invoice_number || 'Record'}</td><td>{formatAmount(item.total ?? item.amount)}</td><td><div className="toolbar-actions"><button className="primary-btn" onClick={async () => { try { await onApprove(item._type, item.id) } catch (e) { alert(e.message) } }}>Approve</button><button className="secondary-btn" onClick={async () => { const note = window.prompt('Rejection reason / note:'); if (note) try { await onReject(item._type, item.id, note) } catch (e) { alert(e.message) } }}>Reject</button></div></td></tr>)}</tbody></table></div></div>
-    </>;
+    <StaffInvitationsPanel invitations={staffInvitations} onRevoke={onRevokeStaffInvitation} actionId={staffInvitationActionId} /><div className="stats-grid"><StatCard label="Customers" value={customers.length} hint="Active customer records" tone="blue" icon="C" onClick={() => document.getElementById('md-customers')?.scrollIntoView({ behavior: 'smooth' })} /><StatCard label="Won revenue" value={formatAmount(deals.filter(d => d.stage === 'Won').reduce((s, d) => s + Number(d.amount || 0), 0))} hint="Pipeline revenue" tone="green" icon="$" onClick={() => document.getElementById('md-revenue')?.scrollIntoView({ behavior: 'smooth' })} /><StatCard label="Pending approvals" value={pending} hint="Commercial approval queue" tone="orange" icon="!" onClick={() => document.getElementById('md-approval-queue')?.scrollIntoView({ behavior: 'smooth' })} /><StatCard label="Open invoices" value={invoices.filter(i => !['Paid', 'Cancelled'].includes(i.status)).length} hint="Outstanding billing" tone="purple" icon="I" onClick={() => setPage?.('Invoices')} /></div><div className="panel" id="md-revenue"><div className="panel-heading"><div><h3>MD executive revenue</h3><p>Company-wide revenue visibility.</p></div></div><div className="panel-subsection" id="md-customers"><p>Customers: <strong>{customers.length}</strong> · Won revenue: <strong>{formatAmount(deals.filter(d => d.stage === 'Won').reduce((s, d) => s + Number(d.amount || 0), 0))}</strong> · Open invoices: <strong>{invoices.filter(i => !['Paid', 'Cancelled'].includes(i.status)).length}</strong></p></div></div><div className="panel" id="md-approval-queue"><div className="panel-heading"><div><h3>MD final approval queue</h3><p>Only $50,000+ records reach this queue after HOS approval.</p></div></div><div className="table-wrap"><table><thead><tr><th>Type</th><th>Record</th><th>Amount</th><th>Action</th></tr></thead><tbody>{approvals.length === 0 ? <tr><td colSpan="4">No MD approvals pending.</td></tr> : approvals.map(item => <tr key={`${item._type}-${item.id}`}><td>{item._type}</td><td>{item.title || item.quote_number || item.invoice_number || 'Record'}</td><td>{formatAmount(item.total ?? item.amount)}</td><td><div className="toolbar-actions"><button className="primary-btn" onClick={async () => { try { await onApprove(item._type, item.id) } catch (e) { alert(e.message) } }}>Approve</button><button className="secondary-btn" onClick={async () => { const note = window.prompt('Rejection reason / note:'); if (note) try { await onReject(item._type, item.id, note) } catch (e) { alert(e.message) } }}>Reject</button></div></td></tr>)}</tbody></table></div></div></>;
 }
 
 function HOSPanel({
