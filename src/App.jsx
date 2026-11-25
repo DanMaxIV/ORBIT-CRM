@@ -1,4 +1,4 @@
-import { createContext, useContext, useEffect, useMemo, useState, useRef, useCallback } from 'react';
+import { createContext, useContext, useEffect, useMemo, useState, useRef, useCallback, Fragment } from 'react';
 import { supabase } from './lib/supabase';
 import { Capacitor } from '@capacitor/core';
 import { Browser } from '@capacitor/browser';
@@ -10799,6 +10799,9 @@ const studioDesc = text => String(text || '').replace(/\s*(You|you) (approve|con
 const STUDIO_CATEGORY_ORDER = { trigger: 0, data: 1, condition: 2, action: 3, flow: 4 };
 const STUDIO_CATEGORY_LABEL = { trigger: 'When this happens', data: 'Find records', condition: 'Check things', action: 'Do things', flow: 'Control the flow' };
 const STUDIO_WEEKDAYS = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
+const STUDIO_FIELD_LABELS = { to: 'To', body: 'Message', subject: 'Subject', note: 'Note', title: 'Title', message: 'Message', recipient: 'Send to', assigned_to: 'Assign to', customer_id: 'Customer', duration_value: 'How long', duration_unit: 'Unit', days_before: 'Days before', minutes_before: 'Minutes before', to_stage: 'Moves to stage', segment_id: 'Segment', start_date: 'Starts on', end_date: 'Ends on', min_score: 'Minimum score', min_amount: 'Minimum amount', created_within_days: 'Created in the last (days)', due_within_days: 'Due in the next (days)', approval_status: 'Approval status' };
+const studioFieldLabel = key => STUDIO_FIELD_LABELS[key] || (key.charAt(0).toUpperCase() + key.slice(1)).replace(/_/g, ' ');
+const STUDIO_CATEGORY_COLOR = { trigger: '#1f5fd1', data: '#0e8a8c', condition: '#b5730c', action: '#6f47c6', flow: '#586174' };
 const studioStatusPill = status => <span className={`studio-status-pill ${status}`}>{status}</span>;
 const studioFmtDateTime = v => v ? new Date(v).toLocaleString(undefined, { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' }) : '—';
 
@@ -10905,7 +10908,7 @@ function StudioConfigField({ label, schema, value, onChange }) {
       <div>
         <label>{label}</label>
         {Object.entries(schema).map(([k, sub]) =>
-          <StudioConfigField key={k} label={k.replace(/_/g, ' ')} schema={sub}
+          <StudioConfigField key={k} label={studioFieldLabel(k)} schema={sub}
             value={(value || {})[k]}
             onChange={v => onChange({ ...(value || {}), [k]: v })} />)}
       </div>
@@ -10980,9 +10983,12 @@ function StudioConfigPanel({ node, onConfigChange, onDeleteNode, emailAccounts =
   const Icon = studioIconFor(meta.icon);
   return (
     <>
-      <div className="studio-config-head">
-        <strong><Icon size={14} style={{ marginRight: 6, verticalAlign: -2 }} />{meta.title}</strong>
-        <p>{studioDesc(meta.description)}</p>
+      <div className={`studio-config-head cat-${meta.category}`}>
+        <span className="studio-config-icon"><Icon size={15} /></span>
+        <div>
+          <strong>{meta.title}</strong>
+          <p>{studioDesc(meta.description)}</p>
+        </div>
       </div>
       <div className="studio-config-body">
         {/mail/i.test(`${meta.executor_kind || ''} ${meta.node_type || node.data.nodeType || ''}`) && !('provider' in (meta.config_schema || {})) &&
@@ -10991,7 +10997,7 @@ function StudioConfigPanel({ node, onConfigChange, onDeleteNode, emailAccounts =
           if (key === 'provider') return <StudioEmailAccountPicker key={key} accounts={emailAccounts} value={config.provider} onChange={v => onConfigChange({ ...config, provider: v })} />;
           if (key === 'weekdays') return <StudioWeekdayPicker key={key} value={config.weekdays} onChange={v => onConfigChange({ ...config, weekdays: v })} />;
           if (key === 'conditions') return <StudioConditionEditor key={key} conditions={config.conditions} onChange={v => onConfigChange({ ...config, conditions: v })} />;
-          return <StudioConfigField key={key} label={key.replace(/_/g, ' ')} schema={schema} value={config[key]} onChange={v => onConfigChange({ ...config, [key]: v })} />;
+          return <StudioConfigField key={key} label={studioFieldLabel(key)} schema={schema} value={config[key]} onChange={v => onConfigChange({ ...config, [key]: v })} />;
         })}
         {Object.keys(meta.config_schema || {}).length === 0 && <p className="studio-config-empty">This block has no settings — connect it and you are done.</p>}
         <button type="button" className="secondary-btn" style={{ marginTop: 10 }} onClick={onDeleteNode}><Trash2 size={14} /> Remove this block</button>
@@ -11226,11 +11232,13 @@ useEffect(() => {
           <div className="studio-library-list">
             {libraryGroups.map(([category, items]) => (
               <div key={category}>
-                <div className="studio-library-group-title">{STUDIO_CATEGORY_LABEL[category] || category}</div>
+                <div className={`studio-library-group-title cat-${category}`}>{STUDIO_CATEGORY_LABEL[category] || category}</div>
                 {items.map(meta => {
                   const Icon = studioIconFor(meta.icon);
                   return (
-                    <div key={meta.node_type} className="studio-library-item"
+                    <div key={meta.node_type} className={`studio-library-item cat-${meta.category}`}
+                      role="button" tabIndex={0} title="Click or drag onto the canvas"
+                      onKeyDown={e => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); addNode(meta.node_type); } }}
                       draggable
                       onDragStart={e => e.dataTransfer.setData('application/studio-node', meta.node_type)}
                       onClick={() => addNode(meta.node_type)}>
@@ -11264,9 +11272,9 @@ useEffect(() => {
             onNodesDelete={() => window.setTimeout(() => pushHistory(), 0)}
             fitView fitViewOptions={{ padding: 0.25 }}
           >
-            <Background variant={BackgroundVariant.Dots} gap={18} size={1} color="#dfe3ee" />
+            <Background variant={BackgroundVariant.Dots} gap={20} size={1.4} color="var(--st-grid)" />
             <Controls showInteractive={false} />
-            <MiniMap pannable zoomable />
+            <MiniMap pannable zoomable nodeBorderRadius={6} nodeColor={n => STUDIO_CATEGORY_COLOR[n.data?.meta?.category] || '#9aa2b1'} maskColor="var(--st-minimap-mask)" />
           </ReactFlow>
         </div>
         <aside className="studio-config">
@@ -11634,7 +11642,7 @@ function SupportEngineers({ supportEngineers, solutionSupport, onAdd, onUpdate, 
     </div>
     <div className="panel">
       <div className="panel-heading"><div><h3>Support engineers</h3><p>These people can be assigned to solution families and deals.</p></div></div>
-      {supportEngineers.length === 0 ? <div className="empty-state"><p>No support engineers have been added yet.</p>{isAdmin && <button className="primary-btn" onClick={openAdd}>Add your first support engineer</button>}</div> : <div className="table-wrap"><table className="data-table"><thead><tr><th>Engineer</th><th>Role</th><th>Supported solutions</th><th>Status</th><th>Actions</th></tr></thead><tbody>{supportEngineers.map(engineer => { const families = familyNamesFor(engineer.id); return <tr key={engineer.id}><td><strong>{engineer.name}</strong><div className="table-subtext">{engineer.email || 'No email added'}</div></td><td>{engineer.role || 'System Engineer'}</td><td>{families.length ? families.map(f => <span key={f} className="tag-pill">{f}</span>) : <span className="table-subtext">Not assigned</span>}</td><td><span className={`status ${engineer.status === 'Active' ? 'paid' : 'overdue'}`}>{engineer.status}</span></td><td>{isAdmin && <div className="table-actions"><button type="button" className="secondary-btn" onClick={() => openEdit(engineer)}><Pencil size={14} /> Edit</button>{engineer.status === 'Active' && <button type="button" className="secondary-btn" onClick={async () => { if (!window.confirm(`Deactivate ${engineer.name}?`)) return; try { await onDeactivate(engineer.id); } catch (err) { alert(err.message); } }}>Deactivate</button>}</div>}</td></tr>; })}</tbody></table></div>}
+      {supportEngineers.length === 0 ? <div className="empty-state"><p>No support engineers have been added yet.</p>{isAdmin && <button className="primary-btn" onClick={openAdd}>Add your first support engineer</button>}</div> : <div className="table-wrap"><table className="data-table"><thead><tr><th>Engineer</th><th>Role</th><th>Supported solutions</th><th>Status</th><th>Actions</th></tr></thead><tbody>{supportEngineers.map(engineer => { const families = familyNamesFor(engineer.id); return <tr key={engineer.id}><td><strong>{engineer.name}</strong><div className="table-subtext">{engineer.email || 'No email added'}</div></td><td>{engineer.role || 'System Engineer'}</td><td>{families.length ? families.join(', ') : <span className="table-subtext">Not assigned</span>}</td><td><span className={`status ${engineer.status === 'Active' ? 'paid' : 'overdue'}`}>{engineer.status}</span></td><td>{isAdmin && <div className="table-actions"><button type="button" className="secondary-btn" onClick={() => openEdit(engineer)}><Pencil size={14} /> Edit</button>{engineer.status === 'Active' && <button type="button" className="secondary-btn" onClick={async () => { if (!window.confirm(`Deactivate ${engineer.name}?`)) return; try { await onDeactivate(engineer.id); } catch (err) { alert(err.message); } }}>Deactivate</button>}</div>}</td></tr>; })}</tbody></table></div>}
     </div>
     {show && <div className="modal-backdrop" onClick={close}><form className="modal" onSubmit={save} onClick={e => e.stopPropagation()}><div className="modal-heading"><div><h2>{editing ? 'Edit support engineer' : 'Add support engineer'}</h2><p>Manage the technical people available to Storhet.</p></div><button type="button" className="icon-btn" onClick={close}><X size={18} /></button></div>{error && <div className="form-error">{error}</div>}<label>Name *<input required value={form.name} onChange={e => setForm({ ...form, name: e.target.value })} placeholder="e.g. Michel Agboola" /></label><label>Email<input type="email" value={form.email} onChange={e => setForm({ ...form, email: e.target.value })} placeholder="engineer@storhet.com" /></label><label>Role<input value={form.role} onChange={e => setForm({ ...form, role: e.target.value })} placeholder="e.g. System Engineer" /></label><label>Status<select value={form.status} onChange={e => setForm({ ...form, status: e.target.value })}><option value="Active">Active</option><option value="Inactive">Inactive</option></select></label><div className="product-selector"><div className="product-selector-heading"><div><strong>Supported solution families</strong><span>{form.solutionFamilies.length} selected</span></div></div><div className="product-vendor-children">{primaryVendors.map(family => { const selected = form.solutionFamilies.includes(family); return <label key={family} className={`product-option ${selected ? 'selected' : ''}`}><input type="checkbox" checked={selected} onChange={() => toggleFamily(family)} /><span>{family}</span></label>; })}</div></div><div className="modal-actions"><button type="button" className="secondary-btn" onClick={close}>Cancel</button><button type="submit" className="primary-btn" disabled={saving}>{saving ? 'Saving...' : editing ? 'Save changes' : 'Add engineer'}</button></div></form></div>}
   </>;
@@ -11763,7 +11771,14 @@ function Products({ products, supportEngineers, solutionSupport, onAdd, onUpdate
   };
 
   const getFamilySupport = vendor => solutionSupport.filter(row => row.solution_family === vendor && row.support_engineers?.status === 'Active').map(row => row.support_engineer_id);
-  const getFamilySupportNames = vendor => solutionSupport.filter(row => row.solution_family === vendor && row.support_engineers?.status === 'Active').map(row => row.support_engineers?.name).filter(Boolean);
+  // First name only: "Tolulope Jeremiah" → "Tolulope"; an email used as a name → the part before @, e.g. "joan.a@…" → "Joan".
+  const supportFirstName = full => {
+    const raw = String(full || '').trim();
+    const base = raw.includes('@') ? raw.split('@')[0] : raw;
+    const first = base.split(/[\s._-]+/).find(Boolean) || base;
+    return first ? first.charAt(0).toUpperCase() + first.slice(1).toLowerCase() : '';
+  };
+  const getFamilySupportNames = vendor => [...new Set(solutionSupport.filter(row => row.solution_family === vendor && row.support_engineers?.status === 'Active').map(row => supportFirstName(row.support_engineers?.name)).filter(Boolean))];
   const openFamilySupport = vendor => { setFamilySupportIds(getFamilySupport(vendor)); setSelectedVendor(vendor); setShowFamilySupport(true); };
   const saveFamilySupport = async () => { setFamilySupportSaving(true); try { await onUpdateFamilySupport(selectedVendor, familySupportIds); setShowFamilySupport(false); } catch (err) { alert(err.message); } finally { setFamilySupportSaving(false); } };
 
@@ -11842,7 +11857,7 @@ function Products({ products, supportEngineers, solutionSupport, onAdd, onUpdate
         <div className="solution-family-label">SOLUTION FAMILY</div>
         <h3>{vendor}</h3>
         <p>{vendorProducts.length} {vendorProducts.length === 1 ? 'solution' : 'solutions'} in catalogue</p>
-        <div className="solution-family-support-preview"><strong>Supported by</strong><div>{getFamilySupportNames(vendor).length ? getFamilySupportNames(vendor).slice(0, 3).map(name => <span key={name}>{name}</span>) : <span>Not assigned</span>}</div></div>
+        <div className="solution-family-support-preview"><strong>Supported by</strong><div>{getFamilySupportNames(vendor).length ? <span>{getFamilySupportNames(vendor).slice(0, 3).join(', ')}{getFamilySupportNames(vendor).length > 3 ? ` +${getFamilySupportNames(vendor).length - 3}` : ''}</span> : <span>Not assigned</span>}</div></div>
         <div className="solution-family-categories">
           {categoriesForVendor.slice(0, 4).map(category => (
             <span key={category}>{category}</span>
@@ -11881,7 +11896,7 @@ function Products({ products, supportEngineers, solutionSupport, onAdd, onUpdate
               <div className="solution-family-label">SOLUTION FAMILY</div>
               <h2>{selectedVendor}</h2>
               <p>{(groupedProducts[selectedVendor] || []).length} solutions available in the catalogue.</p>
-              <div className="solution-family-support-preview"><strong>Supported by</strong><div>{getFamilySupportNames(selectedVendor).length ? getFamilySupportNames(selectedVendor).map(name => <span key={name}>{name}</span>) : <span>Not assigned</span>}</div></div>
+              <div className="solution-family-support-preview"><strong>Supported by</strong><div>{getFamilySupportNames(selectedVendor).length ? <span>{getFamilySupportNames(selectedVendor).join(', ')}</span> : <span>Not assigned</span>}</div></div>
             </div>
             {isAdmin && <button type="button" className="secondary-btn" onClick={() => openFamilySupport(selectedVendor)}>Manage support</button>}
           </div>
@@ -12078,7 +12093,59 @@ function SettingsPage({ currency, setCurrency, theme, setTheme }) {
     </>
   );
 }
-// ── Storhet AI — internal AI assistant (Phase 1: read-only tools) ──────────
+// Renders AI replies safely (no HTML injection): paragraphs, "- " / "1." lists,
+// **bold**, [text](https://link) and bare https:// links open in a new tab.
+function aiInline(text, keyBase) {
+  const out = [];
+  const re = /\*\*([^*]+)\*\*|\[([^\]]+)\]\((https?:\/\/(?:[^\s()]|\([^\s()]*\))+)\)|(https?:\/\/[^\s<]+)/g;
+  let last = 0, m, i = 0;
+  while ((m = re.exec(text))) {
+    if (m.index > last) out.push(text.slice(last, m.index));
+    if (m[1]) out.push(<strong key={`${keyBase}-${i++}`}>{m[1]}</strong>);
+    else {
+      let href = m[3] || m[4];
+      let trailing = '';
+      // bare links: keep balanced brackets, push stray closing ")" / punctuation back into the text
+      while (!m[3] && (/[.,;:!?]$/.test(href) || (href.endsWith(')') && (href.match(/\(/g) || []).length < (href.match(/\)/g) || []).length))) {
+        trailing = href.slice(-1) + trailing; href = href.slice(0, -1);
+      }
+      const label = m[2] || href.replace(/^https?:\/\/(www\.)?/, '').slice(0, 60);
+      out.push(<a key={`${keyBase}-${i++}`} href={href} target="_blank" rel="noopener noreferrer">{label}</a>);
+      if (trailing) out.push(trailing);
+    }
+    last = re.lastIndex;
+  }
+  if (last < text.length) out.push(text.slice(last));
+  return out;
+}
+
+function AiMessageText({ text }) {
+  const blocks = String(text || '').replace(/\r/g, '').split(/\n{2,}/);
+  return (
+    <div className="ai-msg-text">
+      {blocks.map((block, bi) => {
+        const lines = block.split('\n').filter(l => l.trim());
+        const isItem = l => /^\s*([-*•]|\d+[.)])\s+/.test(l);
+        // a lead-in line ("Sources:") followed by list items → paragraph + list
+        const lead = lines.length > 1 && !isItem(lines[0]) && lines.slice(1).every(isItem) ? lines[0] : null;
+        const listLines = lead ? lines.slice(1) : lines;
+        if (listLines.length && listLines.every(isItem)) {
+          const ordered = /^\s*\d+[.)]/.test(listLines[0]);
+          const items = listLines.map((l, li) => <li key={li}>{aiInline(l.replace(/^\s*([-*•]|\d+[.)])\s+/, ''), `${bi}-${li}`)}</li>);
+          return (
+            <Fragment key={bi}>
+              {lead && <p className="ai-msg-lead">{aiInline(lead, `${bi}-lead`)}</p>}
+              {ordered ? <ol>{items}</ol> : <ul>{items}</ul>}
+            </Fragment>
+          );
+        }
+        return <p key={bi}>{lines.map((l, li) => <Fragment key={li}>{li > 0 && <br />}{aiInline(l.replace(/^#+\s*/, ''), `${bi}-${li}`)}</Fragment>)}</p>;
+      })}
+    </div>
+  );
+}
+
+// ── Storhet AI — internal AI assistant ──────────
 function StorhetAIChat() {
   const [conversations, setConversations] = useState([]);
   const [activeId, setActiveId] = useState(null);
@@ -12112,6 +12179,36 @@ function StorhetAIChat() {
     setActiveId(null);
     setMessages([]);
     setError('');
+  }
+
+  const [deleting, setDeleting] = useState(null);
+
+  // Removes the chats and their messages. The admin audit log keeps a record that
+  // lookups happened, but the conversation itself is gone for good.
+  async function deleteConversations(ids) {
+    if (!ids.length) return;
+    setDeleting(ids.length === 1 ? ids[0] : 'all');
+    setError('');
+    try {
+      const { error: msgError } = await supabase.from('ai_messages').delete().in('conversation_id', ids);
+      if (msgError) throw msgError;
+      const { error: convError } = await supabase.from('ai_conversations').delete().in('id', ids);
+      if (convError) throw convError;
+      setConversations(prev => prev.filter(c => !ids.includes(c.id)));
+      if (ids.includes(activeId)) newConversation();
+    } catch (e) {
+      setError(`Could not delete: ${e.message || 'unknown error'}`);
+    } finally {
+      setDeleting(null);
+    }
+  }
+
+  function deleteOne(conv) {
+    if (window.confirm(`Delete "${conv.title}"? This can't be undone.`)) deleteConversations([conv.id]);
+  }
+
+  function deleteAll() {
+    if (window.confirm(`Delete all ${conversations.length} chats? This can't be undone.`)) deleteConversations(conversations.map(c => c.id));
   }
 
   useEffect(() => { loadConversations(); }, []);
@@ -12157,15 +12254,25 @@ function StorhetAIChat() {
       <aside className="ai-conversation-list panel">
         <div className="ai-conversation-head">
           <strong>Conversations</strong>
-          <button type="button" className="icon-btn" onClick={loadConversations} title="Refresh"><RefreshCw size={15} /></button>
+          <div className="ai-conversation-head-actions">
+            <button type="button" className="icon-btn" onClick={loadConversations} title="Refresh" aria-label="Refresh"><RefreshCw size={15} /></button>
+            {conversations.length > 0 && (
+              <button type="button" className="icon-btn" onClick={deleteAll} disabled={!!deleting} title="Delete all chats" aria-label="Delete all chats"><Trash2 size={15} /></button>
+            )}
+          </div>
         </div>
         {conversations.length === 0 ? (
           <p className="ai-conversation-empty">No conversations yet.</p>
         ) : conversations.map(conv => (
-          <button key={conv.id} type="button" className={`ai-conversation-item ${activeId === conv.id ? 'active' : ''}`} onClick={() => openConversation(conv.id)}>
-            <Bot size={14} />
-            <span>{conv.title}</span>
-          </button>
+          <div key={conv.id} className={`ai-conversation-row ${deleting === conv.id || deleting === 'all' ? 'is-deleting' : ''}`}>
+            <button type="button" className={`ai-conversation-item ${activeId === conv.id ? 'active' : ''}`} onClick={() => openConversation(conv.id)}>
+              <Bot size={14} />
+              <span>{conv.title}</span>
+            </button>
+            <button type="button" className="ai-conversation-delete" onClick={() => deleteOne(conv)} disabled={!!deleting} title="Delete this chat" aria-label={`Delete chat: ${conv.title}`}>
+              <Trash2 size={14} />
+            </button>
+          </div>
         ))}
       </aside>
 
@@ -12174,14 +12281,14 @@ function StorhetAIChat() {
           <div className="ai-welcome">
             <Bot size={34} />
             <h3>Ask Storhet AI anything about your CRM</h3>
-            <p>Try: "Find customers at Zenith Bank", "What Utimaco solutions do we sell?", or paste a deal ID and ask about it.</p>
+            <p>Try: "How many leads came in this month?", "Who supports IRONSCALES?", "Which customers bought F5?", or "How does an F5 load balancer work?"</p>
           </div>
         ) : (
           <div className="ai-messages">
             {messages.map((m, i) => (
               <div key={i} className={`ai-msg-row ${m.role === 'user' ? 'mine' : 'ai'}`}>
                 <div className="ai-msg-bubble">
-                  <p>{m.content}</p>
+                  {m.role === 'user' ? <p>{m.content}</p> : <AiMessageText text={m.content} />}
                   {m.tool_calls?.length > 0 && (
                     <div className="ai-tool-row">
                       <span className="ai-tool-label">Used tools:</span>
@@ -12208,7 +12315,7 @@ function StorhetAIChat() {
           <input
             value={input}
             onChange={e => setInput(e.target.value)}
-            placeholder="Ask about customers, deals or solutions…"
+            placeholder="Ask about your CRM, our solutions, or anything else…"
             disabled={sending}
             maxLength={2000}
           />
