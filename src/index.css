@@ -15305,3 +15305,27 @@ select {
 @media (prefers-reduced-motion: reduce) {
   .studio-node, .studio-library-item, .studio-canvas .react-flow__handle, .studio-toolbar-name { transition: none; }
 }
+/* Shared pagination (10 per page) */
+.crm-pagination { display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap; margin-top: 14px; font-size: 13px; }
+.crm-pagination-info { opacity: .7; }
+.crm-pagination-controls { display: flex; align-items: center; gap: 10px; }
+.crm-pagination-controls .secondary-btn { padding: 6px 12px; }
+.crm-pagination-controls .secondary-btn:disabled { opacity: .4; cursor: not-allowed; }
+
+/* MD Panel — five stat cards */
+.md-stats-grid { grid-template-columns: repeat(auto-fit, minmax(210px, 1fr)); }
+
+/* MD Panel — sales reps & opened leads modal */
+.md-modal { width: min(100%, 760px); }
+.md-modal .modal-heading { display: flex; justify-content: space-between; align-items: flex-start; gap: 12px; margin-bottom: 14px; }
+.md-modal .modal-heading h2 { margin: 0 0 4px; }
+.md-back-btn { margin-bottom: 12px; }
+.md-rep-list { display: grid; grid-template-columns: repeat(auto-fill, minmax(260px, 1fr)); gap: 10px; }
+.md-rep-item { display: flex; justify-content: space-between; align-items: center; gap: 10px; padding: 12px 14px; border: 1px solid rgba(128,128,128,.25); border-radius: 10px; background: transparent; color: inherit; cursor: pointer; text-align: left; font: inherit; }
+.md-rep-item:hover { border-color: currentColor; }
+.md-rep-name { display: flex; flex-direction: column; font-weight: 600; }
+.md-rep-name small, .md-leads-table td small { display: block; font-weight: 400; opacity: .65; font-size: 12px; }
+.md-rep-count { font-size: 13px; opacity: .8; white-space: nowrap; }
+.md-leads-table { width: 100%; border-collapse: collapse; }
+.md-leads-table th, .md-leads-table td { padding: 10px 12px; text-align: left; border-bottom: 1px solid rgba(128,128,128,.2); }
+.md-leads-table th { font-size: 12px; text-transform: uppercase; letter-spacing: .04em; opacity: .7; }
